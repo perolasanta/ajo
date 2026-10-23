@@ -1,0 +1,27 @@
+{$AJO_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# API and webhooks (Telegram, WhatsApp)
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /webhooks/* {
+		reverse_proxy api:8000
+	}
+
+	# Officer portal and member page (static SPA build)
+	handle {
+		root * /srv/frontend
+		try_files {path} /index.html
+		file_server
+	}
+}

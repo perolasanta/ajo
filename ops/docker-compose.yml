@@ -1,0 +1,44 @@
+# Frankfurt VPS. Run from /ops:  docker compose --env-file ../.env up -d --build
+name: ajo
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      AJO_DOMAIN: ${AJO_DOMAIN:?set AJO_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../frontend/dist:/srv/frontend:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+
+  api:
+    build: ../backend
+    restart: unless-stopped
+    env_file: ../.env
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build: ../backend
+    restart: unless-stopped
+    env_file: ../.env
+    command: ["python", "-m", "app.worker"]
+
+  # Exactly ONE scheduler. It takes a session advisory lock on the DIRECT connection.
+  scheduler:
+    build: ../backend
+    restart: unless-stopped
+    env_file: ../.env
+    command: ["python", "-m", "app.scheduler"]
+    deploy: { replicas: 1 }
+
+volumes:
+  caddy_data:
+  caddy_config:
