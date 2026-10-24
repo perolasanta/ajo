@@ -67,7 +67,9 @@ async def _load_application(
     return result.mappings().one_or_none()
 
 
-async def _eligibility(session: Any, application: Any, policy: Any) -> dict[str, Any]:
+async def _eligibility(
+    session: Any, application: Any, policy: Any, exclude_loan_id: uuid.UUID | None = None
+) -> dict[str, Any]:
     cid, member_id = application["cooperative_id"], application["member_id"]
     today = _today_wat()
     salary = (
@@ -95,8 +97,9 @@ async def _eligibility(session: Any, application: Any, policy: Any) -> dict[str,
         (
             await session.execute(
                 text("""SELECT coalesce(sum(amount_kobo),0) FROM savings_locks
-              WHERE cooperative_id=:cid AND member_id=:member AND released_at IS NULL"""),
-                {"cid": cid, "member": member_id},
+              WHERE cooperative_id=:cid AND member_id=:member AND released_at IS NULL
+              AND (:exclude_loan IS NULL OR loan_id IS NULL OR loan_id<>:exclude_loan)"""),
+                {"cid": cid, "member": member_id, "exclude_loan": exclude_loan_id},
             )
         ).scalar_one()
     )
@@ -400,6 +403,14 @@ async def decide_application(
             )
             loan_id: uuid.UUID | None = None
             if decision == "approved":
+                destination = (
+                    await session.execute(
+                        text("""SELECT id,bank_code,last4,account_name,status,verified_at
+                          FROM bank_accounts WHERE cooperative_id=:cid
+                          AND id=:id"""),
+                        {"cid": cid, "id": application["destination_bank_account_id"]},
+                    )
+                ).mappings().one_or_none()
                 terms = {
                     "principal_kobo": application["principal_kobo"],
                     "tenor_months": application["tenor_months"],
@@ -410,6 +421,15 @@ async def decide_application(
                     "destination_bank_account_id": str(
                         application["destination_bank_account_id"] or ""
                     ),
+                    "destination": {
+                        "bank_code": destination["bank_code"],
+                        "last4": destination["last4"],
+                        "account_name": destination["account_name"],
+                        "status": destination["status"],
+                        "verified": destination["verified_at"] is not None,
+                    }
+                    if destination is not None
+                    else None,
                     "product_id": str(application["product_id"]),
                     "policy_version_id": str(policy["id"]),
                 }

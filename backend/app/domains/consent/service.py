@@ -153,6 +153,8 @@ async def decide(slug: str, token: str, code: str, decision: str, ip: str, user_
         if decision == "confirm":
             target = "under_review" if row["kind"] == "applicant_ack" else "ready_for_disbursement"
             await session.execute(text("UPDATE loan_applications SET status=:status,updated_at=now() WHERE cooperative_id=:cid AND id=:id"), {"status": target, "cid": cid, "id": row["application_id"]})
+            if row["kind"] == "final_terms":
+                await session.execute(text("UPDATE loans SET status='ready_for_disbursement' WHERE cooperative_id=:cid AND application_id=:id"), {"cid": cid, "id": row["application_id"]})
             await append_audit(session, cooperative_id=cid, actor_user_id=None, role=None,
                 action="member_consent_confirmed", entity_type="loan_application", entity_id=str(row["application_id"]),
                 summary={"consent_id": str(row["id"]), "kind": row["kind"]}, channel="sms", ip=ip)
