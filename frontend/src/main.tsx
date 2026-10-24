@@ -5,12 +5,16 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./index.css";
 
-const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 15_000, retry: 1 } } });
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 15_000, retry: 1 } },
+});
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter><App /></BrowserRouter>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,
 );

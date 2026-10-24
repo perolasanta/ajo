@@ -6,3 +6,9 @@ export function formatNaira(kobo: number): string {
   const frac = String(abs % 100).padStart(2, "0");
   return `${sign}₦${whole}.${frac}`;
 }
+
+export function cn(...values: ClassValue[]): string {
+  return twMerge(clsx(values));
+}
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";

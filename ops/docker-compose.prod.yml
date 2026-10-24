@@ -1,0 +1,58 @@
+name: ajo
+
+x-common: &common
+  restart: unless-stopped
+  env_file: .env
+  networks:
+    - ajo_net
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  api:
+    <<: *common
+    container_name: ajo-api
+    image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
+    ports:
+      - 127.0.0.1:${AJO_API_PORT:-18101}:8000
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *common
+    container_name: ajo-worker
+    image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
+    command: ["python", "-m", "app.worker"]
+    mem_limit: 256m
+    cpus: 0.5
+
+  scheduler:
+    <<: *common
+    container_name: ajo-scheduler
+    image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
+    command: ["python", "-m", "app.scheduler"]
+    mem_limit: 128m
+    cpus: 0.25
+    deploy:
+      replicas: 1
+
+  web:
+    <<: *common
+    container_name: ajo-web
+    image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-frontend:${AJO_TAG:-staging}
+    ports:
+      - 127.0.0.1:${AJO_WEB_PORT:-18102}:80
+    mem_limit: 64m
+    cpus: 0.25
+
+networks:
+  ajo_net:
+    name: ajo_net

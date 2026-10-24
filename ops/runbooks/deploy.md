@@ -1,11 +1,20 @@
 # Runbook: deploy (Frankfurt VPS)
-1. `git pull` on the VPS in /opt/ajo.
-2. Rehearse any new migration on the Neon `staging` branch first.
-3. `cd frontend && npm ci && npm run build`
-4. Copy the built frontend to the Nginx document root: `sudo mkdir -p /var/www/ajo && sudo cp -a dist/. /var/www/ajo/` (run from `frontend/`).
-5. Install `ops/nginx/ajo.conf.example` as a separate Nginx virtual host, substituting your domain and the certificate paths managed by the existing certbot setup. Do not replace the existing Nginx configuration.
-6. `cd ../ops && docker compose --env-file ../.env up -d --build` (the API is published only on `127.0.0.1:8000`; Nginx owns public ports 80/443).
-7. Run migrations with the DIRECT URL: `docker compose run --rm api alembic upgrade head`
-8. Validate configuration with `sudo nginx -t`, then reload Nginx with `sudo systemctl reload nginx`.
-9. Check `/api/v1/health` and `/api/v1/health/db` through the configured virtual host.
-Rollback: previous image tag plus `alembic downgrade -1` only if the migration is reversible; otherwise restore a Neon branch.
+
+The VPS holds only `/opt/ajo`, the Ajo Nginx vhost, and its certificate. Other Ajo components run from prebuilt GHCR images.
+
+1. Copy `ops/docker-compose.prod.yml` to `/opt/ajo/docker-compose.yml`.
+2. Create `/opt/ajo/.env` with production environment variables, `AJO_IMAGE_OWNER`, and optionally `AJO_TAG` (defaults to `staging`). Keep it readable only by the deploy user.
+3. Install `ops/nginx/ajo.conf.example` as a separate host vhost, uncomment/set the Certbot TLS paths, then run `sudo nginx -t` and `sudo systemctl reload nginx`. Do not replace existing Nginx configuration.
+4. `cd /opt/ajo && docker login ghcr.io`
+5. `docker compose pull`
+6. Run migrations before starting the new services: `docker compose run --rm api alembic upgrade head`
+7. `docker compose up -d`
+8. Check `docker compose ps`, `curl --fail https://ajo.petbell.com.ng/api/v1/health`, and `curl --fail https://ajo.petbell.com.ng/api/v1/health/db`.
+
+## Rollback
+
+Set `AJO_TAG` in `/opt/ajo/.env` to a previous image SHA, then run `docker compose pull && docker compose up -d`. Do not downgrade a migration unless it is explicitly reversible.
+
+## Removal
+
+Run `cd /opt/ajo && docker compose down`, then remove the separate Ajo Nginx vhost and validate/reload Nginx with `sudo nginx -t && sudo systemctl reload nginx`.

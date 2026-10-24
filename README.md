@@ -6,7 +6,7 @@ Cooperative management and loan administration SaaS. Read `docs/context.md` firs
 ```
 backend/    FastAPI, SQLAlchemy async, Alembic, tests, Neon scripts
 frontend/   React + TypeScript + Vite + Tailwind (officer portal, member page)
-ops/        Docker Compose, Nginx virtual-host example, backup script, runbooks
+ops/        Production image Compose, development Compose, host Nginx vhost example, runbooks
 docs/       context.md, neon.md (setup guide + learning log), adr/
 ```
 
@@ -20,7 +20,7 @@ docs/       context.md, neon.md (setup guide + learning log), adr/
 `make test` unit tests, `make lint` ruff + mypy, `make migrate`, `make smoke`.
 
 ## VPS deployment
-The VPS's existing Nginx and certbot setup terminate TLS. Copy `ops/nginx/ajo.conf.example` into Nginx as a separate virtual host, update the domain and certificate paths, and follow [`ops/runbooks/deploy.md`](ops/runbooks/deploy.md). The API container is published only on `127.0.0.1:8000`; copy `frontend/dist` to `/var/www/ajo` for static serving. Validate with `nginx -t` before reloading. Do not replace the existing Nginx configuration.
+The VPS's existing Nginx and certbot setup terminate TLS. Ajo runs solely from prebuilt GHCR images via `ops/docker-compose.prod.yml`; only `/opt/ajo`, the separate Ajo vhost, and its certificate live on the host. Follow [`ops/runbooks/deploy.md`](ops/runbooks/deploy.md). The API and frontend bind only to loopback ports. Validate with `nginx -t` before reloading and never replace the existing Nginx configuration.
 
 ## Rules (short)
 No float money. No UPDATE/DELETE on ledger or audit. No financial logic outside services. Tenant context only via `app.core.db.transaction()`. Every migration rehearsed on a Neon branch.

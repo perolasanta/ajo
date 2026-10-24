@@ -1,13 +1,11 @@
 server {
     listen 443 ssl http2;
-    server_name ajo.example.com;
+    server_name ajo.petbell.com.ng;
 
     # TLS certificates are managed by the existing certbot setup.
-    ssl_certificate /etc/letsencrypt/live/ajo.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/ajo.example.com/privkey.pem;
+    # ssl_certificate /etc/letsencrypt/live/ajo.petbell.com.ng/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/ajo.petbell.com.ng/privkey.pem;
 
-    root /var/www/ajo;
-    index index.html;
     client_max_body_size 10m;
     server_tokens off;
 
@@ -17,27 +15,57 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
+    # Staging only: uncomment these three locations to protect FastAPI's docs
+    # with credentials stored in /etc/nginx/ajo.htpasswd.
+    # location = /api/docs {
+    #     auth_basic "Ajo staging";
+    #     auth_basic_user_file /etc/nginx/ajo.htpasswd;
+    #     proxy_pass http://127.0.0.1:18101;
+    # }
+    # location = /api/redoc {
+    #     auth_basic "Ajo staging";
+    #     auth_basic_user_file /etc/nginx/ajo.htpasswd;
+    #     proxy_pass http://127.0.0.1:18101;
+    # }
+    # location = /api/openapi.json {
+    #     auth_basic "Ajo staging";
+    #     auth_basic_user_file /etc/nginx/ajo.htpasswd;
+    #     proxy_pass http://127.0.0.1:18101;
+    # }
+
     location /api/ {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:18101;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_hide_header Server;
+        proxy_connect_timeout 60s;
         proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
     }
 
     location /webhooks/ {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:18101;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_hide_header Server;
+        proxy_connect_timeout 60s;
         proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
     }
 
     location / {
-        try_files $uri $uri/ /index.html;
+        proxy_pass http://127.0.0.1:18102;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_hide_header Server;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
     }
 }

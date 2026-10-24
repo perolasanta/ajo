@@ -1,4 +1,4 @@
-# Frankfurt VPS. Run from /ops:  docker compose --env-file ../.env up -d --build
+# Development-only Compose file. Production uses docker-compose.prod.yml with prebuilt images.
 name: ajo
 services:
   api:
