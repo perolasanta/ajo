@@ -52,6 +52,20 @@ async def _effective_policy(session: Any, cooperative_id: uuid.UUID, on_date: da
     return row
 
 
+async def _load_application(
+    session: Any, cooperative_id: uuid.UUID, application_id: uuid.UUID
+) -> Any:
+    result = await session.execute(
+        text(
+            """SELECT a.*, p.interest_method FROM loan_applications a
+              JOIN loan_products p ON p.cooperative_id=a.cooperative_id AND p.id=a.product_id
+              WHERE a.cooperative_id=:cid AND a.id=:id FOR UPDATE OF a"""
+        ),
+        {"cid": cooperative_id, "id": application_id},
+    )
+    return result.mappings().one_or_none()
+
+
 async def _eligibility(session: Any, application: Any, policy: Any) -> dict[str, Any]:
     cid, member_id = application["cooperative_id"], application["member_id"]
     today = _today_wat()
@@ -261,16 +275,10 @@ async def submit_application(
                   VALUES(:cid,:app,:member,:amount)"""),
                 {"cid": cid, "app": application_id, "member": guarantor_id, "amount": amount},
             )
-        row = {
-            "cooperative_id": cid,
-            "id": application_id,
-            "member_id": member_id,
-            "principal_kobo": principal_kobo,
-            "tenor_months": tenor_months,
-            "annual_rate_bps": int(product["annual_rate_bps"]),
-            "interest_method": product["interest_method"],
-        }
-        eligibility = await _eligibility(session, row, policy)
+        application = await _load_application(session, cid, application_id)
+        if application is None:
+            raise NotFound("Loan application not found")
+        eligibility = await _eligibility(session, application, policy)
         await session.execute(
             text(
                 "UPDATE loan_applications SET partial_check=:partial,status=:status WHERE cooperative_id=:cid AND id=:id"
@@ -324,30 +332,11 @@ async def submit_application(
 
 async def run_eligibility(cooperative_id: uuid.UUID, application_id: uuid.UUID) -> dict[str, Any]:
     async with transaction(cooperative_id) as session:
-        application = (
-            (
-                await session.execute(
-                    text("""SELECT * FROM loan_applications
-              WHERE cooperative_id=:cid AND id=:id"""),
-                    {"cid": cooperative_id, "id": application_id},
-                )
-            )
-            .mappings()
-            .one_or_none()
-        )
+        application = await _load_application(session, cooperative_id, application_id)
         if application is None:
             raise NotFound("Loan application not found")
-        application_data: dict[str, Any] = dict(application)
-        application_data["interest_method"] = (
-            await session.execute(
-                text(
-                    "SELECT interest_method FROM loan_products WHERE cooperative_id=:cid AND id=:id"
-                ),
-                {"cid": cooperative_id, "id": application_data["product_id"]},
-            )
-        ).scalar_one()
         policy = await _effective_policy(session, cooperative_id, _today_wat())
-        return await _eligibility(session, application_data, policy)
+        return await _eligibility(session, application, policy)
 
 
 async def decide_application(
@@ -372,18 +361,9 @@ async def decide_application(
             text("SELECT pg_advisory_xact_lock(hashtext(CAST(:member AS text)))"),
             {"member": member_id},
         )
-        application = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT * FROM loan_applications WHERE cooperative_id=:cid AND id=:id FOR UPDATE"
-                    ),
-                    {"cid": cid, "id": application_id},
-                )
-            )
-            .mappings()
-            .one()
-        )
+        application = await _load_application(session, cid, application_id)
+        if application is None:
+            raise NotFound("Loan application not found")
         if application["status"] not in {"submitted", "under_review"}:
             raise Conflict("Application is not awaiting committee review")
         if application["submitted_by"] == current.user_id:
@@ -397,16 +377,7 @@ async def decide_application(
             )
         else:
             policy = await _effective_policy(session, cid, _today_wat())
-            application_data: dict[str, Any] = dict(application)
-            application_data["interest_method"] = (
-                await session.execute(
-                    text(
-                        "SELECT interest_method FROM loan_products WHERE cooperative_id=:cid AND id=:id"
-                    ),
-                    {"cid": cid, "id": application_data["product_id"]},
-                )
-            ).scalar_one()
-            eligibility = await _eligibility(session, application_data, policy)
+            eligibility = await _eligibility(session, application, policy)
             if decision == "approved" and not eligibility["eligible"]:
                 raise Conflict("Application does not meet current eligibility rules")
             await session.execute(
@@ -417,7 +388,7 @@ async def decide_application(
                     "app": application_id,
                     "actor": current.user_id,
                     "policy": policy["id"],
-                    "product": application_data["product_id"],
+                    "product": application["product_id"],
                     "decision": decision,
                     "reason": reason,
                 },
@@ -425,16 +396,16 @@ async def decide_application(
             loan_id: uuid.UUID | None = None
             if decision == "approved":
                 terms = {
-                    "principal_kobo": application_data["principal_kobo"],
-                    "tenor_months": application_data["tenor_months"],
-                    "annual_rate_bps": application_data["annual_rate_bps"],
+                    "principal_kobo": application["principal_kobo"],
+                    "tenor_months": application["tenor_months"],
+                    "annual_rate_bps": application["annual_rate_bps"],
                     "beneficiary_member_id": str(
-                        application_data["beneficiary_member_id"] or application_data["member_id"]
+                        application["beneficiary_member_id"] or application["member_id"]
                     ),
                     "destination_bank_account_id": str(
-                        application_data["destination_bank_account_id"] or ""
+                        application["destination_bank_account_id"] or ""
                     ),
-                    "product_id": str(application_data["product_id"]),
+                    "product_id": str(application["product_id"]),
                     "policy_version_id": str(policy["id"]),
                 }
                 canonical = json.dumps(
@@ -476,7 +447,7 @@ async def decide_application(
                         "id": loan_id,
                         "app": application_id,
                         "member": member_id,
-                        "product": application_data["product_id"],
+                        "product": application["product_id"],
                         "policy": policy["id"],
                         "snapshot": snapshot_id,
                     },
@@ -486,14 +457,14 @@ async def decide_application(
                         text(
                             "SELECT interest_method FROM loan_products WHERE cooperative_id=:cid AND id=:id"
                         ),
-                        {"cid": cid, "id": application_data["product_id"]},
+                        {"cid": cid, "id": application["product_id"]},
                     )
                 ).one()
                 first_day = datetime.now(WAT).date() + timedelta(days=32)
                 schedule = build_schedule(
-                    int(application_data["principal_kobo"]),
-                    int(application_data["annual_rate_bps"]),
-                    int(application_data["tenor_months"]),
+                    int(application["principal_kobo"]),
+                    int(application["annual_rate_bps"]),
+                    int(application["tenor_months"]),
                     product.interest_method,
                     first_day,
                 )
@@ -530,7 +501,7 @@ async def decide_application(
                 entity_id=str(application_id),
                 summary={
                     "policy_version_id": str(policy["id"]),
-                    "product_id": str(application_data["product_id"]),
+                    "product_id": str(application["product_id"]),
                     "eligibility": eligibility,
                 },
                 channel="api",

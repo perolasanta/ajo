@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 import asyncpg
@@ -41,25 +42,35 @@ async def db(test_database) -> asyncpg.Connection:
     await connection.close()
 
 
+@dataclass(frozen=True)
+class LoanBase:
+    cooperative_id: uuid.UUID
+    user_ids: tuple[uuid.UUID, ...]
+    product_id: uuid.UUID
+    policy_id: uuid.UUID
+    bank_account_id: uuid.UUID
+    savings_account_id: uuid.UUID
+
+
 def session(cid: uuid.UUID, uid: uuid.UUID, *roles: str) -> CurrentSession:
     return CurrentSession(
         cid, "loan-test", uuid.uuid4(), uid, "staff@example.test", roles, bytes(32)
     )
 
 
-async def setup_loan_tenant(
-    db: asyncpg.Connection, roles: tuple[str, ...] = ("officer", "committee", "committee")
-):
+async def _create_loan_base(test_database) -> LoanBase:
+    connection = await asyncpg.connect(asyncpg_dsn(test_database.app_url))
+    assert await connection.fetchval("SELECT current_user") == "ajo_app"
     seed = await create_tenant(
-        db, name="Loan test", slug_prefix="loan", roles=roles, include_member=True
+        connection,
+        name="Loan test",
+        slug_prefix="loan",
+        roles=("officer", "committee", "committee"),
     )
-    assert seed.member_id is not None
-    cid, member = seed.cooperative_id, seed.member_id
-    proposer = seed.user_ids[0]
-    approver = seed.user_ids[1] if len(seed.user_ids) > 1 else proposer
+    cid, proposer, approver = seed.cooperative_id, seed.user_ids[0], seed.user_ids[1]
     policy_id, product_id = uuid.uuid4(), uuid.uuid4()
     today = date.today()
-    await db.execute(
+    await connection.execute(
         """INSERT INTO cooperative_policy_versions(cooperative_id,id,version,status,effective_from,
           proposed_by,approved_by,salary_basis,deduction_cap_bps,max_active_loans,guarantors_required,
           min_savings_kobo,loan_to_savings_multiple_x100,interest_method)
@@ -70,7 +81,7 @@ async def setup_loan_tenant(
         proposer,
         approver,
     )
-    await db.execute(
+    await connection.execute(
         """INSERT INTO loan_products(cooperative_id,id,code,name,interest_method,annual_rate_bps,
           min_amount_kobo,max_amount_kobo,min_tenor_months,max_tenor_months,fee_bps,
           guarantors_required,status,approved_at)
@@ -78,21 +89,40 @@ async def setup_loan_tenant(
         cid,
         product_id,
     )
-    await db.execute(
-        """INSERT INTO salary_records(cooperative_id,member_id,effective_from,basis,amount_kobo,source,recorded_by)
-          VALUES($1,$2,$3,'net',100000000,'declared',$4)""",
-        cid,
-        member,
-        today,
-        proposer,
-    )
     bank_id, savings_id = uuid.uuid4(), uuid.uuid4()
-    await db.executemany(
+    await connection.executemany(
         "INSERT INTO accounts(cooperative_id,id,code,name,account_type) VALUES($1,$2,$3,$4,$5)",
         [
             (cid, bank_id, "bank", "Bank", "asset"),
             (cid, savings_id, "member_savings", "Savings", "liability"),
         ],
+    )
+    await connection.close()
+    return LoanBase(cid, seed.user_ids, product_id, policy_id, bank_id, savings_id)
+
+
+@pytest.fixture(scope="module")
+def loan_base(test_database) -> LoanBase:
+    return asyncio.run(_create_loan_base(test_database))
+
+
+async def setup_loan_member(db: asyncpg.Connection, base: LoanBase) -> uuid.UUID:
+    cid, member, proposer = base.cooperative_id, uuid.uuid4(), base.user_ids[0]
+    await db.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
+    await db.execute(
+        """INSERT INTO members(id,cooperative_id,member_no,full_name,phone_e164)
+          VALUES($1,$2,$3,'Loan test member','+2348000000000')""",
+        member,
+        cid,
+        f"M-{member.hex}",
+    )
+    await db.execute(
+        """INSERT INTO salary_records(cooperative_id,member_id,effective_from,basis,amount_kobo,source,recorded_by)
+          VALUES($1,$2,$3,'net',100000000,'declared',$4)""",
+        cid,
+        member,
+        date.today(),
+        proposer,
     )
     await db.fetchval(
         """SELECT post_journal_entry($1,current_date,'seed',$2,'test savings',$3,$4,$5::jsonb,NULL)""",
@@ -102,12 +132,20 @@ async def setup_loan_tenant(
         f"seed-{uuid.uuid4()}",
         json.dumps(
             [
-                {"account_id": str(bank_id), "member_id": str(member), "debit_kobo": 100000000},
-                {"account_id": str(savings_id), "member_id": str(member), "credit_kobo": 100000000},
+                {
+                    "account_id": str(base.bank_account_id),
+                    "member_id": str(member),
+                    "debit_kobo": 100000000,
+                },
+                {
+                    "account_id": str(base.savings_account_id),
+                    "member_id": str(member),
+                    "credit_kobo": 100000000,
+                },
             ]
         ),
     )
-    return cid, member, seed.user_ids, product_id, policy_id
+    return member
 
 
 def test_deduction_capacity_worked_example() -> None:
@@ -146,8 +184,11 @@ def test_schedule_month_end_is_calculated_in_wat() -> None:
     assert schedule[1].due_at.tzinfo is not None
 
 
-async def test_concurrent_approvals_for_member_cannot_both_succeed(db: asyncpg.Connection) -> None:
-    cid, member, users, product, _ = await setup_loan_tenant(db)
+async def test_concurrent_approvals_for_member_cannot_both_succeed(
+    db: asyncpg.Connection, loan_base: LoanBase
+) -> None:
+    member = await setup_loan_member(db, loan_base)
+    cid, users, product = loan_base.cooperative_id, loan_base.user_ids, loan_base.product_id
     application = await submit_application(
         session(cid, users[0], "officer"),
         member_id=member,
@@ -164,8 +205,11 @@ async def test_concurrent_approvals_for_member_cannot_both_succeed(db: asyncpg.C
     assert sum(isinstance(result, Conflict) for result in results) == 1
 
 
-async def test_snapshot_invalidated_after_term_change(db: asyncpg.Connection) -> None:
-    cid, member, users, product, _ = await setup_loan_tenant(db)
+async def test_snapshot_invalidated_after_term_change(
+    db: asyncpg.Connection, loan_base: LoanBase
+) -> None:
+    member = await setup_loan_member(db, loan_base)
+    cid, users, product = loan_base.cooperative_id, loan_base.user_ids, loan_base.product_id
     bank_account_id = uuid.uuid4()
     await db.execute(
         """INSERT INTO bank_accounts(cooperative_id,id,member_id,bank_code,account_number_encrypted,last4,account_name)
@@ -216,8 +260,9 @@ async def test_snapshot_invalidated_after_term_change(db: asyncpg.Connection) ->
         )
 
 
-async def test_approver_cannot_equal_submitter(db: asyncpg.Connection) -> None:
-    cid, member, users, product, _ = await setup_loan_tenant(db)
+async def test_approver_cannot_equal_submitter(db: asyncpg.Connection, loan_base: LoanBase) -> None:
+    member = await setup_loan_member(db, loan_base)
+    cid, users, product = loan_base.cooperative_id, loan_base.user_ids, loan_base.product_id
     application = await submit_application(
         session(cid, users[0], "officer"),
         member_id=member,
@@ -231,8 +276,16 @@ async def test_approver_cannot_equal_submitter(db: asyncpg.Connection) -> None:
         )
 
 
-async def test_policy_version_is_stored_on_approval_and_loan(db: asyncpg.Connection) -> None:
-    cid, member, users, product, policy_id = await setup_loan_tenant(db)
+async def test_policy_version_is_stored_on_approval_and_loan(
+    db: asyncpg.Connection, loan_base: LoanBase
+) -> None:
+    member = await setup_loan_member(db, loan_base)
+    cid, users, product, policy_id = (
+        loan_base.cooperative_id,
+        loan_base.user_ids,
+        loan_base.product_id,
+        loan_base.policy_id,
+    )
     application = await submit_application(
         session(cid, users[0], "officer"),
         member_id=member,
