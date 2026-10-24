@@ -98,7 +98,7 @@ async def _eligibility(
             await session.execute(
                 text("""SELECT coalesce(sum(amount_kobo),0) FROM savings_locks
               WHERE cooperative_id=:cid AND member_id=:member AND released_at IS NULL
-              AND (:exclude_loan IS NULL OR loan_id IS NULL OR loan_id<>:exclude_loan)"""),
+              AND (CAST(:exclude_loan AS uuid) IS NULL OR loan_id IS NULL OR loan_id<>CAST(:exclude_loan AS uuid))"""),
                 {"cid": cid, "member": member_id, "exclude_loan": exclude_loan_id},
             )
         ).scalar_one()
@@ -332,8 +332,13 @@ async def submit_application(
             ip=None,
         )
         await create_consent(
-            session, cooperative_id=cid, application_id=application_id,
-            member_id=member_id, kind="applicant_ack", terms_hash=None, slug=current.slug,
+            session,
+            cooperative_id=cid,
+            application_id=application_id,
+            member_id=member_id,
+            kind="applicant_ack",
+            terms_hash=None,
+            slug=current.slug,
         )
     return application_id
 
@@ -366,7 +371,7 @@ async def decide_application(
         if member_id is None:
             raise NotFound("Loan application not found")
         await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(:member AS text)))"),
+            text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
             {"member": member_id},
         )
         application = await _load_application(session, cid, application_id)
@@ -404,13 +409,17 @@ async def decide_application(
             loan_id: uuid.UUID | None = None
             if decision == "approved":
                 destination = (
-                    await session.execute(
-                        text("""SELECT id,bank_code,last4,account_name,status,verified_at
+                    (
+                        await session.execute(
+                            text("""SELECT id,bank_code,last4,account_name,status,verified_at
                           FROM bank_accounts WHERE cooperative_id=:cid
                           AND id=:id"""),
-                        {"cid": cid, "id": application["destination_bank_account_id"]},
+                            {"cid": cid, "id": application["destination_bank_account_id"]},
+                        )
                     )
-                ).mappings().one_or_none()
+                    .mappings()
+                    .one_or_none()
+                )
                 terms = {
                     "principal_kobo": application["principal_kobo"],
                     "tenor_months": application["tenor_months"],
@@ -451,7 +460,7 @@ async def decide_application(
                     },
                 )
                 await session.execute(
-                text("""UPDATE loan_applications SET status='awaiting_borrower_final_confirmation',
+                    text("""UPDATE loan_applications SET status='awaiting_borrower_final_confirmation',
                   current_terms_snapshot_id=:snapshot,policy_version_id=:policy,partial_check=:partial,
                   updated_at=now() WHERE cooperative_id=:cid AND id=:app"""),
                     {
@@ -510,9 +519,12 @@ async def decide_application(
                         },
                     )
                 await create_consent(
-                    session, cooperative_id=cid, application_id=application_id,
+                    session,
+                    cooperative_id=cid,
+                    application_id=application_id,
                     member_id=application["beneficiary_member_id"] or member_id,
-                    kind="final_terms", terms_hash=hashlib.sha256(canonical.encode()).digest(),
+                    kind="final_terms",
+                    terms_hash=hashlib.sha256(canonical.encode()).digest(),
                     slug=current.slug,
                 )
             else:
@@ -609,7 +621,9 @@ async def change_application_terms(
             {"cid": current.cooperative_id, "id": application_id},
         )
         await session.execute(
-            text("UPDATE member_consents SET status='invalidated' WHERE cooperative_id=:cid AND application_id=:id AND status='pending'"),
+            text(
+                "UPDATE member_consents SET status='invalidated' WHERE cooperative_id=:cid AND application_id=:id AND status='pending'"
+            ),
             {"cid": current.cooperative_id, "id": application_id},
         )
         if "destination_bank_account_id" in changes and old["status"] == "approved":

@@ -12,6 +12,7 @@ DEFAULT_CHART = (
     ("loans_receivable", "Loans receivable", "asset"),
     ("interest_receivable", "Interest receivable", "asset"),
     ("member_savings", "Withdrawable member savings", "liability"),
+    ("unallocated_receipts", "Unallocated receipts", "liability"),
     ("member_shares", "Compulsory member shares", "equity"),
     ("dues_income", "Dues income", "income"),
     ("interest_income", "Interest income", "income"),

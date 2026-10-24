@@ -24,6 +24,7 @@ _POLICY_FIELDS = (
     "min_savings_kobo",
     "loan_to_savings_multiple_x100",
     "interest_method",
+    "payroll_allocation_order",
     "confirmation_expiry_minutes",
     "otp_validity_seconds",
     "settings",
@@ -63,11 +64,11 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
               (id, cooperative_id, version, status, proposed_by, settings,
                effective_from, salary_basis, deduction_cap_bps, max_active_loans,
                guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
-               interest_method, confirmation_expiry_minutes, otp_validity_seconds)
+               interest_method, payroll_allocation_order, confirmation_expiry_minutes, otp_validity_seconds)
             VALUES (:id, :cid, :version, 'proposed', :actor, CAST(:settings AS jsonb),
                :effective_from, :salary_basis, :deduction_cap_bps, :max_active_loans,
                :guarantors_required, :min_savings_kobo, :loan_to_savings_multiple_x100,
-               :interest_method, :confirmation_expiry_minutes, :otp_validity_seconds)
+               :interest_method, :payroll_allocation_order, :confirmation_expiry_minutes, :otp_validity_seconds)
         """),
             {
                 "id": policy_id,
@@ -75,6 +76,9 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
                 "version": version,
                 "actor": current.user_id,
                 **fields,
+                "payroll_allocation_order": fields.get(
+                    "payroll_allocation_order", ["dues", "interest", "principal", "savings"]
+                ),
                 "settings": json.dumps(fields["settings"], separators=(",", ":")),
             },
         )
@@ -184,7 +188,7 @@ async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict
                     text("""
             SELECT id, version, effective_from, effective_to, salary_basis,
                    deduction_cap_bps, max_active_loans, guarantors_required,
-                   min_savings_kobo, loan_to_savings_multiple_x100, interest_method,
+                   min_savings_kobo, loan_to_savings_multiple_x100, interest_method, payroll_allocation_order,
                    confirmation_expiry_minutes, otp_validity_seconds, settings
               FROM cooperative_policy_versions
              WHERE cooperative_id = :cid AND status = 'approved'
