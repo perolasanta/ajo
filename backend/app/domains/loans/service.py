@@ -15,6 +15,7 @@ from app.core.db import transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
+from app.domains.consent.service import create_consent
 from app.domains.loans.calculations import build_schedule, deduction_capacity, max_loan_from_savings
 
 WAT = ZoneInfo("Africa/Lagos")
@@ -285,7 +286,7 @@ async def submit_application(
             ),
             {
                 "partial": eligibility["partial_check"],
-                "status": "submitted" if eligibility["eligible"] else "under_review",
+                "status": "awaiting_applicant_confirmation",
                 "cid": cid,
                 "id": application_id,
             },
@@ -326,6 +327,10 @@ async def submit_application(
             },
             channel="api",
             ip=None,
+        )
+        await create_consent(
+            session, cooperative_id=cid, application_id=application_id,
+            member_id=member_id, kind="applicant_ack", terms_hash=None, slug=current.slug,
         )
     return application_id
 
@@ -426,7 +431,7 @@ async def decide_application(
                     },
                 )
                 await session.execute(
-                    text("""UPDATE loan_applications SET status='approved',
+                text("""UPDATE loan_applications SET status='awaiting_borrower_final_confirmation',
                   current_terms_snapshot_id=:snapshot,policy_version_id=:policy,partial_check=:partial,
                   updated_at=now() WHERE cooperative_id=:cid AND id=:app"""),
                     {
@@ -484,6 +489,12 @@ async def decide_application(
                             "balance": installment.balance_kobo,
                         },
                     )
+                await create_consent(
+                    session, cooperative_id=cid, application_id=application_id,
+                    member_id=application["beneficiary_member_id"] or member_id,
+                    kind="final_terms", terms_hash=hashlib.sha256(canonical.encode()).digest(),
+                    slug=current.slug,
+                )
             else:
                 await session.execute(
                     text(
@@ -575,6 +586,10 @@ async def change_application_terms(
             text(
                 "UPDATE loans SET status='withdrawn' WHERE cooperative_id=:cid AND application_id=:id AND status='approved'"
             ),
+            {"cid": current.cooperative_id, "id": application_id},
+        )
+        await session.execute(
+            text("UPDATE member_consents SET status='invalidated' WHERE cooperative_id=:cid AND application_id=:id AND status='pending'"),
             {"cid": current.cooperative_id, "id": application_id},
         )
         if "destination_bank_account_id" in changes and old["status"] == "approved":
