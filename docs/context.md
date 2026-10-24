@@ -537,6 +537,7 @@ Tenant administration UI, pricing and billing, onboarding playbook, year-end pro
 
 ## Change log
 
+- **24 October 2026:** Added the initial officer portal frontend: generated-OpenAPI client setup, cookie/CSRF session handling, lazy protected routes, shared Tailwind primitives, MFA login/enrollment, and read-only member list/detail views.
 - **23 October 2026:** Updated D14 and deployment architecture for the existing Nginx reverse proxy; recorded Neon service and dev-branch restrictions; added policy and product configuration, operating models, module and ledger account requirements; replaced `cooperative_settings` with policy tables and reordered roadmap work so policy versions precede the eligibility engine.
 - **24 October 2026:** Added and applied Alembic migration 0002 for the RLS-protected, append-only double-entry ledger, with invoker posting function, idempotency and reversal support; added `ajo_app` integration coverage and a Hypothesis balance property test. Lint, mypy and the full test suite passed.
 - **24 October 2026:** Added and applied Alembic migration 0003 for tenant directory, staff authentication with mandatory TOTP MFA, forced-RLS auth tables, PostgreSQL lockout limits, sessions, recovery codes and append-only hash-chained audit events; added cooperative bootstrap and audit verification CLI commands plus integration coverage. Ruff, mypy and the full suite passed on the dev branch.

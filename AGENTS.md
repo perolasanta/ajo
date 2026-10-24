@@ -14,3 +14,5 @@ Read docs/context.md before any task. It is the source of truth.
 - If a test fails twice for the same reason, stop and report instead of trying a third fix.
 - Write only the tests the task lists. Do not add extra tests.
 - Final report: at most 12 lines (what changed, test result, anything I must decide).
+## Run mode (permanent)
+Never touch Docker. Never run pytest or make migrate; the owner runs them and pastes failures. Run only ruff and mypy. Do not explore the repo: open only the files named in the task. Final report: max 6 lines, then the exact commands the owner should run. No explanations of code.

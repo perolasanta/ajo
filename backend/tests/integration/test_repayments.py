@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from datetime import date
 
@@ -31,7 +30,6 @@ def loan_base(test_database) -> LoanBase:
 
 @pytest.fixture(autouse=True)
 async def reset_engine():
-    os.environ["ENCRYPTION_KEY"] = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
     get_settings.cache_clear()
     await dispose_engine()
     yield
@@ -46,6 +44,7 @@ async def db(test_database) -> asyncpg.Connection:
 
 
 async def repaying_loan(db: asyncpg.Connection, base: LoanBase) -> tuple[uuid.UUID, uuid.UUID]:
+    await db.execute("SELECT set_config('app.cooperative_id', $1, false)", str(base.cooperative_id))
     for code, account_type in (
         ("loans_receivable", "asset"),
         ("interest_income", "income"),

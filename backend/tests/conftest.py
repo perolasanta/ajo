@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import sys
 import uuid
 from dataclasses import dataclass
@@ -12,6 +13,11 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
 import pytest
+from cryptography.fernet import Fernet
+
+# Test-only secrets must exist before any module can load cached application settings.
+os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+os.environ.setdefault("SECRET_KEY", secrets.token_urlsafe(32))
 
 DEFAULT_TEST_DATABASE_URL = "postgresql://postgres:pg@localhost:55432/postgres"
 DATABASE_NAME = "ajo_test"
