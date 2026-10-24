@@ -3,7 +3,17 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import auth, consent, disbursements, health, loans, members, policies, repayments
+from app.api import (
+    auth,
+    consent,
+    disbursements,
+    health,
+    loans,
+    members,
+    payroll,
+    policies,
+    repayments,
+)
 from app.core.config import get_settings
 from app.core.db import dispose_engine
 from app.core.errors import install_error_handlers
@@ -35,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(consent.router, prefix="/api/v1")
     app.include_router(disbursements.router, prefix="/api/v1")
     app.include_router(repayments.router, prefix="/api/v1")
+    app.include_router(payroll.router, prefix="/api/v1")
     return app
 
 
