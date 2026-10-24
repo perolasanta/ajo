@@ -3,6 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from cryptography.fernet import Fernet
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,6 +27,13 @@ class Settings(BaseSettings):
     db_max_overflow: int = 5
 
     secret_key: str = "change-me"  # noqa: S105 (rejected in production by the validator below)
+    encryption_key: str = ""
+    session_idle_minutes: int = Field(default=30, gt=0)
+    session_absolute_hours: int = Field(default=12, gt=0)
+    login_max_attempts: int = Field(default=5, gt=0)
+    login_lockout_minutes: int = Field(default=15, gt=0)
+    login_rate_limit_attempts: int = Field(default=20, gt=0)
+    login_rate_limit_window_minutes: int = Field(default=5, gt=0)
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     whatsapp_app_secret: str = ""
@@ -36,6 +44,17 @@ class Settings(BaseSettings):
     def _production_guards(self) -> "Settings":
         if self.app_env == "production" and self.secret_key in ("", "change-me"):
             raise ValueError("SECRET_KEY must be set to a long random value in production")
+        if self.encryption_key:
+            try:
+                Fernet(self.encryption_key.encode())
+            except (ValueError, TypeError) as exc:
+                raise ValueError("ENCRYPTION_KEY must be a valid Fernet key") from exc
+        if self.app_env == "production" and self.encryption_key in (
+            "",
+            "CHANGE_ME",
+            "CHANGE_ME_GENERATE_WITH_FERNET_GENERATE_KEY",
+        ):
+            raise ValueError("ENCRYPTION_KEY must be set to a generated Fernet key in production")
         return self
 
     @property

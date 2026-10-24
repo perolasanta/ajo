@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health
+from app.api import auth, health, loans, members, policies
 from app.core.config import get_settings
 from app.core.db import dispose_engine
 from app.core.errors import install_error_handlers
@@ -28,6 +28,10 @@ def create_app() -> FastAPI:
     )
     install_error_handlers(app)
     app.include_router(health.router, prefix="/api/v1")
+    app.include_router(auth.router, prefix="/api/v1")
+    app.include_router(policies.router, prefix="/api/v1")
+    app.include_router(members.router, prefix="/api/v1")
+    app.include_router(loans.router, prefix="/api/v1")
     return app
 
 

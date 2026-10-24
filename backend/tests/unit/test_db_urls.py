@@ -1,16 +1,21 @@
+import pytest
+
 from app.core.db import asyncpg_dsn, split_url, to_sqlalchemy_async_url
 
-NEON = "postgresql://ajo_app:pw@ep-cool-123-pooler.eu-central-1.aws.neon.tech/ajo?sslmode=require&channel_binding=require"
+pytestmark = pytest.mark.unit
+DATABASE_URL_EXAMPLE = (
+    "postgresql://ajo_app:pw@db.example.invalid/ajo?sslmode=require&channel_binding=require"
+)
 
 
 def test_split_strips_libpq_params():
-    clean, ssl = split_url(NEON)
+    clean, ssl = split_url(DATABASE_URL_EXAMPLE)
     assert ssl == "require"
     assert "sslmode" not in clean and "channel_binding" not in clean
 
 
 def test_sqlalchemy_url_pooled_disables_cache():
-    url, args = to_sqlalchemy_async_url(NEON, disable_prepared_cache=True)
+    url, args = to_sqlalchemy_async_url(DATABASE_URL_EXAMPLE, disable_prepared_cache=True)
     assert url.startswith("postgresql+asyncpg://")
     assert "prepared_statement_cache_size=0" in url
     assert args["ssl"] == "require" and args["statement_cache_size"] == 0
@@ -24,5 +29,5 @@ def test_local_no_ssl():
 
 
 def test_asyncpg_dsn_keeps_sslmode_drops_channel_binding():
-    dsn = asyncpg_dsn(NEON)
+    dsn = asyncpg_dsn(DATABASE_URL_EXAMPLE)
     assert "sslmode=require" in dsn and "channel_binding" not in dsn

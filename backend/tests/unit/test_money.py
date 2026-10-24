@@ -6,6 +6,8 @@ from hypothesis import strategies as st
 
 from app.core.money import format_naira, naira_to_kobo
 
+pytestmark = pytest.mark.unit
+
 
 def test_naira_to_kobo_exact():
     assert naira_to_kobo("1250000.00") == 125_000_000
@@ -29,6 +31,7 @@ def test_format():
 
 
 @given(st.integers(min_value=-(10**15), max_value=10**15))
+@pytest.mark.property
 def test_roundtrip(kobo):
     text = format_naira(kobo).replace("₦", "").replace(",", "")
     assert naira_to_kobo(text) == kobo

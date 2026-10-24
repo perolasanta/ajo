@@ -1,6 +1,9 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+
+pytestmark = pytest.mark.unit
 
 
 def test_liveness_without_database():

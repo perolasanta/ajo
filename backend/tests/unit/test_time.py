@@ -4,6 +4,8 @@ import pytest
 
 from app.core.time import payroll_period
 
+pytestmark = pytest.mark.unit
+
 
 def test_month_end_utc_is_next_month_in_lagos():
     # 23:30 UTC on 31 Jan is 00:30 on 1 Feb in Lagos (UTC+1)

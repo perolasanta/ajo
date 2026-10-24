@@ -51,10 +51,12 @@ Ajo is a **financial recordkeeping system that prevents unauthorized loans and s
 | D10 | Tenant isolation: tenant checks in the service layer **plus** Postgres RLS using `SET LOCAL` per transaction | Defence in depth |
 | D11 | Roles are a fixed enum in MVP: `member, officer, committee, treasurer, admin, auditor` (+ platform `operator`) | Simplicity; configurable roles later |
 | D12 | Bank disbursement is **manual with independent authorization** in MVP. No payment-provider automation yet | Highest-risk step; automate only after trust |
-| D13 | Frontend: **React + TypeScript + Vite**, Tailwind, shadcn/ui, TanStack Query and Table, served as static files behind Caddy | Fast back-office SPA, typed API client |
-| D14 | Reverse proxy: **Caddy** (automatic TLS) in Docker Compose on the VPS | One fewer thing to maintain than Nginx + certbot |
+| D13 | Frontend: **React + TypeScript + Vite**, Tailwind, shadcn/ui, TanStack Query and Table, served as static files behind the existing Nginx on the VPS | Fast back-office SPA, typed API client |
+| D14 | Reverse proxy: the **existing Nginx on the VPS**. Ajo containers bind to `127.0.0.1` only; Nginx gets a separate virtual host. Validate with `nginx -t` before reload. Never replace the existing Nginx config | Preserve the VPS's existing reverse-proxy setup |
 | D15 | Member web surface is a tiny **mobile-first page** (confirmation, statement, capacity). Everything else for members is in chat | Low bandwidth, low-end phones |
 | D16 | Telegram first for the pilot; **WhatsApp business verification starts in Phase 1** in parallel | Verification and template approval have lead time; members mostly use WhatsApp |
+| D17 | Neon services other than Postgres (Auth, Object Storage, Functions, AI Gateway, Realtime) stay **OFF**. Ajo builds its own auth. Document storage will be decided later; when chosen, it will be S3-compatible in Frankfurt | Keep the MVP portable and limit enabled services |
+| D18 | Codex works only against the Neon **dev branch**. No Neon MCP server and no production credentials | Protect production data and credentials |
 
 ### Reconciliation with the two reviews
 
@@ -122,19 +124,21 @@ Holding member funds, wallets, card issuing, automated credit scoring, any ML-ba
 
 ```text
 Telegram webhook ─┐                                   ┌─> Postgres (Neon, Frankfurt)
-WhatsApp webhook ─┼─> Caddy ─> FastAPI (api) ────────┤     state, ledger, audit, outbox
+WhatsApp webhook ─┼─> existing Nginx ─> FastAPI (api) ┤     state, ledger, audit, outbox
 Web portal (SPA) ─┘              │  service layer     └─> RLS + roles
 Member page (signed link) ───────┘
                           Worker process (outbox, retries)
                           Scheduler process (dues, schedules, reminders)  ← single instance
 ```
 
-- **VPS (Frankfurt):** Docker Compose with services `caddy`, `api`, `worker`, `scheduler`. The API can run several workers; scheduler and worker run as separate containers.
+- **VPS (Frankfurt):** Docker Compose with services `api`, `worker`, `scheduler`; Ajo containers bind to `127.0.0.1` only. The existing host Nginx routes a separate virtual host to Ajo. Validate changes with `nginx -t` before reload and never replace the existing Nginx config. The API can run several workers; scheduler and worker run as separate containers.
 - **Neon:** project in `aws-eu-central-1`, co-located with the VPS so the app never pays a Lagos-to-Europe round trip on database calls.
 - **Environments:** Neon branches `main` (production), `staging`, `dev`. Never copy production data to a dev branch without masking personal data.
 - **Webhook rules:** verify Telegram's secret-token header (`X-Telegram-Bot-Api-Secret-Token`) and WhatsApp's `X-Hub-Signature-256`. Persist the event, acknowledge fast, process in the worker. Deduplicate on Telegram `update_id` and WhatsApp message ID with a unique constraint.
 - **Secrets:** environment variables from a secrets file outside git; rotate on staff change. Never log tokens, OTPs or full account numbers.
 - **Cross-border:** data stored in Frankfurt is outside Nigeria. See Section 12 before the first contract.
+- Neon Auth, Object Storage, Functions, AI Gateway and Realtime remain off. Ajo builds its own authentication. Document storage is a later decision; the intended location is Frankfurt and the storage must be S3-compatible.
+- Codex may access only the Neon dev branch. Do not use the Neon MCP server or production credentials.
 
 ---
 
@@ -174,7 +178,7 @@ Python 3.12, FastAPI, SQLAlchemy 2.0 async with asyncpg, Alembic, Pydantic v2, `
   /migrations    Alembic
   /tests         unit, integration, concurrency, property, security
 /frontend        React app (Section 13)
-/ops             docker-compose, Caddyfile, backup scripts, runbooks
+/ops             docker-compose, Nginx virtual-host config, backup scripts, runbooks
 /docs            context.md, neon.md, runbooks, ADRs
 ```
 
@@ -192,22 +196,34 @@ Python 3.12, FastAPI, SQLAlchemy 2.0 async with asyncpg, Alembic, Pydantic v2, `
 
 MVP tables (about 25; keep names stable):
 
-`cooperatives, cooperative_settings, users, user_roles, members, member_contacts, salary_records, bank_accounts, accounts (chart of accounts), journal_entries, journal_lines, loan_products, loan_applications, loan_terms_snapshots, loans, loan_schedule, guarantees, savings_locks, approvals, disbursements, member_consents, disputes, payroll_runs, payroll_items, channel_bindings, inbound_events, notifications (outbox), audit_logs, fraud_alerts, idempotency_keys, documents, access_grants (break-glass)`
+`cooperatives, cooperative_policy_versions, policy_change_log, loan_products, cooperative_modules, users, user_roles, members, member_contacts, salary_records, bank_accounts, accounts (chart of accounts), journal_entries, journal_lines, loan_applications, loan_terms_snapshots, loans, loan_schedule, guarantees, savings_locks, approvals, disbursements, member_consents, disputes, payroll_runs, payroll_items, channel_bindings, inbound_events, notifications (outbox), audit_logs, fraud_alerts, idempotency_keys, documents, access_grants (break-glass)`
 
-### 9.1 Ledger
+### 9.1 Policy and product configuration
+- `cooperative_policy_versions` stores typed, validated columns for salary basis, deduction cap, guarantor rules and savings rules, plus an effective date, proposer and a different approver. JSONB is reserved for non-critical preferences.
+- `policy_change_log` records policy changes and their approval history.
+- `loan_products` may set product terms but cannot override cooperative-wide safeguards.
+- Every eligibility decision and loan approval stores the `policy_version_id` used. Existing loans keep their contractual terms when a policy changes.
+
+### 9.2 Operating models and modules
+- Each tenant has an operating model: `loan_cooperative`, `thrift_society` or `rotating_ajo`.
+- `cooperative_modules` tracks enabled modules per cooperative. Disabling a module never deletes financial history.
+- MVP implements `loan_cooperative`; `thrift_society` comes next; implement `rotating_ajo` only after validation with a real group.
+- Ledger account types distinguish withdrawable savings, compulsory shares, dues, locked savings and the rotating-Ajo pool. Money held for members is kept separate from the society's income.
+
+### 9.3 Ledger
 - `journal_entries`: id, cooperative_id, posted_at, effective_date, source_type, source_id, description, created_by, reverses_entry_id (nullable), idempotency_key.
 - `journal_lines`: entry_id, account_id, member_id (nullable sub-ledger), loan_id (nullable), `debit_kobo`, `credit_kobo`. CHECK: exactly one of debit or credit is positive.
 - **Balanced by the database:** a deferred constraint trigger verifies total debits equal total credits per entry at commit. Posting goes through one database function (`post_journal_entry`). The application role cannot UPDATE or DELETE; a trigger also raises on any such attempt.
-- Chart of accounts (default, per cooperative): bank accounts, loans receivable, interest receivable, member savings (liability), dues and fee income, interest income, reserves.
+- Chart of accounts (default, per cooperative): bank accounts, loans receivable, interest receivable, withdrawable savings, compulsory shares, dues, locked savings, rotating-Ajo pool, dues and fee income, interest income, reserves. Member-held money is separate from society income.
 - Example: loan disbursement debits "Member loan receivable" and credits "Cooperative bank account" for the same amount. Repayment reverses direction.
 - A balanced entry is not necessarily a correct one. The service validates loan, member, authorizations, amount and source before posting.
 - Balances are derived from lines (with indexes and period snapshots later), never stored as editable numbers.
 
-### 9.2 Audit
+### 9.4 Audit
 - `audit_logs`: append-only, with `prev_hash` and `hash` per row (hash chain) for tamper evidence. Record actor, role, action, entity, before/after summary (no secrets), channel, IP/device hint, reason where required.
 - Break-glass access creates an `access_grants` row with a mandatory reason, visible to the cooperative's administrator and auditor.
 
-### 9.3 Loan lifecycle
+### 9.5 Loan lifecycle
 ```text
 draft → submitted → awaiting_applicant_confirmation → under_review → approved
       → awaiting_borrower_final_confirmation → ready_for_disbursement → disbursed → repaying → closed
@@ -216,6 +232,7 @@ side states: rejected, withdrawn, expired, disbursement_failed, restructured, wr
 - `disputed` freezes new deductions and raises a fraud alert; resolution is a controlled officer/admin process with evidence.
 - `loan_terms_snapshots` stores canonical JSON of approved terms plus a SHA-256 hash. Any change to amount, tenor, rate, beneficiary or destination account invalidates prior confirmations.
 - Disbursement is blocked unless `borrower_confirmed_at` is set **and** the confirmed hash equals the current approved snapshot hash.
+- Every eligibility decision and loan approval records the `policy_version_id` applied; a policy change does not alter existing loan contractual terms.
 
 ---
 
@@ -423,13 +440,14 @@ Duration estimates are planning guesses for a solo developer working with an AI 
 
 ### Phase 0 — Policy, data, setup (about 1–2 weeks, partly parallel)
 - Get EXCO answers to Section 21; fix the salary basis, cap, loan rules and approval chain.
+- Define the typed policy version schema, approval/change log, tenant operating model and module records.
 - Obtain a sample export of the existing system.
-- Create the Neon project (Frankfurt), branches, roles; Docker Compose and Caddy on the Frankfurt VPS; CI with lint, type checks and tests.
+- Create the Neon project (Frankfurt), branches, roles; Docker Compose behind the existing Nginx on the Frankfurt VPS; CI with lint, type checks and tests.
 - Start Meta business verification and legal consultations.
 - **Exit:** policy sheet signed off, empty system deployed to staging with health checks.
 
 ### Phase 1 — Financial core (about 6–8 weeks)
-Tenancy, auth with MFA, members, salary records, **double-entry ledger** with DB enforcement, dues and savings, loan products, applications, eligibility engine with locking and partial unique index, approvals, manual disbursement with independent authorizer, schedule generation, audit log with hash chain, 5 fraud rules, minimal officer portal (members, loans, approvals, ledger explorer).
+Tenancy, auth with MFA, members, salary records, **double-entry ledger** with DB enforcement, dues and savings, cooperative policy version tables and maker-checker policy approval, loan products constrained by cooperative safeguards, applications, then eligibility engine with locking and partial unique index (recording the policy version used), approvals (recording the policy version used), manual disbursement with independent authorizer, schedule generation, audit log with hash chain, 5 fraud rules, minimal officer portal (members, loans, approvals, ledger explorer). MVP operating model is `loan_cooperative`.
 - **Exit:** acceptance tests 1–3 (rules layer), 11–14, 18, 19, 21 pass; internal demo with seeded data.
 
 ### Phase 2 — Member channel and confirmations (about 3–4 weeks)
@@ -445,14 +463,16 @@ Official WhatsApp adapter, approved templates, usage and cost report, PDF statem
 - **Exit:** pilot signed off by EXCO; incident and restore drills done (test 20).
 
 ### Phase 5 — SaaS readiness (about 4+ weeks)
-Tenant administration UI, pricing and billing, onboarding playbook, year-end processes, external audit export, load and security testing, optional payment-provider disbursement, white-label bots, second cooperative.
+Tenant administration UI, pricing and billing, onboarding playbook, year-end processes, external audit export, load and security testing, optional payment-provider disbursement, white-label bots, second cooperative. Add `thrift_society` after the MVP; add `rotating_ajo` only after validation with a real group.
 
 ### First working session checklist
 1. Create repo skeleton per Section 8 and CI.
 2. Create Neon project in `aws-eu-central-1`; set up `main/staging/dev` branches, roles and the two connection strings; note findings in `/docs/neon.md`.
-3. Migration 0001: extensions, tenants, users and roles, RLS scaffolding.
-4. Migration 0002: accounts, journal entries and lines, balance trigger, immutability triggers, `post_journal_entry`, with property tests.
-5. Health endpoint, structured logging, Sentry, deployment to staging.
+3. [x] Migration 0001: cooperative tenants and RLS context helper.
+4. [x] Migration 0002: accounts, journal entries and lines, balance trigger, immutability triggers, `post_journal_entry`, with integration and property tests (applied to the dev branch; exercised as `ajo_app`).
+5. [x] Migration 0003: tenant directory, staff users and roles, MFA, sessions, recovery codes, rate limits, forced RLS and hash-chained audit events; bootstrap and verification CLI with integration tests (applied to the dev branch; exercised as `ajo_app`).
+6. [x] Migration 0004: operating models and modules, typed policy versions with maker-checker approval, append-only policy change history and safeguarded loan products (applied to the dev branch; exercised as `ajo_app`).
+7. Health endpoint, structured logging, Sentry, deployment to staging.
 
 ---
 
@@ -512,3 +532,15 @@ Tenant administration UI, pricing and billing, onboarding playbook, year-end pro
 - Every feature ships with tests that map to Section 18.
 - Prefer boring technology; add a dependency only with a written reason in an ADR.
 - If this file and the code disagree, fix one of them in the same change.
+
+---
+
+## Change log
+
+- **23 October 2026:** Updated D14 and deployment architecture for the existing Nginx reverse proxy; recorded Neon service and dev-branch restrictions; added policy and product configuration, operating models, module and ledger account requirements; replaced `cooperative_settings` with policy tables and reordered roadmap work so policy versions precede the eligibility engine.
+- **24 October 2026:** Added and applied Alembic migration 0002 for the RLS-protected, append-only double-entry ledger, with invoker posting function, idempotency and reversal support; added `ajo_app` integration coverage and a Hypothesis balance property test. Lint, mypy and the full test suite passed.
+- **24 October 2026:** Added and applied Alembic migration 0003 for tenant directory, staff authentication with mandatory TOTP MFA, forced-RLS auth tables, PostgreSQL lockout limits, sessions, recovery codes and append-only hash-chained audit events; added cooperative bootstrap and audit verification CLI commands plus integration coverage. Ruff, mypy and the full suite passed on the dev branch.
+- **24 October 2026:** Added and applied Alembic migration 0004 for operating models/modules, typed cooperative policy versions, maker-checker approval, append-only policy change history and loan products constrained by cooperative safeguards; added role-checked policy, product and module endpoints with integration coverage as `ajo_app`. Ruff, formatting, mypy and the full suite passed (37 tests).
+- **24 October 2026:** Reworked tests to use a disposable local Postgres 16 database and `ajo_app`, added unit/db/property markers and configurable Hypothesis profiles, consolidated coverage around the required invariants, added test database Compose and make targets, and updated CI to run `make test-all`.
+- **24 October 2026:** Added migration 0005 and member, salary, bank-account, savings-lock and withdrawal-request data with forced tenant RLS; added default chart bootstrap, ledger-derived member balances, contribution and maker-checker withdrawal services, member/import endpoints, and the seven requested integration tests. Bank details expose only last four digits.
+- **24 October 2026:** Added migration 0006 for forced-RLS loan applications, immutable hashed terms snapshots, loans and schedules, guarantees, committee approvals and fraud alerts; added integer-only WAT schedule and capacity calculations, eligibility and maker-checker loan workflow services, endpoints, and the requested calculation and workflow tests. Migration applied to dev; Ruff and mypy passed. Pytest was not run at the user's request.
