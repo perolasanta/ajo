@@ -32,10 +32,15 @@ async def request_otp(coop_slug: str, token: str, request: Request) -> dict[str,
 
 @router.post("/confirm/{coop_slug}/{token}/decision", status_code=202)
 async def post_decision(
-    coop_slug: str, token: str, body: DecisionBody, request: Request,
+    coop_slug: str,
+    token: str,
+    body: DecisionBody,
+    request: Request,
     user_agent: Annotated[str, Header(alias="User-Agent")] = "",
 ) -> dict[str, str]:
-    result = await service.decide(coop_slug, token, body.otp, body.decision, _ip(request), user_agent)
+    result = await service.decide(
+        coop_slug, token, body.otp, body.decision, _ip(request), user_agent
+    )
     if result == "terms_changed":
         raise HTTPException(status_code=409, detail="terms changed")
     if result != "recorded":

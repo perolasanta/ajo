@@ -43,15 +43,33 @@ async def add_bank_account(
             text("""INSERT INTO bank_accounts
               (id,cooperative_id,member_id,bank_code,account_number_encrypted,last4,account_name,verified_at,status)
               VALUES(:id,:cid,:member,:bank,:encrypted,:last4,:name,:verified,:status)"""),
-            {"id": account_id, "cid": current.cooperative_id, "member": member_id,
-             "bank": bank_code.strip(), "encrypted": encrypt_account_number(digits),
-             "last4": digits[-4:], "name": account_name.strip(), "verified": verified_at,
-             "status": "verified" if mark_verified else "pending"},
+            {
+                "id": account_id,
+                "cid": current.cooperative_id,
+                "member": member_id,
+                "bank": bank_code.strip(),
+                "encrypted": encrypt_account_number(digits),
+                "last4": digits[-4:],
+                "name": account_name.strip(),
+                "verified": verified_at,
+                "status": "verified" if mark_verified else "pending",
+            },
         )
-        await append_audit(session, cooperative_id=current.cooperative_id,
-            actor_user_id=current.user_id, role=role, action="bank_account_added",
-            entity_type="bank_account", entity_id=str(account_id),
-            summary={"member_id": str(member_id), "bank_code": bank_code.strip(),
-                     "last4": digits[-4:], "verified": mark_verified},
-            channel="api", ip=None)
+        await append_audit(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            role=role,
+            action="bank_account_added",
+            entity_type="bank_account",
+            entity_id=str(account_id),
+            summary={
+                "member_id": str(member_id),
+                "bank_code": bank_code.strip(),
+                "last4": digits[-4:],
+                "verified": mark_verified,
+            },
+            channel="api",
+            ip=None,
+        )
     return account_id

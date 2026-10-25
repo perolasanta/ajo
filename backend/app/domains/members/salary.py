@@ -42,13 +42,27 @@ async def add_salary_record(
             text("""INSERT INTO salary_records
               (id,cooperative_id,member_id,effective_from,basis,amount_kobo,source,recorded_by)
               VALUES(:id,:cid,:member,:effective,:basis,:amount,:source,:actor)"""),
-            {"id": salary_id, "cid": current.cooperative_id, "member": member_id,
-             "effective": effective_from, "basis": basis, "amount": amount_kobo,
-             "source": source, "actor": current.user_id},
+            {
+                "id": salary_id,
+                "cid": current.cooperative_id,
+                "member": member_id,
+                "effective": effective_from,
+                "basis": basis,
+                "amount": amount_kobo,
+                "source": source,
+                "actor": current.user_id,
+            },
         )
-        await append_audit(session, cooperative_id=current.cooperative_id,
-            actor_user_id=current.user_id, role=role, action="salary_record_added",
-            entity_type="salary_record", entity_id=str(salary_id),
+        await append_audit(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            role=role,
+            action="salary_record_added",
+            entity_type="salary_record",
+            entity_id=str(salary_id),
             summary={"member_id": str(member_id), "basis": basis, "amount_kobo": amount_kobo},
-            channel="api", ip=None)
+            channel="api",
+            ip=None,
+        )
     return salary_id

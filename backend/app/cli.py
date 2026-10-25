@@ -1,4 +1,4 @@
-"""Operational CLI for cooperative bootstrap and audit verification."""
+"""Operational CLI for cooperative bootstrap, demo seeding and audit verification."""
 
 from __future__ import annotations
 
@@ -16,10 +16,12 @@ from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.core.db import make_engine
-from app.core.security import hash_password
-from app.domains.audit.service import append_audit, verify_audit_chain
+from app.core.db import make_engine, transaction
+from app.domains.audit.service import verify_audit_chain
+from app.domains.auth.service import resolve_tenant_slug
+from app.domains.auth.staff import _create_staff_user_in_session
 from app.domains.ledger.chart import create_default_chart
+from app.seed_demo import seed_demo
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -63,42 +65,58 @@ async def create_cooperative(slug: str, name: str, admin_email: str) -> str:
                 ),
                 {"slug": slug, "cooperative_id": cooperative_id},
             )
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO users (id, cooperative_id, email, password_hash)
-                    VALUES (:id, :cooperative_id, :email, :password_hash)
-                    """
-                ),
-                {
-                    "id": user_id,
-                    "cooperative_id": cooperative_id,
-                    "email": email,
-                    "password_hash": hash_password(temporary_password),
-                },
-            )
-            await session.execute(
-                text(
-                    "INSERT INTO user_roles (cooperative_id, user_id, role) "
-                    "VALUES (:cooperative_id, :user_id, 'admin')"
-                ),
-                {"cooperative_id": cooperative_id, "user_id": user_id},
-            )
-            await append_audit(
+            await _create_staff_user_in_session(
                 session,
                 cooperative_id=cooperative_id,
+                email=email,
+                password=temporary_password,
+                roles=("admin",),
                 actor_user_id=user_id,
-                role="admin",
-                action="cooperative_bootstrapped",
-                entity_type="user",
-                entity_id=str(user_id),
-                summary={"role": "admin"},
+                actor_role="admin",
                 channel="cli",
-                ip=None,
+                user_id=user_id,
             )
         return temporary_password
     finally:
         await engine.dispose()
+
+
+async def list_dead_notifications(slug: str) -> int:
+    """List dead-lettered notifications for a slug without their payloads."""
+    tenant = await resolve_tenant_slug(slug)
+    if tenant is None:
+        print("slug does not exist", file=sys.stderr)
+        return 1
+    cooperative_id = tenant[0]
+    async with transaction(cooperative_id) as session:
+        rows = (
+            await session.execute(
+                text(
+                    """SELECT id, member_id, kind, attempts, created_at,
+                              next_attempt_at, sent_at
+                         FROM notifications
+                        WHERE cooperative_id = :cid AND status = 'failed'
+                        ORDER BY created_at"""
+                ),
+                {"cid": cooperative_id},
+            )
+        ).all()
+    if not rows:
+        print("No dead-lettered notifications.")
+        return 0
+    header = (
+        f"{'id':36}  {'member_id':36}  {'kind':20}  {'attempts':>8}  "
+        f"{'created_at':25}  {'next_attempt_at':25}  {'sent_at':25}"
+    )
+    print(header)
+    for row in rows:
+        sent = "" if row.sent_at is None else str(row.sent_at)
+        print(
+            f"{str(row.id):36}  {str(row.member_id):36}  {str(row.kind):20}  "
+            f"{int(row.attempts):>8}  {str(row.created_at):25}  "
+            f"{str(row.next_attempt_at):25}  {sent:25}"
+        )
+    return 0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -110,6 +128,12 @@ def _parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--admin-email", required=True)
     verify_parser = subparsers.add_parser("verify-audit")
     verify_parser.add_argument("--cooperative-id", required=True, type=uuid.UUID)
+    seed_parser = subparsers.add_parser("seed-demo")
+    seed_parser.add_argument("--slug", required=True)
+    seed_parser.add_argument(
+        "--yes-fake-data", action="store_true", help="confirm seeding of fictional demo data"
+    )
+    subparsers.add_parser("notifications-dead").add_argument("--slug", required=True)
     return parser
 
 
@@ -120,6 +144,15 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"Admin email: {args.admin_email.strip().lower()}")
         print(f"One-time temporary password: {temporary_password}")
         return 0
+    if args.command == "seed-demo":
+        try:
+            await seed_demo(args.slug, args.yes_fake_data)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        return 0
+    if args.command == "notifications-dead":
+        return await list_dead_notifications(args.slug)
     verification = await verify_audit_chain(args.cooperative_id)
     if verification.valid:
         print(f"Audit chain valid ({verification.entries_checked} entries)")

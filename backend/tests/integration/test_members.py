@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import asyncpg
 import pytest
@@ -12,6 +13,8 @@ from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict
 from app.domains.auth.service import CurrentSession
 from app.domains.members import service
+from app.domains.members.bank_accounts import add_bank_account
+from app.domains.members.salary import add_salary_record
 from tests.conftest import create_tenant
 
 pytestmark = pytest.mark.db
@@ -163,3 +166,63 @@ async def test_csv_dry_run_writes_nothing(db: asyncpg.Connection) -> None:
         after = await db.fetchval("SELECT count(*) FROM members WHERE cooperative_id=$1", cid)
     assert result["valid_rows"] == 1 and result["imported"] == 0
     assert before == after
+
+
+async def test_salary_and_bank_account_tenant_isolated_and_audited(
+    db: asyncpg.Connection,
+) -> None:
+    cid, uid, _, member_id, _ = await setup_tenant(db)
+    other = await create_tenant(db, name="Other tenant", slug_prefix="other", roles=())
+    other_cid = other.cooperative_id
+
+    salary_id = await add_salary_record(
+        session(cid, uid, "officer"),
+        member_id,
+        effective_from=date.today(),
+        basis="net",
+        amount_kobo=1_000_000,
+        source="declared",
+    )
+    bank_id = await add_bank_account(
+        session(cid, uid, "officer"),
+        member_id,
+        bank_code="001",
+        account_number="1234567890",
+        account_name="Isolated member",
+        mark_verified=False,
+    )
+
+    # Audited: an audit row exists for each created record in the owning tenant.
+    async with db.transaction():
+        await db.execute("SELECT set_config('app.cooperative_id',$1,true)", str(cid))
+        assert (
+            await db.fetchval(
+                "SELECT count(*) FROM audit_logs WHERE action='salary_record_added' "
+                "AND entity_id=$1",
+                str(salary_id),
+            )
+            == 1
+        )
+        assert (
+            await db.fetchval(
+                "SELECT count(*) FROM audit_logs WHERE action='bank_account_added' "
+                "AND entity_id=$1",
+                str(bank_id),
+            )
+            == 1
+        )
+        # The account number is encrypted at rest, never stored in plaintext.
+        row = await db.fetchrow(
+            "SELECT last4, account_number_encrypted FROM bank_accounts "
+            "WHERE cooperative_id=$1 AND id=$2",
+            cid,
+            bank_id,
+        )
+        assert row["last4"] == "7890"
+        assert row["account_number_encrypted"] != "1234567890"
+
+    # Tenant-isolated: the owning tenant's records are invisible from another tenant (RLS).
+    async with db.transaction():
+        await db.execute("SELECT set_config('app.cooperative_id',$1,true)", str(other_cid))
+        assert await db.fetchval("SELECT count(*) FROM salary_records WHERE id=$1", salary_id) == 0
+        assert await db.fetchval("SELECT count(*) FROM bank_accounts WHERE id=$1", bank_id) == 0

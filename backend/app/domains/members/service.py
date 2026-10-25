@@ -354,10 +354,11 @@ async def import_members(current: CurrentSession, csv_text: str, confirm: bool) 
                 "errors": [{"row": 0, "error": "member_no already exists"}],
                 "valid_rows": 0,
             }
+        created: list[dict[str, str]] = []
         for row in rows:
-            await session.execute(
+            member_id = await session.scalar(
                 text("""INSERT INTO members(cooperative_id,member_no,full_name,phone_e164,email,staff_no,employer,status,joined_on)
-              VALUES(:cid,:no,:name,:phone,:email,:staff,:employer,'active',:joined)"""),
+              VALUES(:cid,:no,:name,:phone,:email,:staff,:employer,'active',:joined) RETURNING id"""),
                 {
                     "cid": current.cooperative_id,
                     "no": row["member_no"],
@@ -369,6 +370,7 @@ async def import_members(current: CurrentSession, csv_text: str, confirm: bool) 
                     "joined": row.get("joined_on") or None,
                 },
             )
+            created.append({"member_no": row["member_no"], "id": str(member_id)})
         await append_audit(
             session,
             cooperative_id=current.cooperative_id,
@@ -381,4 +383,9 @@ async def import_members(current: CurrentSession, csv_text: str, confirm: bool) 
             channel="api",
             ip=None,
         )
-    return {"imported": len(rows), "errors": [], "valid_rows": len(rows)}
+    return {
+        "imported": len(rows),
+        "errors": [],
+        "valid_rows": len(rows),
+        "members": created,
+    }
