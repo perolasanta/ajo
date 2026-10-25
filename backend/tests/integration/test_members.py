@@ -135,6 +135,7 @@ async def test_bank_account_number_never_appears_in_api_output_or_logs(
             mid,
             marker,
         )
+        await db.execute("UPDATE members SET staff_no='STAFF-PREFIX' WHERE id=$1", mid)
     from app.api.members import current_session
     from app.main import create_app
 
@@ -142,9 +143,11 @@ async def test_bank_account_number_never_appears_in_api_output_or_logs(
     app.dependency_overrides[current_session] = lambda: session(cid, uid)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(f"/api/v1/members/{mid}")
+        search_response = await client.get("/api/v1/members?search=staff-pre")
     assert response.status_code == 200
     assert response.json()["bank_accounts"][0]["last4"] == "4321"
     assert marker not in response.text and marker not in caplog.text
+    assert search_response.json()[0]["id"] == str(mid)
 
 
 async def test_csv_dry_run_writes_nothing(db: asyncpg.Connection) -> None:

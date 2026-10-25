@@ -22,19 +22,17 @@ const navigation = [
     path: "/dashboard",
     roles: ["officer", "committee", "treasurer", "admin", "auditor"],
   },
-  { name: "Members", path: "/members", roles: ["officer", "admin", "auditor"], count: "24" },
+  { name: "Members", path: "/members", roles: ["officer", "admin", "auditor"] },
   {
     name: "Loans",
     path: "/loans",
     roles: ["officer", "committee", "admin", "auditor"],
-    count: "8",
   },
   { name: "Disbursements", path: "/disbursements", roles: ["treasurer", "admin", "auditor"] },
   {
     name: "Payroll",
     path: "/payroll",
     roles: ["treasurer", "officer", "admin", "auditor"],
-    count: "3",
   },
   { name: "Audit", path: "/audit", roles: ["admin", "auditor"] },
 ];
@@ -106,7 +104,7 @@ function Shell({
       </Link>
       <p className="mt-2 text-xs text-white/65">Example Cooperative Society</p>
       <nav className="mt-8 space-y-1" aria-label="Main navigation">
-        {links.map(({ name, path, count }) => (
+        {links.map(({ name, path }) => (
           <NavLink
             key={path}
             to={path}
@@ -116,11 +114,6 @@ function Shell({
             }
           >
             {name}
-            {count && (
-              <span className="rounded-full bg-gold px-2 py-0.5 text-[11px] font-semibold text-[#37280d]">
-                {count}
-              </span>
-            )}
           </NavLink>
         ))}
       </nav>
@@ -136,7 +129,7 @@ function Shell({
 
   return (
     <div className="min-h-[100dvh] bg-bg lg:grid lg:grid-cols-[240px_minmax(0,1fr)]">
-      <aside className="hidden min-h-[100dvh] flex-col bg-sidebar p-5 lg:flex">
+      <aside className="hidden flex-col bg-sidebar p-5 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:overflow-y-auto">
         {navigationContent}
       </aside>
       <div className="min-w-0">

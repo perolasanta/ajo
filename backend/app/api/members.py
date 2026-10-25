@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -46,13 +46,23 @@ class ImportBody(BaseModel):
 @router.get("/members")
 async def list_members(
     current: Annotated[CurrentSession, Depends(current_session)],
+    search: Annotated[str | None, Query(max_length=100)] = None,
 ) -> list[dict[str, Any]]:
     _staff(current)
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
-            text("""SELECT id,member_no,full_name,phone_e164,email,status,joined_on
-          FROM members WHERE cooperative_id=:cid ORDER BY member_no"""),
-            {"cid": current.cooperative_id},
+            text("""SELECT id,member_no,full_name,phone_e164,email,staff_no,status,joined_on
+          FROM members
+          WHERE cooperative_id=:cid
+            AND (
+              :search IS NULL
+              OR full_name ILIKE (:search || '%')
+              OR member_no ILIKE (:search || '%')
+              OR phone_e164 ILIKE (:search || '%')
+              OR staff_no ILIKE (:search || '%')
+            )
+          ORDER BY member_no"""),
+            {"cid": current.cooperative_id, "search": search.strip() if search else None},
         )
         return [dict(row) for row in result.mappings()]
 

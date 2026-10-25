@@ -17,23 +17,17 @@ export function ResponsiveTable<Row>({
   data,
   columns,
   getRowKey,
-  onRowClick,
   dense = false,
 }: {
   data: Row[];
   columns: ResponsiveColumn<Row>[];
   getRowKey: (row: Row) => string;
-  onRowClick?: (row: Row) => void;
   dense?: boolean;
 }) {
   const visible = columns.filter((column) => column.role !== "hidden");
   const title = visible.find((column) => column.role === "title");
   const badge = visible.find((column) => column.role === "badge");
   const details = visible.filter((column) => column.role === "meta");
-  const interactive = onRowClick
-    ? "cursor-pointer hover:bg-[#F7F7F1] focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-    : "";
-
   return (
     <>
       <div className="hidden overflow-hidden rounded-card border border-border md:block">
@@ -57,18 +51,7 @@ export function ResponsiveTable<Row>({
           </thead>
           <tbody>
             {data.map((row) => (
-              <tr
-                key={getRowKey(row)}
-                className={interactive}
-                tabIndex={onRowClick ? 0 : undefined}
-                onClick={() => onRowClick?.(row)}
-                onKeyDown={(event) => {
-                  if (onRowClick && (event.key === "Enter" || event.key === " ")) {
-                    event.preventDefault();
-                    onRowClick(row);
-                  }
-                }}
-              >
+              <tr key={getRowKey(row)} className="relative hover:bg-[#F7F7F1]">
                 {visible.map((column) => (
                   <td
                     key={column.key}
@@ -87,17 +70,8 @@ export function ResponsiveTable<Row>({
           <article
             key={getRowKey(row)}
             className={cn(
-              "rounded-card border border-border bg-surface p-4 shadow-card",
-              interactive,
+              "relative rounded-card border border-border bg-surface p-4 shadow-card hover:bg-[#F7F7F1]",
             )}
-            tabIndex={onRowClick ? 0 : undefined}
-            onClick={() => onRowClick?.(row)}
-            onKeyDown={(event) => {
-              if (onRowClick && (event.key === "Enter" || event.key === " ")) {
-                event.preventDefault();
-                onRowClick(row);
-              }
-            }}
           >
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0">{title?.render(row)}</div>

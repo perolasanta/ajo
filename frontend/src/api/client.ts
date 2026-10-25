@@ -76,8 +76,8 @@ async function unwrap<T>(result: { data?: T; response: Response }): Promise<T> {
   return result.data;
 }
 
-export async function getMembers(): Promise<MemberListItem[]> {
-  return unwrap(await api.GET("/members"));
+export async function getMembers(search?: string): Promise<MemberListItem[]> {
+  return unwrap(await api.GET("/members", { params: { query: search ? { search } : {} } }));
 }
 
 export async function getMember(memberId: string): Promise<MemberDetail> {

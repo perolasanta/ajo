@@ -1,6 +1,7 @@
 import * as Tabs from "@radix-ui/react-tabs";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useState } from "react";
+import { useParams } from "react-router-dom";
 import { ApiError, getMember, request } from "../api/client";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -8,6 +9,8 @@ import { Card } from "../ui/Card";
 import { EmptyState, Skeleton } from "../ui/Feedback";
 import { DateTime, Money } from "../ui/Format";
 import { WhyPopover } from "../ui/Overlay";
+import { PageHeader } from "../ui/PageHeader";
+import { Select } from "../ui/Select";
 
 type Session = { roles: string[] };
 
@@ -19,8 +22,17 @@ const balanceNames: Array<[string, string]> = [
   ["available", "Available"],
 ];
 
+const sections = [
+  ["overview", "Overview"],
+  ["loans", "Loans"],
+  ["channels", "Channels"],
+  ["ledger", "Ledger"],
+  ["audit", "Audit"],
+] as const;
+
 export default function MemberDetailPage() {
   const { memberId } = useParams();
+  const [section, setSection] = useState<(typeof sections)[number][0]>("overview");
   const detail = useQuery({
     queryKey: ["member", memberId],
     queryFn: () => getMember(memberId ?? ""),
@@ -41,32 +53,40 @@ export default function MemberDetailPage() {
 
   return (
     <>
-      <header className="mb-6">
-        <Link className="text-sm text-primary hover:underline" to="/members">
-          Members
-        </Link>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="font-serif text-xl font-semibold tracking-tight">{member.full_name}</h1>
-          <span className="text-sm text-muted">{member.member_no}</span>
+      <PageHeader title={member.full_name} breadcrumb={`Members / ${member.full_name}`}>
+        <div className="flex flex-wrap items-center gap-2">
           <Badge>{member.status}</Badge>
+          <Button variant="secondary" disabled title="Member actions are not available yet.">
+            Actions coming soon
+          </Button>
         </div>
-        <p className="mt-1 text-sm text-muted">
-          Joined <DateTime value={member.joined_on} />
-        </p>
-      </header>
+      </PageHeader>
+      <p className="-mt-4 mb-6 text-sm text-muted">
+        {member.member_no} · Joined <DateTime value={member.joined_on} />
+      </p>
 
-      <Tabs.Root defaultValue="overview">
+      <Tabs.Root value={section} onValueChange={(value) => setSection(value as typeof section)}>
+        <div className="mb-5 sm:hidden">
+          <label className="mb-1 block text-sm font-medium" htmlFor="member-section">
+            Section
+          </label>
+          <Select
+            id="member-section"
+            value={section}
+            onChange={(event) => setSection(event.target.value as typeof section)}
+          >
+            {sections.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </div>
         <Tabs.List
-          className="mb-5 flex flex-wrap gap-1 border-b border-border"
+          className="mb-5 hidden flex-wrap gap-1 border-b border-border sm:flex"
           aria-label="Member record sections"
         >
-          {[
-            ["overview", "Overview"],
-            ["loans", "Loans"],
-            ["channels", "Channels"],
-            ["ledger", "Ledger"],
-            ["audit", "Audit"],
-          ].map(([value, label]) => (
+          {sections.map(([value, label]) => (
             <Tabs.Trigger
               key={value}
               value={value}
@@ -89,13 +109,13 @@ export default function MemberDetailPage() {
         <Tabs.Content value="ledger">
           <ComingSoon
             title="Ledger coming soon"
-            detail="Ledger entries for this member will appear here."
+            detail="Ledger entries will appear here once the ledger screen is added."
           />
         </Tabs.Content>
         <Tabs.Content value="audit">
           <ComingSoon
             title="Audit coming soon"
-            detail="Audit evidence for this member will appear here."
+            detail="Audit entries will appear here once the audit screen is added."
           />
         </Tabs.Content>
       </Tabs.Root>
@@ -159,12 +179,22 @@ function Overview({ member }: { member: Awaited<ReturnType<typeof getMember>> })
             {member.bank_accounts.map((account) => (
               <li
                 key={`${account.bank_code}-${account.last4}`}
-                className="flex flex-wrap items-center gap-2"
+                className="grid gap-1 sm:grid-cols-2"
               >
-                <span>
-                  {account.bank_code} · •••• {account.last4}
-                </span>
-                <Badge>{account.status}</Badge>
+                <div>
+                  <p className="font-medium">Bank: {account.bank_code}</p>
+                  <p className="text-muted">•••• {account.last4}</p>
+                  <p className="text-muted">{account.account_name}</p>
+                </div>
+                <p className="sm:text-right">
+                  {account.verified_at ? (
+                    <>
+                      Verified <DateTime value={account.verified_at} />
+                    </>
+                  ) : (
+                    "Pending verification"
+                  )}
+                </p>
               </li>
             ))}
           </ul>

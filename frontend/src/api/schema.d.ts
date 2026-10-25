@@ -5,6 +5,7 @@ export type MemberListItem = {
   full_name: string;
   phone_e164: string | null;
   email: string | null;
+  staff_no?: string | null;
   status: string;
   joined_on: string;
 };
@@ -30,7 +31,10 @@ export interface paths {
   "/auth/me": Record<string, never>;
   "/auth/logout": Record<string, never>;
   "/members": {
-    get: { responses: { 200: { content: { "application/json": MemberListItem[] } } } };
+    get: {
+      parameters?: { query?: { search?: string } };
+      responses: { 200: { content: { "application/json": MemberListItem[] } } };
+    };
   };
   "/members/{member_id}": {
     get: {

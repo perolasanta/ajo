@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ApiError, getMembers } from "../api/client";
 import type { MemberListItem } from "../api/schema";
 import { Avatar } from "../ui/Avatar";
@@ -39,16 +39,16 @@ function ErrorState({ error, retry }: { error: unknown; retry: () => void }) {
 }
 
 export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListItem[] }) {
-  const navigate = useNavigate();
-  const members = useQuery({
-    queryKey: ["members", fakeMembers ? "design" : "live"],
-    queryFn: () => (fakeMembers ? Promise.resolve(fakeMembers) : getMembers()),
-  });
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(0);
   const [dense, setDense] = useState(false);
   const debouncedSearch = useDebouncedValue(search);
+  const members = useQuery({
+    queryKey: ["members", fakeMembers ? "design" : "live", debouncedSearch],
+    queryFn: () =>
+      fakeMembers ? Promise.resolve(fakeMembers) : getMembers(debouncedSearch || undefined),
+  });
   const statuses = useMemo(
     () => [...new Set((members.data ?? []).map((member) => member.status))],
     [members.data],
@@ -56,14 +56,15 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
   const filtered = useMemo(() => {
     const term = debouncedSearch.trim().toLowerCase();
     return (members.data ?? []).filter((member) => {
-      const searchable = [member.full_name, member.member_no, member.phone_e164]
+      const searchable = [member.full_name, member.member_no, member.phone_e164, member.staff_no]
         .filter(Boolean)
         .join(" ");
       return (
-        (status === "all" || member.status === status) && searchable.toLowerCase().includes(term)
+        (status === "all" || member.status === status) &&
+        (fakeMembers ? searchable.toLowerCase().includes(term) : true)
       );
     });
-  }, [debouncedSearch, members.data, status]);
+  }, [debouncedSearch, fakeMembers, members.data, status]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageMembers = filtered.slice(page * perPage, page * perPage + perPage);
 
@@ -72,11 +73,13 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
 
   return (
     <>
-      <PageHeader title="Members" breadcrumb="Cooperative records" />
+      <PageHeader title="Members" breadcrumb="Cooperative records">
+        {fakeMembers && <Badge>Sample data</Badge>}
+      </PageHeader>
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           aria-label="Search members"
-          placeholder="Search name, staff no. or phone"
+          placeholder="Search full name, member no., phone or staff no."
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
@@ -90,7 +93,9 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
             <option key={value}>{value}</option>
           ))}
         </Select>
-        <TableDensityToggle dense={dense} onChange={setDense} />
+        <div className="hidden md:block">
+          <TableDensityToggle dense={dense} onChange={setDense} />
+        </div>
       </div>
 
       {members.isPending && <MemberSkeleton dense={dense} />}
@@ -98,7 +103,7 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
       {members.data && filtered.length === 0 && (
         <EmptyState
           title="No members found"
-          detail="Try a different name, staff number, phone number or status."
+          detail="Try a different full name, member number, phone number, staff number or status."
           action={
             <Button
               variant="secondary"
@@ -118,7 +123,6 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
             data={pageMembers}
             columns={memberColumns}
             getRowKey={(member) => member.id}
-            onRowClick={(member) => navigate(`/members/${member.id}`)}
             dense={dense}
           />
           <div className="mt-4 flex items-center justify-between gap-3 text-sm">
@@ -160,13 +164,21 @@ const memberColumns: ResponsiveColumn<MemberListItem>[] = [
     render: (member) => (
       <span className="flex min-w-0 items-center gap-3">
         <Avatar name={member.full_name} />
-        <span className="truncate font-medium" title={member.full_name}>
+        <Link
+          to={`/members/${member.id}`}
+          className="block truncate font-medium after:absolute after:inset-0 focus-visible:rounded-control focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+        >
           {member.full_name}
-        </span>
+        </Link>
       </span>
     ),
   },
-  { key: "staffNo", header: "Staff no.", role: "hidden", render: () => "—" },
+  {
+    key: "staffNo",
+    header: "Staff no.",
+    role: "hidden",
+    render: (member) => member.staff_no ?? "—",
+  },
   { key: "phone", header: "Phone", role: "meta", render: (member) => member.phone_e164 ?? "—" },
   {
     key: "status",
