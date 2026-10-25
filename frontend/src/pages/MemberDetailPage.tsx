@@ -57,7 +57,7 @@ export default function MemberDetailPage() {
 
       <Tabs.Root defaultValue="overview">
         <Tabs.List
-          className="mb-5 flex gap-1 overflow-x-auto border-b border-border"
+          className="mb-5 flex flex-wrap gap-1 border-b border-border"
           aria-label="Member record sections"
         >
           {[
@@ -110,7 +110,7 @@ function Overview({ member }: { member: Awaited<ReturnType<typeof getMember>> })
 
   return (
     <div className="space-y-5">
-      <section className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <section className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {balanceNames.map(([key, label]) => (
           <Card key={key} className="p-4">
             <p className="text-sm text-muted">{label}</p>

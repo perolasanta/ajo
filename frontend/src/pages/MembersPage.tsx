@@ -2,13 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, getMembers } from "../api/client";
+import type { MemberListItem } from "../api/schema";
+import { Avatar } from "../ui/Avatar";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState, Skeleton } from "../ui/Feedback";
 import { Input } from "../ui/Input";
 import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
-import { Table, TableCell, TableDensityToggle, TableHead } from "../ui/Table";
+import { ResponsiveTable, TableDensityToggle, type ResponsiveColumn } from "../ui/Table";
 
 const perPage = 15;
 
@@ -36,9 +38,12 @@ function ErrorState({ error, retry }: { error: unknown; retry: () => void }) {
   );
 }
 
-export default function MembersPage() {
+export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListItem[] }) {
   const navigate = useNavigate();
-  const members = useQuery({ queryKey: ["members"], queryFn: getMembers });
+  const members = useQuery({
+    queryKey: ["members", fakeMembers ? "design" : "live"],
+    queryFn: () => (fakeMembers ? Promise.resolve(fakeMembers) : getMembers()),
+  });
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(0);
@@ -109,51 +114,13 @@ export default function MembersPage() {
       )}
       {pageMembers.length > 0 && (
         <>
-          <Table dense={dense}>
-            <TableHead>
-              <tr>
-                <th>Member no.</th>
-                <th>Name</th>
-                <th>Staff no.</th>
-                <th>Phone</th>
-                <th>Status</th>
-                <th className="text-right">Savings</th>
-                <th className="text-right">Available</th>
-                <th>Active loan</th>
-              </tr>
-            </TableHead>
-            <tbody>
-              {pageMembers.map((member) => (
-                <tr
-                  key={member.id}
-                  className="cursor-pointer hover:bg-bg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                  tabIndex={0}
-                  onClick={() => navigate(`/members/${member.id}`)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      navigate(`/members/${member.id}`);
-                    }
-                  }}
-                >
-                  <TableCell>{member.member_no}</TableCell>
-                  <TableCell>
-                    <span className="font-medium">{member.full_name}</span>
-                  </TableCell>
-                  <TableCell>—</TableCell>
-                  <TableCell>{member.phone_e164 ?? "—"}</TableCell>
-                  <TableCell>
-                    <Badge>{member.status}</Badge>
-                  </TableCell>
-                  <TableCell numeric>—</TableCell>
-                  <TableCell numeric>—</TableCell>
-                  <TableCell>
-                    <Badge>Not available</Badge>
-                  </TableCell>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+          <ResponsiveTable
+            data={pageMembers}
+            columns={memberColumns}
+            getRowKey={(member) => member.id}
+            onRowClick={(member) => navigate(`/members/${member.id}`)}
+            dense={dense}
+          />
           <div className="mt-4 flex items-center justify-between gap-3 text-sm">
             <span>{filtered.length} members</span>
             <div className="flex items-center gap-2">
@@ -184,51 +151,40 @@ export default function MembersPage() {
   );
 }
 
+const memberColumns: ResponsiveColumn<MemberListItem>[] = [
+  { key: "memberNo", header: "Member no.", role: "meta", render: (member) => member.member_no },
+  {
+    key: "name",
+    header: "Name",
+    role: "title",
+    render: (member) => (
+      <span className="flex min-w-0 items-center gap-3">
+        <Avatar name={member.full_name} />
+        <span className="truncate font-medium" title={member.full_name}>
+          {member.full_name}
+        </span>
+      </span>
+    ),
+  },
+  { key: "staffNo", header: "Staff no.", role: "hidden", render: () => "—" },
+  { key: "phone", header: "Phone", role: "meta", render: (member) => member.phone_e164 ?? "—" },
+  {
+    key: "status",
+    header: "Status",
+    role: "badge",
+    render: (member) => <Badge>{member.status}</Badge>,
+  },
+  { key: "savings", header: "Savings", role: "hidden", numeric: true, render: () => "—" },
+  { key: "available", header: "Available", role: "hidden", numeric: true, render: () => "—" },
+  { key: "loan", header: "Active loan", role: "meta", render: () => <Badge>Not available</Badge> },
+];
+
 function MemberSkeleton({ dense }: { dense: boolean }) {
   return (
-    <Table dense={dense}>
-      <TableHead>
-        <tr>
-          <th>Member no.</th>
-          <th>Name</th>
-          <th>Staff no.</th>
-          <th>Phone</th>
-          <th>Status</th>
-          <th className="text-right">Savings</th>
-          <th className="text-right">Available</th>
-          <th>Active loan</th>
-        </tr>
-      </TableHead>
-      <tbody>
-        {Array.from({ length: 6 }, (_, index) => (
-          <tr key={index}>
-            <TableCell>
-              <Skeleton className="h-4 w-20" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-4 w-32" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-4 w-16" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-4 w-24" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-4 w-20" />
-            </TableCell>
-            <TableCell numeric>
-              <Skeleton className="ml-auto h-4 w-20" />
-            </TableCell>
-            <TableCell numeric>
-              <Skeleton className="ml-auto h-4 w-20" />
-            </TableCell>
-            <TableCell>
-              <Skeleton className="h-4 w-20" />
-            </TableCell>
-          </tr>
-        ))}
-      </tbody>
-    </Table>
+    <div className="space-y-3">
+      {Array.from({ length: 6 }, (_, index) => (
+        <Skeleton key={index} className={dense ? "h-16" : "h-20"} />
+      ))}
+    </div>
   );
 }

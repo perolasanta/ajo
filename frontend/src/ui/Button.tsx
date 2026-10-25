@@ -4,7 +4,7 @@ import type { ButtonHTMLAttributes, PropsWithChildren } from "react";
 import { cn } from "../lib";
 
 const buttonStyles = cva(
-  "inline-flex min-h-10 items-center justify-center gap-2 rounded-control font-semibold transition duration-150 ease-out disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-muted",
+  "inline-flex h-10 items-center justify-center gap-2 rounded-control px-3.5 font-semibold transition duration-150 ease-out disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-muted max-sm:min-h-11",
   {
     variants: {
       variant: {
@@ -14,7 +14,7 @@ const buttonStyles = cva(
         danger: "bg-danger text-white hover:bg-[#8f1d15]",
       },
       size: {
-        sm: "min-h-8 px-2.5 text-xs",
+        sm: "h-8 px-2.5 text-xs max-sm:min-h-11",
         md: "px-3.5 text-sm",
         lg: "px-5 text-body",
       },

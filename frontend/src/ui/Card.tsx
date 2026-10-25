@@ -7,7 +7,10 @@ export function Card({
 }: PropsWithChildren<HTMLAttributes<HTMLElement>>) {
   return (
     <section
-      className={cn("rounded-card border border-border bg-surface p-5", className)}
+      className={cn(
+        "min-w-0 rounded-card border border-border bg-surface p-5 shadow-card",
+        className,
+      )}
       {...props}
     >
       {children}

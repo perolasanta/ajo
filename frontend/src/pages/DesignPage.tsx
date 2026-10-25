@@ -10,7 +10,7 @@ import { Input } from "../ui/Input";
 import { ConfirmDialog, Dialog, Popover, Tooltip, WhyPopover } from "../ui/Overlay";
 import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
-import { Table, TableCell, TableHead } from "../ui/Table";
+import { ResponsiveTable, type ResponsiveColumn } from "../ui/Table";
 import { Timeline } from "../ui/Timeline";
 
 export default function DesignPage() {
@@ -147,47 +147,13 @@ export default function DesignPage() {
       <Card>
         <h2 className="font-serif text-lg font-semibold">Members table</h2>
 
-        <Table className="mt-4">
-          <TableHead>
-            <tr>
-              <th>Member no.</th>
-              <th>Name</th>
-              <th>Status</th>
-              <th className="text-right">Savings</th>
-              <th>Active loan</th>
-            </tr>
-          </TableHead>
-
-          <tbody>
-            <tr>
-              <TableCell>AJ-0001</TableCell>
-              <TableCell>Ada Okafor</TableCell>
-              <TableCell>
-                <Badge>approved</Badge>
-              </TableCell>
-              <TableCell numeric>
-                <Money kobo={125000000} />
-              </TableCell>
-              <TableCell>
-                <Badge>repaying</Badge>
-              </TableCell>
-            </tr>
-
-            <tr>
-              <TableCell>AJ-0002</TableCell>
-              <TableCell>Uche Nwosu</TableCell>
-              <TableCell>
-                <Badge>awaiting confirmation</Badge>
-              </TableCell>
-              <TableCell numeric>
-                <Money kobo={4250000} />
-              </TableCell>
-              <TableCell>
-                <Badge>awaiting confirmation</Badge>
-              </TableCell>
-            </tr>
-          </tbody>
-        </Table>
+        <div className="mt-4">
+          <ResponsiveTable
+            data={designMembers}
+            columns={designColumns}
+            getRowKey={(member) => member.memberNo}
+          />
+        </div>
 
         <div className="mt-4 flex gap-3">
           <Skeleton className="h-11 w-1/3" />
@@ -249,3 +215,57 @@ export default function DesignPage() {
     </main>
   );
 }
+
+type DesignMember = {
+  memberNo: string;
+  name: string;
+  status: string;
+  savings: number;
+  loan: string;
+};
+
+const designMembers: DesignMember[] = [
+  {
+    memberNo: "AJ-0001",
+    name: "Ada Okafor",
+    status: "approved",
+    savings: 125000000,
+    loan: "repaying",
+  },
+  {
+    memberNo: "AJ-0002",
+    name: "Uche Nwosu",
+    status: "awaiting confirmation",
+    savings: 4250000,
+    loan: "awaiting confirmation",
+  },
+];
+
+const designColumns: ResponsiveColumn<DesignMember>[] = [
+  { key: "memberNo", header: "Member no.", role: "meta", render: (member) => member.memberNo },
+  {
+    key: "name",
+    header: "Name",
+    role: "title",
+    render: (member) => <span className="font-medium">{member.name}</span>,
+  },
+  {
+    key: "status",
+    header: "Status",
+    role: "badge",
+    render: (member) => <Badge>{member.status}</Badge>,
+  },
+  {
+    key: "savings",
+    header: "Savings",
+    role: "meta",
+    numeric: true,
+    render: (member) => <Money kobo={member.savings} />,
+  },
+  {
+    key: "loan",
+    header: "Active loan",
+    role: "meta",
+    render: (member) => <Badge>{member.loan}</Badge>,
+  },
+];

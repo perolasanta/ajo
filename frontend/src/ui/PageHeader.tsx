@@ -9,12 +9,14 @@ export function PageHeader({
   breadcrumb?: string;
 }) {
   return (
-    <header className="mb-6 flex items-end justify-between gap-4">
-      <div>
+    <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
         {breadcrumb && <p className="mb-1 text-xs text-muted">{breadcrumb}</p>}
-        <h1 className="font-serif text-xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="font-serif text-[32px] font-semibold leading-none tracking-[-0.035em]">
+          {title}
+        </h1>
       </div>
-      {children}
+      {children && <div className="w-full sm:w-auto">{children}</div>}
     </header>
   );
 }

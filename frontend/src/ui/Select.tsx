@@ -7,7 +7,7 @@ export function Select({ className, children, ...props }: SelectHTMLAttributes<H
     <div className="relative">
       <select
         className={cn(
-          "min-h-10 w-full appearance-none rounded-card border border-border bg-surface px-3 pr-9 text-sm disabled:cursor-not-allowed disabled:bg-bg aria-[invalid=true]:border-danger aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger/30",
+          "min-h-10 w-full appearance-none rounded-card border border-border bg-surface px-3 pr-9 text-base disabled:cursor-not-allowed disabled:bg-bg aria-[invalid=true]:border-danger aria-[invalid=true]:ring-2 aria-[invalid=true]:ring-danger/30 sm:text-sm",
           className,
         )}
         {...props}

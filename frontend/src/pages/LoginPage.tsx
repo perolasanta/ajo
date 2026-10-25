@@ -60,7 +60,7 @@ export default function LoginPage() {
     }
   }
   return (
-    <main className="mx-auto flex min-h-screen max-w-md items-center p-5">
+    <main className="mx-auto flex min-h-[100dvh] max-w-md items-center p-4 sm:p-5">
       <Card className="w-full">
         <h1 className="font-serif text-xl font-semibold text-primary">Ajo</h1>
         <p className="mt-1 text-sm text-muted">Officer portal</p>
@@ -98,7 +98,9 @@ export default function LoginPage() {
           <section className="mt-6">
             <h2 className="font-semibold">Set up your authenticator</h2>
             <p className="mt-2 text-sm text-muted">Scan this code, or enter the secret manually.</p>
-            {qr && <img className="mx-auto my-4" src={qr} alt="Authenticator setup QR code" />}
+            {qr && (
+              <img className="mx-auto my-4 max-w-full" src={qr} alt="Authenticator setup QR code" />
+            )}
             <p className="break-all rounded-control bg-bg p-3 font-mono text-xs">
               {enrollment.secret}
             </p>

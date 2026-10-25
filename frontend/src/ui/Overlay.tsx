@@ -23,8 +23,8 @@ export function Dialog({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Trigger asChild>{trigger}</DialogPrimitive.Trigger>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/30" />
-        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-card border border-border bg-surface p-5 shadow-lg">
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/40 data-[state=closed]:animate-out data-[state=open]:animate-in" />
+        <DialogPrimitive.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[90dvh] overflow-y-auto rounded-t-card border border-border bg-surface p-5 shadow-lg data-[state=closed]:animate-out data-[state=closed]:slide-out-to-bottom data-[state=open]:animate-in data-[state=open]:slide-in-from-bottom sm:left-1/2 sm:top-1/2 sm:bottom-auto sm:w-[calc(100%-2rem)] sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-card sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95">
           <div className="flex justify-between gap-4">
             <div>
               <DialogPrimitive.Title className="font-serif text-lg font-semibold">
@@ -82,7 +82,7 @@ function ConfirmForm({ onConfirm }: { onConfirm: (reason: string) => void | Prom
           placeholder="Explain why this action is necessary."
         />
       </label>
-      <Button type="submit" variant="danger">
+      <Button className="w-full sm:w-auto" type="submit" variant="danger">
         Confirm action
       </Button>
     </form>

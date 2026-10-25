@@ -5,14 +5,17 @@
 @theme {
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Source Serif 4 Variable", ui-serif, Georgia, serif;
-  --color-bg: #fafaf7;
+  --color-bg: #f2f2ec;
   --color-surface: #ffffff;
   --color-border: #e7e5e0;
   --color-ink: #1c1917;
   --color-muted: #6b665e;
-  --color-primary: #0f766e;
-  --color-primary-hover: #115e59;
-  --color-primary-soft: #e6f4f1;
+  --color-primary: #0e2f2b;
+  --color-primary-hover: #17433d;
+  --color-primary-soft: #e5ece9;
+  --color-sidebar: #0e2f2b;
+  --color-gold: #e0b04f;
+  --shadow-card: 0 1px 2px rgba(20, 30, 28, 0.05);
   --color-warning: #b45309;
   --color-warning-soft: #fef3c7;
   --color-danger: #b42318;
@@ -21,8 +24,8 @@
   --color-success-soft: #dcfce7;
   --color-info: #1d4ed8;
   --color-info-soft: #dbeafe;
-  --radius-control: 6px;
-  --radius-card: 8px;
+  --radius-control: 8px;
+  --radius-card: 12px;
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
@@ -37,10 +40,18 @@ html {
     "tnum" 1,
     "cv11" 1;
 }
+html,
+body,
+#root {
+  min-height: 100dvh;
+}
 body {
   @apply bg-bg text-ink antialiased;
   font-size: 15px;
   line-height: 1.5;
+}
+body {
+  overflow-x: hidden;
 }
 button,
 input,
