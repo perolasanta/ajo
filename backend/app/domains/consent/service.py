@@ -7,6 +7,7 @@ import hmac
 import json
 import secrets
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -46,6 +47,7 @@ def _encrypt(payload: dict[str, Any]) -> str:
 async def create_consent(
     session: Any, *, cooperative_id: uuid.UUID, application_id: uuid.UUID,
     member_id: uuid.UUID, kind: str, terms_hash: bytes | None, slug: str,
+    delivery_observer: Callable[[str], None] | None = None,
 ) -> uuid.UUID:
     row = (await session.execute(text("""SELECT confirmation_expiry_minutes FROM cooperative_policy_versions
         WHERE cooperative_id=:cid AND id=(SELECT policy_version_id FROM loan_applications
@@ -62,6 +64,10 @@ async def create_consent(
         VALUES(:cid,:member,'confirmation_request',:payload)"""),
         {"cid": cooperative_id, "member": member_id,
          "payload": _encrypt({"url": f"/api/v1/confirm/{slug}/{token.hex()}", "consent_id": str(consent_id)})})
+    # The observer is only for trusted in-process delivery adapters (the demo seeder).
+    # It is invoked before the transaction commits and must never persist or log the token.
+    if delivery_observer is not None:
+        delivery_observer(token.hex())
     return consent_id
 
 

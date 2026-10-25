@@ -6,6 +6,7 @@ import hashlib
 import json
 import uuid
 from datetime import date, datetime, time, timedelta
+from collections.abc import Callable
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -228,6 +229,7 @@ async def submit_application(
     beneficiary_member_id: uuid.UUID | None = None,
     destination_bank_account_id: uuid.UUID | None = None,
     guarantors: list[tuple[uuid.UUID, int]] | None = None,
+    consent_delivery_observer: Callable[[str], None] | None = None,
 ) -> uuid.UUID:
     _role(current, {"officer", "admin"})
     if principal_kobo <= 0 or tenor_months <= 0:
@@ -339,6 +341,7 @@ async def submit_application(
             kind="applicant_ack",
             terms_hash=None,
             slug=current.slug,
+            delivery_observer=consent_delivery_observer,
         )
     return application_id
 
@@ -353,7 +356,11 @@ async def run_eligibility(cooperative_id: uuid.UUID, application_id: uuid.UUID) 
 
 
 async def decide_application(
-    current: CurrentSession, application_id: uuid.UUID, decision: str, reason: str
+    current: CurrentSession,
+    application_id: uuid.UUID,
+    decision: str,
+    reason: str,
+    consent_delivery_observer: Callable[[str], None] | None = None,
 ) -> uuid.UUID | None:
     role = _role(current, {"committee"})
     if decision not in {"approved", "rejected"}:
@@ -526,6 +533,7 @@ async def decide_application(
                     kind="final_terms",
                     terms_hash=hashlib.sha256(canonical.encode()).digest(),
                     slug=current.slug,
+                    delivery_observer=consent_delivery_observer,
                 )
             else:
                 await session.execute(
