@@ -196,6 +196,11 @@ async def test_concurrent_approvals_for_member_cannot_both_succeed(
         principal_kobo=500_000,
         tenor_months=6,
     )
+    await db.execute(
+        "UPDATE loan_applications SET status='under_review' WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        application,
+    )
     results = await asyncio.gather(
         decide_application(session(cid, users[1], "committee"), application, "approved", "review"),
         decide_application(session(cid, users[2], "committee"), application, "approved", "review"),
@@ -209,8 +214,17 @@ async def test_snapshot_invalidated_after_term_change(
     db: asyncpg.Connection, loan_base: LoanBase
 ) -> None:
     member = await setup_loan_member(db, loan_base)
-    cid, users, product = loan_base.cooperative_id, loan_base.user_ids, loan_base.product_id
+    cid, users = loan_base.cooperative_id, loan_base.user_ids
+    product = uuid.uuid4()
     bank_account_id = uuid.uuid4()
+    await db.execute(
+        """INSERT INTO loan_products(cooperative_id,id,code,name,interest_method,annual_rate_bps,
+          min_amount_kobo,max_amount_kobo,min_tenor_months,max_tenor_months,fee_bps,
+          guarantors_required,status,approved_at)
+          VALUES($1,$2,'TEST-RATE','Test rate','reducing_balance',100,1,100000000,1,36,0,0,'approved',now())""",
+        cid,
+        product,
+    )
     await db.execute(
         """INSERT INTO bank_accounts(cooperative_id,id,member_id,bank_code,account_number_encrypted,last4,account_name)
            VALUES($1,$2,$3,'001','test-ciphertext','1234','Test member')""",
@@ -232,6 +246,11 @@ async def test_snapshot_invalidated_after_term_change(
             product_id=product,
             principal_kobo=500_000,
             tenor_months=6,
+        )
+        await db.execute(
+            "UPDATE loan_applications SET status='under_review' WHERE cooperative_id=$1 AND id=$2",
+            cid,
+            application,
         )
         await decide_application(
             session(cid, users[1], "committee"), application, "approved", "review"
@@ -270,6 +289,11 @@ async def test_approver_cannot_equal_submitter(db: asyncpg.Connection, loan_base
         principal_kobo=500_000,
         tenor_months=6,
     )
+    await db.execute(
+        "UPDATE loan_applications SET status='under_review' WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        application,
+    )
     with pytest.raises(Conflict, match="submitter"):
         await decide_application(
             session(cid, users[0], "committee"), application, "approved", "review"
@@ -293,6 +317,11 @@ async def test_policy_version_is_stored_on_approval_and_loan(
         principal_kobo=500_000,
         tenor_months=6,
     )
+    await db.execute(
+        "UPDATE loan_applications SET status='under_review' WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        application,
+    )
     await decide_application(session(cid, users[1], "committee"), application, "approved", "review")
     assert (
         await db.fetchval(
@@ -309,4 +338,91 @@ async def test_policy_version_is_stored_on_approval_and_loan(
             application,
         )
         == policy_id
+    )
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"principal_kobo": 100_000_001},
+        {"tenor_months": 37},
+        {"annual_rate_bps": 1},
+    ],
+    ids=["amount", "tenor", "rate"],
+)
+async def test_term_edit_rejects_values_outside_product_limits(
+    db: asyncpg.Connection, loan_base: LoanBase, changes: dict[str, int]
+) -> None:
+    member = await setup_loan_member(db, loan_base)
+    cid, users, product = loan_base.cooperative_id, loan_base.user_ids, loan_base.product_id
+    application = await submit_application(
+        session(cid, users[0], "officer"),
+        member_id=member,
+        product_id=product,
+        principal_kobo=500_000,
+        tenor_months=6,
+    )
+
+    with pytest.raises(Conflict, match="product limits"):
+        await change_application_terms(
+            session(cid, users[0], "officer"), application, changes, "out-of-range edit"
+        )
+    row = await db.fetchrow(
+        "SELECT principal_kobo,tenor_months,annual_rate_bps FROM loan_applications WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        application,
+    )
+    assert (row["principal_kobo"], row["tenor_months"], row["annual_rate_bps"]) == (
+        500_000,
+        6,
+        0,
+    )
+
+
+@pytest.mark.parametrize(
+    ("principal_kobo", "tenor_months", "annual_rate_bps"),
+    [
+        (100_000_001, 6, 0),
+        (500_000, 37, 0),
+        (500_000, 6, 1),
+    ],
+    ids=["amount", "tenor", "rate"],
+)
+async def test_approval_rejects_terms_outside_product_limits(
+    db: asyncpg.Connection,
+    loan_base: LoanBase,
+    principal_kobo: int,
+    tenor_months: int,
+    annual_rate_bps: int,
+) -> None:
+    member = await setup_loan_member(db, loan_base)
+    cid, users, product = loan_base.cooperative_id, loan_base.user_ids, loan_base.product_id
+    application = await submit_application(
+        session(cid, users[0], "officer"),
+        member_id=member,
+        product_id=product,
+        principal_kobo=500_000,
+        tenor_months=6,
+    )
+    await db.execute(
+        """UPDATE loan_applications SET principal_kobo=$3,tenor_months=$4,
+          annual_rate_bps=$5,status='under_review' WHERE cooperative_id=$1 AND id=$2""",
+        cid,
+        application,
+        principal_kobo,
+        tenor_months,
+        annual_rate_bps,
+    )
+
+    with pytest.raises(Conflict, match="product limits"):
+        await decide_application(
+            session(cid, users[1], "committee"), application, "approved", "limit check"
+        )
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM loans WHERE cooperative_id=$1 AND application_id=$2",
+            cid,
+            application,
+        )
+        == 0
     )

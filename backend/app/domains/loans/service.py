@@ -219,6 +219,38 @@ async def _fraud_alert(
     )
 
 
+async def _validate_product_terms(
+    session: Any,
+    cooperative_id: uuid.UUID,
+    product_id: uuid.UUID,
+    principal_kobo: int,
+    tenor_months: int,
+    annual_rate_bps: int,
+) -> Any:
+    product = (
+        (
+            await session.execute(
+                text("""SELECT interest_method,annual_rate_bps,min_amount_kobo,max_amount_kobo,
+                  min_tenor_months,max_tenor_months FROM loan_products
+                  WHERE cooperative_id=:cid AND id=:id"""),
+                {"cid": cooperative_id, "id": product_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if product is None:
+        raise NotFound("Loan product not found")
+    if not product["min_amount_kobo"] <= principal_kobo <= product["max_amount_kobo"]:
+        raise Conflict("Loan amount is outside product limits")
+    if not product["min_tenor_months"] <= tenor_months <= product["max_tenor_months"]:
+        raise Conflict("Loan tenor is outside product limits")
+    # A product stores one fixed annual rate, not a rate band.
+    if annual_rate_bps != product["annual_rate_bps"]:
+        raise Conflict("Loan rate is outside product limits")
+    return product
+
+
 async def submit_application(
     current: CurrentSession,
     *,
@@ -394,6 +426,16 @@ async def decide_application(
             )
         else:
             policy = await _effective_policy(session, cid, _today_wat())
+            product_terms = None
+            if decision == "approved":
+                product_terms = await _validate_product_terms(
+                    session,
+                    cid,
+                    application["product_id"],
+                    int(application["principal_kobo"]),
+                    int(application["tenor_months"]),
+                    int(application["annual_rate_bps"]),
+                )
             eligibility = await _eligibility(session, application, policy)
             if decision == "approved" and not eligibility["eligible"]:
                 raise Conflict("Application does not meet current eligibility rules")
@@ -490,20 +532,12 @@ async def decide_application(
                         "snapshot": snapshot_id,
                     },
                 )
-                product = (
-                    await session.execute(
-                        text(
-                            "SELECT interest_method FROM loan_products WHERE cooperative_id=:cid AND id=:id"
-                        ),
-                        {"cid": cid, "id": application["product_id"]},
-                    )
-                ).one()
                 first_day = datetime.now(WAT).date() + timedelta(days=32)
                 schedule = build_schedule(
                     int(application["principal_kobo"]),
                     int(application["annual_rate_bps"]),
                     int(application["tenor_months"]),
-                    product.interest_method,
+                    product_terms["interest_method"],
                     first_day,
                 )
                 for number, installment in enumerate(schedule, start=1):
@@ -598,6 +632,14 @@ async def change_application_terms(
             raise ValueError("tenor must be positive")
         if "annual_rate_bps" in values and values["annual_rate_bps"] < 0:
             raise ValueError("rate cannot be negative")
+        await _validate_product_terms(
+            session,
+            current.cooperative_id,
+            old["product_id"],
+            int(values.get("principal_kobo", old["principal_kobo"])),
+            int(values.get("tenor_months", old["tenor_months"])),
+            int(values.get("annual_rate_bps", old["annual_rate_bps"])),
+        )
         await session.execute(
             text("""UPDATE loan_applications SET
               principal_kobo=coalesce(:principal,principal_kobo),
