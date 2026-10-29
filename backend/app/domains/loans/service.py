@@ -268,6 +268,15 @@ async def submit_application(
         raise ValueError("loan amount and tenor must be positive")
     cid, today, application_id = current.cooperative_id, _today_wat(), uuid.uuid4()
     async with transaction(cid) as session:
+        await lock_cooperative_member(session, cid, member_id)
+        has_open_application = await session.scalar(
+            text("""SELECT EXISTS(SELECT 1 FROM loan_applications WHERE cooperative_id=:cid
+              AND member_id=:member AND status NOT IN
+              ('rejected','withdrawn','expired','disbursement_failed','closed','written_off'))"""),
+            {"cid": cid, "member": member_id},
+        )
+        if has_open_application:
+            raise Conflict("Member already has an active loan application")
         policy = await _effective_policy(session, cid, today)
         product = (
             (

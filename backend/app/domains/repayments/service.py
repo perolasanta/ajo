@@ -269,6 +269,13 @@ async def post_repayment(
                 {"cid": cid, "loan": loan_id},
             )
             await session.execute(
+                text("""UPDATE loan_applications SET status='closed',updated_at=now()
+                  WHERE cooperative_id=:cid AND id=(SELECT application_id FROM loans
+                    WHERE cooperative_id=:cid AND id=:loan)
+                    AND status IN ('repaying','disbursed','restructured')"""),
+                {"cid": cid, "loan": loan_id},
+            )
+            await session.execute(
                 text(
                     "UPDATE savings_locks SET released_at=now() WHERE cooperative_id=:cid AND loan_id=:loan AND released_at IS NULL"
                 ),
@@ -386,6 +393,12 @@ async def reverse_repayment(
             text(
                 "UPDATE loans SET status='repaying' WHERE cooperative_id=:cid AND id=:loan AND status='closed'"
             ),
+            {"cid": cid, "loan": repayment["loan_id"]},
+        )
+        await session.execute(
+            text("""UPDATE loan_applications SET status='repaying',updated_at=now()
+              WHERE cooperative_id=:cid AND id=(SELECT application_id FROM loans
+                WHERE cooperative_id=:cid AND id=:loan) AND status='closed'"""),
             {"cid": cid, "loan": repayment["loan_id"]},
         )
         await session.execute(

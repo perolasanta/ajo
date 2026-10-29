@@ -213,10 +213,9 @@ async def test_concurrent_approvals_for_member_cannot_both_succeed(
 async def test_snapshot_invalidated_after_term_change(
     db: asyncpg.Connection, loan_base: LoanBase
 ) -> None:
-    member = await setup_loan_member(db, loan_base)
     cid, users = loan_base.cooperative_id, loan_base.user_ids
     product = uuid.uuid4()
-    bank_account_id = uuid.uuid4()
+    await db.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
     await db.execute(
         """INSERT INTO loan_products(cooperative_id,id,code,name,interest_method,annual_rate_bps,
           min_amount_kobo,max_amount_kobo,min_tenor_months,max_tenor_months,fee_bps,
@@ -225,21 +224,24 @@ async def test_snapshot_invalidated_after_term_change(
         cid,
         product,
     )
-    await db.execute(
-        """INSERT INTO bank_accounts(cooperative_id,id,member_id,bank_code,account_number_encrypted,last4,account_name)
-           VALUES($1,$2,$3,'001','test-ciphertext','1234','Test member')""",
-        cid,
-        bank_account_id,
-        member,
-    )
-    term_changes = (
-        {"principal_kobo": 600_000},
-        {"tenor_months": 7},
-        {"annual_rate_bps": 100},
-        {"beneficiary_member_id": member},
-        {"destination_bank_account_id": bank_account_id},
-    )
-    for index, changes in enumerate(term_changes):
+    for index in range(5):
+        member = await setup_loan_member(db, loan_base)
+        bank_account_id = uuid.uuid4()
+        await db.execute(
+            """INSERT INTO bank_accounts(cooperative_id,id,member_id,bank_code,account_number_encrypted,last4,account_name)
+               VALUES($1,$2,$3,'001','test-ciphertext','1234','Test member')""",
+            cid,
+            bank_account_id,
+            member,
+        )
+        term_changes = (
+            {"principal_kobo": 600_000},
+            {"tenor_months": 7},
+            {"annual_rate_bps": 100},
+            {"beneficiary_member_id": member},
+            {"destination_bank_account_id": bank_account_id},
+        )
+        changes = term_changes[index]
         application = await submit_application(
             session(cid, users[0], "officer"),
             member_id=member,
@@ -426,3 +428,47 @@ async def test_approval_rejects_terms_outside_product_limits(
         )
         == 0
     )
+
+
+async def test_simultaneous_submissions_allow_only_one_open_application(
+    db: asyncpg.Connection, loan_base: LoanBase
+) -> None:
+    member = await setup_loan_member(db, loan_base)
+    cid, users, product = loan_base.cooperative_id, loan_base.user_ids, loan_base.product_id
+
+    results = await asyncio.gather(
+        *(
+            submit_application(
+                session(cid, users[0], "officer"),
+                member_id=member,
+                product_id=product,
+                principal_kobo=500_000,
+                tenor_months=6,
+            )
+            for _ in range(2)
+        ),
+        return_exceptions=True,
+    )
+    assert sum(not isinstance(result, BaseException) for result in results) == 1
+    assert sum(isinstance(result, Conflict) for result in results) == 1
+    assert (
+        await db.fetchval(
+            """SELECT count(*) FROM loan_applications WHERE cooperative_id=$1 AND member_id=$2
+           AND status NOT IN ('rejected','withdrawn','expired','disbursement_failed','closed','written_off')""",
+            cid,
+            member,
+        )
+        == 1
+    )
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await db.execute(
+            """INSERT INTO loan_applications(cooperative_id,id,member_id,product_id,policy_version_id,
+              submitted_by,staff_submitted,principal_kobo,tenor_months,annual_rate_bps,status)
+              VALUES($1,$2,$3,$4,$5,$6,true,500000,6,0,'under_review')""",
+            cid,
+            uuid.uuid4(),
+            member,
+            product,
+            loan_base.policy_id,
+            users[0],
+        )
