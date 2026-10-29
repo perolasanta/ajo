@@ -463,6 +463,8 @@ async def decide_application(
             )
             loan_id: uuid.UUID | None = None
             if decision == "approved":
+                if product_terms is None:
+                    raise Conflict("Loan product terms are unavailable")
                 destination = (
                     (
                         await session.execute(
