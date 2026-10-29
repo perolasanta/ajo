@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -69,17 +70,43 @@ async def post_repayment(
     if not reference.strip() or not idempotency_key.strip():
         raise ValueError("Repayment reference and idempotency key are required")
     cid = current.cooperative_id
+    normalized_reason = reason.strip() if reason and reason.strip() else None
+    request_payload = {
+        "operation": "loan_repayment",
+        "loan_id": str(loan_id),
+        "member_id": str(member_id),
+        "amount_kobo": amount_kobo,
+        "source": source,
+        "received_on": received_on.isoformat(),
+        "reference": reference,
+        "reason": normalized_reason,
+    }
+    payload_json = json.dumps(request_payload, separators=(",", ":"))
     async with _transaction_or_session(cid, db_session) as session:
         await session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 9009))"),
-            {"key": idempotency_key},
+            {"key": f"{cid}:repayment:{idempotency_key}"},
         )
-        existing = await session.scalar(
-            text("SELECT id FROM repayments WHERE cooperative_id=:cid AND idempotency_key=:key"),
-            {"cid": cid, "key": idempotency_key},
+        request_hash = await session.scalar(
+            text("SELECT canonical_request_hash(CAST(:payload AS jsonb))"),
+            {"payload": payload_json},
+        )
+        existing = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id,request_hash FROM repayments WHERE cooperative_id=:cid AND idempotency_key=:key"
+                    ),
+                    {"cid": cid, "key": idempotency_key},
+                )
+            )
+            .mappings()
+            .one_or_none()
         )
         if existing is not None:
-            return uuid.UUID(str(existing))
+            if not hmac.compare_digest(bytes(existing["request_hash"]), bytes(request_hash)):
+                raise Conflict("Idempotency key was reused with a different payload")
+            return uuid.UUID(str(existing["id"]))
         loan = (
             (
                 await session.execute(
@@ -201,8 +228,8 @@ async def post_repayment(
                 }
             )
         entry_id = await session.scalar(
-            text("""SELECT post_journal_entry(:cid,:date,'loan_repayment',:source,
-          'Loan repayment receipt',:actor,:key,CAST(:lines AS jsonb),NULL)"""),
+            text("""SELECT post_journal_entry_with_payload(:cid,:date,'loan_repayment',:source,
+          'Loan repayment receipt',:actor,:key,CAST(:lines AS jsonb),CAST(:request_payload AS jsonb),NULL)"""),
             {
                 "cid": cid,
                 "date": received_on,
@@ -210,12 +237,13 @@ async def post_repayment(
                 "actor": current.user_id,
                 "key": f"repayment:{idempotency_key}",
                 "lines": json.dumps(lines),
+                "request_payload": payload_json,
             },
         )
         await session.execute(
             text("""INSERT INTO repayments(cooperative_id,id,loan_id,member_id,amount_kobo,source,
-          received_on,reference,journal_entry_id,idempotency_key,created_by,reason) VALUES(:cid,:id,:loan,:member,:amount,
-          :source,:received,:reference,:entry,:key,:actor,:reason)"""),
+          received_on,reference,journal_entry_id,idempotency_key,request_hash,created_by,reason)
+          VALUES(:cid,:id,:loan,:member,:amount,:source,:received,:reference,:entry,:key,:request_hash,:actor,:reason)"""),
             {
                 "cid": cid,
                 "id": repayment_id,
@@ -227,8 +255,9 @@ async def post_repayment(
                 "reference": reference,
                 "entry": entry_id,
                 "key": idempotency_key,
+                "request_hash": request_hash,
                 "actor": current.user_id,
-                "reason": reason.strip() if reason and reason.strip() else None,
+                "reason": normalized_reason,
             },
         )
         for allocation in allocations:
