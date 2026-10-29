@@ -39,7 +39,7 @@ async def _effective_policy(session: Any, cooperative_id: uuid.UUID, on_date: da
         (
             await session.execute(
                 text("""SELECT id,salary_basis,deduction_cap_bps,max_active_loans,
-              guarantors_required,min_savings_kobo,loan_to_savings_multiple_x100
+              guarantors_required,min_savings_kobo,loan_to_savings_multiple_x100,settings
               FROM cooperative_policy_versions WHERE cooperative_id=:cid AND status='approved'
               AND effective_from<=:day AND (effective_to IS NULL OR :day<effective_to)
               ORDER BY effective_from DESC LIMIT 1"""),

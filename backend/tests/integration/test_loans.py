@@ -58,7 +58,13 @@ def session(cid: uuid.UUID, uid: uuid.UUID, *roles: str) -> CurrentSession:
     )
 
 
-async def _create_loan_base(test_database) -> LoanBase:
+async def _create_loan_base(
+    test_database,
+    *,
+    savings_backing_bps: int | None = None,
+    min_savings_kobo: int = 0,
+    fee_bps: int = 0,
+) -> LoanBase:
     connection = await asyncpg.connect(asyncpg_dsn(test_database.app_url))
     assert await connection.fetchval("SELECT current_user") == "ajo_app"
     seed = await create_tenant(
@@ -73,28 +79,40 @@ async def _create_loan_base(test_database) -> LoanBase:
     await connection.execute(
         """INSERT INTO cooperative_policy_versions(cooperative_id,id,version,status,effective_from,
           proposed_by,approved_by,salary_basis,deduction_cap_bps,max_active_loans,guarantors_required,
-          min_savings_kobo,loan_to_savings_multiple_x100,interest_method)
-          VALUES($1,$2,1,'approved',$3,$4,$5,'net',7000,1,0,0,100000,'reducing_balance')""",
+          min_savings_kobo,loan_to_savings_multiple_x100,interest_method,settings)
+          VALUES($1,$2,1,'approved',$3,$4,$5,'net',7000,1,0,$6,100000,'reducing_balance',$7::jsonb)""",
         cid,
         policy_id,
         today,
         proposer,
         approver,
+        min_savings_kobo,
+        json.dumps(
+            {} if savings_backing_bps is None else {"savings_backing_bps": savings_backing_bps}
+        ),
     )
     await connection.execute(
         """INSERT INTO loan_products(cooperative_id,id,code,name,interest_method,annual_rate_bps,
           min_amount_kobo,max_amount_kobo,min_tenor_months,max_tenor_months,fee_bps,
           guarantors_required,status,approved_at)
-          VALUES($1,$2,'TEST','Test','reducing_balance',0,1,100000000,1,36,0,0,'approved',now())""",
+          VALUES($1,$2,'TEST','Test','reducing_balance',0,1,100000000,1,36,$3,0,'approved',now())""",
         cid,
         product_id,
+        fee_bps,
     )
-    bank_id, savings_id = uuid.uuid4(), uuid.uuid4()
+    bank_id, savings_id, receivable_id, fee_income_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
     await connection.executemany(
         "INSERT INTO accounts(cooperative_id,id,code,name,account_type) VALUES($1,$2,$3,$4,$5)",
         [
             (cid, bank_id, "bank", "Bank", "asset"),
             (cid, savings_id, "member_savings", "Savings", "liability"),
+            (cid, receivable_id, "loans_receivable", "Loans receivable", "asset"),
+            (cid, fee_income_id, "fee_income", "Fee income", "income"),
         ],
     )
     await connection.close()

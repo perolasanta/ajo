@@ -284,15 +284,21 @@ async def post_repayment(
               VALUES(:cid,'paused_deduction_receipt','repayment',:id,'{}'::jsonb)"""),
                 {"cid": cid, "id": repayment_id},
             )
-        outstanding_principal = await session.scalar(
-            text("""SELECT coalesce(sum(s.principal_kobo-a.allocated),0)
-          FROM loan_schedule s LEFT JOIN LATERAL (SELECT coalesce(sum(amount_kobo),0) AS allocated
+        outstanding_balance = await session.scalar(
+            text("""SELECT coalesce(sum(s.principal_kobo+s.interest_kobo+s.dues_kobo+s.savings_kobo
+            -coalesce(a.principal_kobo,0)-coalesce(a.interest_kobo,0)
+            -coalesce(a.dues_kobo,0)-coalesce(a.savings_kobo,0)),0)
+          FROM loan_schedule s LEFT JOIN LATERAL (SELECT
+            sum(amount_kobo) FILTER (WHERE component='principal') AS principal_kobo,
+            sum(amount_kobo) FILTER (WHERE component='interest') AS interest_kobo,
+            sum(amount_kobo) FILTER (WHERE component='dues') AS dues_kobo,
+            sum(amount_kobo) FILTER (WHERE component='savings') AS savings_kobo
             FROM repayment_allocations WHERE cooperative_id=s.cooperative_id AND schedule_id=s.id
-              AND component='principal' AND status='posted') a ON true
+              AND status='posted') a ON true
           WHERE s.cooperative_id=:cid AND s.loan_id=:loan"""),
             {"cid": cid, "loan": loan_id},
         )
-        if int(outstanding_principal or 0) == 0:
+        if int(outstanding_balance or 0) == 0:
             await session.execute(
                 text("UPDATE loans SET status='closed' WHERE cooperative_id=:cid AND id=:loan"),
                 {"cid": cid, "loan": loan_id},

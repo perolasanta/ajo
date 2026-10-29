@@ -243,6 +243,56 @@ async def test_closing_releases_locks_and_reversal_restores_schedule(
     )
 
 
+async def test_principal_paid_with_savings_component_outstanding_keeps_lock_active(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    loan_id, member_id = await repaying_loan(db, loan_base)
+    cid = loan_base.cooperative_id
+    owner = await asyncpg.connect(test_database.owner_url)
+    try:
+        await owner.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
+        await owner.execute(
+            "UPDATE loan_schedule SET savings_kobo=200 WHERE cooperative_id=$1 AND loan_id=$2 AND installment_no=(SELECT max(installment_no) FROM loan_schedule WHERE cooperative_id=$1 AND loan_id=$2)",
+            cid,
+            loan_id,
+        )
+    finally:
+        await owner.close()
+    await db.execute(
+        "INSERT INTO savings_locks(cooperative_id,member_id,loan_id,amount_kobo) VALUES($1,$2,$3,1)",
+        cid,
+        member_id,
+        loan_id,
+    )
+    principal_and_interest = await db.fetchval(
+        "SELECT sum(principal_kobo+interest_kobo) FROM loan_schedule WHERE cooperative_id=$1 AND loan_id=$2",
+        cid,
+        loan_id,
+    )
+    await post_repayment(
+        session(cid, loan_base.user_ids[0], "treasurer"),
+        loan_id=loan_id,
+        member_id=member_id,
+        amount_kobo=int(principal_and_interest),
+        source="bank_transfer",
+        received_on=date(2099, 1, 1),
+        reference="PARTIAL-COMPONENT-1",
+        idempotency_key="partial-component-1",
+        ip=None,
+    )
+    assert (
+        await db.fetchval(
+            "SELECT status FROM loans WHERE cooperative_id=$1 AND id=$2", cid, loan_id
+        )
+        == "repaying"
+    )
+    assert await db.fetchval(
+        "SELECT released_at IS NULL FROM savings_locks WHERE cooperative_id=$1 AND loan_id=$2",
+        cid,
+        loan_id,
+    )
+
+
 @given(
     receipt=st.integers(min_value=1, max_value=1_000_000),
     due=st.integers(min_value=0, max_value=1_000_000),
