@@ -20,9 +20,11 @@ Roles created in the Console, CLI or API, including the project's default owner 
 
 | Role | Created how | Used for |
 |---|---|---|
+| `neondb_owner` (default) | by Neon | Alembic migrations and `pg_dump` only. **Never** used by API, worker, or scheduler |
 | Neon project owner role (default, e.g. `neondb_owner`; actual name may vary by project) | by Neon | Alembic migrations, `pg_dump`, scheduler lock. **Never** used by the API |
 | `ajo_app` | **SQL** (`backend/scripts/neon_roles.sql`) | API and worker, pooled connection, RLS applies |
 | `ajo_readonly` | **SQL** | Reports and auditor exports |
+| `ajo_scheduler` | **SQL** (`backend/scripts/neon_roles.sql`) | Scheduler's direct session advisory lock only; no `BYPASSRLS` |
 
 Steps: open the Neon SQL Editor on branch `main`, database `ajo`, paste `backend/scripts/neon_roles.sql`, replace both `CHANGE_ME_*` passwords with long random values (`openssl rand -base64 32`), run it. Store the passwords in your password manager.
 
@@ -37,6 +39,7 @@ Roles belong to branches and are copied into child branches, so **create roles f
 In the Console choose Connect, pick the branch, database and role, and toggle **Connection pooling** to see both hosts.
 - `DATABASE_URL`: **pooled** host (has `-pooler` in the hostname), user `ajo_app`.
 - `DATABASE_URL_DIRECT`: **direct** host (no `-pooler`), the owner role.
+- `DATABASE_URL_SCHEDULER`: **direct** host (no `-pooler`), user `ajo_scheduler`; provision its password separately.
 - The Console only shows passwords for roles it manages. For `ajo_app` build the URL by hand from the host in the dialog:
   `postgresql://ajo_app:<password>@ep-xxxx-pooler.eu-central-1.aws.neon.tech/ajo?sslmode=require`
 - The code strips `channel_binding` and handles `sslmode` for asyncpg automatically (`app/core/db.py`).
@@ -44,7 +47,7 @@ In the Console choose Connect, pick the branch, database and role, and toggle **
 ## 6. Pooling rules (Neon runs PgBouncer in transaction mode)
 - Pooled connections do not support session `SET`/`RESET`, `LISTEN/NOTIFY`, SQL-level `PREPARE`, temp tables that outlive a transaction, or **session-level advisory locks**. Protocol-level prepared statements are supported by Neon's PgBouncer.
 - Therefore: tenant context uses `set_config('app.cooperative_id', ..., true)` **inside a transaction** (`app.core.db.transaction()`); locks use `pg_advisory_xact_lock`; never rely on `search_path` set by the app (use schema-qualified names, role-level defaults).
-- Migrations, `pg_dump` and the scheduler use the **direct** URL.
+- Migrations and `pg_dump` use `DATABASE_URL_DIRECT` only. The scheduler uses its separate `DATABASE_URL_SCHEDULER` connection.
 - `DB_DISABLE_PREPARED_CACHE=true` is the safe default. The smoke test tells you whether the cache works on your pooler; if it passes, you may set it to `false`.
 
 ## 7. Verify
@@ -57,6 +60,7 @@ All critical checks must pass. The script checks that `ajo_app` does not bypass 
 ## 8. Backups and restore
 - Check what restore window and instant-restore options your plan gives, and write them below.
 - Nightly encrypted `pg_dump` to storage outside Neon and the VPS: `ops/backup/pg_backup.sh`. Use a `pg_dump` client version at least as new as the Neon server.
+- The backup uses `--no-privileges`, so restore must run `ops/backup/restore_app_acl.sh` as the owner after roles exist and before API/worker start.
 - Rehearse both restore routes monthly (`ops/runbooks/restore.md`).
 
 ## 9. Things to check on your plan (not verified here)
