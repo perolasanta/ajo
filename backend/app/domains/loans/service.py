@@ -54,6 +54,18 @@ async def _effective_policy(session: Any, cooperative_id: uuid.UUID, on_date: da
     return row
 
 
+def _savings_backing_bps(settings: Any) -> int:
+    settings = settings or {}
+    if not isinstance(settings, dict):
+        raise Conflict("Cooperative policy settings must be an object")
+    if "savings_backing_bps" not in settings:
+        return 0
+    bps = settings["savings_backing_bps"]
+    if isinstance(bps, bool) or not isinstance(bps, int) or not 0 <= bps <= 10_000:
+        raise Conflict("Cooperative savings_backing_bps setting must be between 0 and 10000")
+    return bps
+
+
 async def _load_application(
     session: Any, cooperative_id: uuid.UUID, application_id: uuid.UUID
 ) -> Any:
@@ -448,9 +460,19 @@ async def decide_application(
             eligibility = await _eligibility(session, application, policy)
             if decision == "approved" and not eligibility["eligible"]:
                 raise Conflict("Application does not meet current eligibility rules")
+            backing_bps: int | None = None
+            backing_amount: int | None = None
+            if decision == "approved":
+                backing_bps = _savings_backing_bps(policy["settings"])
+                percentage_amount = (
+                    int(application["principal_kobo"]) * backing_bps + 9_999
+                ) // 10_000
+                backing_amount = max(int(policy["min_savings_kobo"]), percentage_amount)
             await session.execute(
                 text("""INSERT INTO approvals(cooperative_id,application_id,approver_id,
-              policy_version_id,product_id,decision,reason) VALUES(:cid,:app,:actor,:policy,:product,:decision,:reason)"""),
+              policy_version_id,product_id,decision,reason,savings_backing_bps,
+              savings_backing_amount_kobo)
+              VALUES(:cid,:app,:actor,:policy,:product,:decision,:reason,:backing_bps,:backing_amount)"""),
                 {
                     "cid": cid,
                     "app": application_id,
@@ -459,6 +481,8 @@ async def decide_application(
                     "product": application["product_id"],
                     "decision": decision,
                     "reason": reason,
+                    "backing_bps": backing_bps,
+                    "backing_amount": backing_amount,
                 },
             )
             loan_id: uuid.UUID | None = None

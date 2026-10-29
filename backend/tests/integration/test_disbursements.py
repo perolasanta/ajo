@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import asyncpg
 import pytest
 
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict
+from app.domains.disbursements import service as disbursement_service
 from app.domains.disbursements.service import (
     authorize,
     confirm_paid,
@@ -19,6 +20,7 @@ from app.domains.disbursements.service import (
     record_transfer,
 )
 from app.domains.loans.service import decide_application, submit_application
+from app.domains.policies import service as policy_service
 from tests.integration.test_loans import (
     LoanBase,
     _create_loan_base,
@@ -53,7 +55,7 @@ async def db(test_database) -> asyncpg.Connection:
 
 
 async def ready_loan(
-    db: asyncpg.Connection, base: LoanBase
+    db: asyncpg.Connection, base: LoanBase, *, principal_kobo: int = 500_000
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     member = await setup_loan_member(db, base)
     cid, preparer, approver = base.cooperative_id, *base.user_ids[:2]
@@ -70,7 +72,7 @@ async def ready_loan(
         session(cid, preparer, "officer"),
         member_id=member,
         product_id=base.product_id,
-        principal_kobo=500_000,
+        principal_kobo=principal_kobo,
         tenor_months=6,
         destination_bank_account_id=bank_account,
     )
@@ -303,12 +305,13 @@ async def test_failed_transfer_posts_nothing_and_restores_ready_state(
 
 
 @pytest.mark.parametrize(
-    ("backing_bps", "minimum_kobo", "expected_bps", "expected_lock_kobo"),
+    ("backing_bps", "minimum_kobo", "expected_bps", "expected_lock_kobo", "principal_kobo"),
     [
-        (2_000, 10_000, 2_000, 100_000),
-        (500, 200_000, 500, 200_000),
-        (None, 10_000, 0, 10_000),
-        (None, 0, 0, 0),
+        (2_000, 10_000, 2_000, 100_000, 500_000),
+        (500, 200_000, 500, 200_000, 500_000),
+        (None, 10_000, 0, 10_000, 500_000),
+        (None, 0, 0, 0, 500_000),
+        (1_001, 10_000, 1_001, 50_051, 500_001),
     ],
 )
 async def test_disbursement_backing_uses_cooperative_policy(
@@ -318,13 +321,14 @@ async def test_disbursement_backing_uses_cooperative_policy(
     minimum_kobo: int,
     expected_bps: int,
     expected_lock_kobo: int,
+    principal_kobo: int,
 ) -> None:
     base = await _create_loan_base(
         test_database,
         savings_backing_bps=backing_bps,
         min_savings_kobo=minimum_kobo,
     )
-    application_id, loan_id, _ = await ready_loan(db, base)
+    application_id, loan_id, _ = await ready_loan(db, base, principal_kobo=principal_kobo)
     identifier = await prepare(
         staff(base.cooperative_id, base.user_ids[0], "treasurer"), loan_id, None
     )
@@ -344,3 +348,72 @@ async def test_disbursement_backing_uses_cooperative_policy(
     )
     assert approval["savings_backing_bps"] == expected_bps
     assert approval["savings_backing_amount_kobo"] == expected_lock_kobo
+
+
+async def test_policy_change_after_approval_preserves_existing_loan_backing_snapshot(
+    db: asyncpg.Connection, test_database, monkeypatch
+) -> None:
+    base = await _create_loan_base(
+        test_database, savings_backing_bps=2_000, min_savings_kobo=10_000
+    )
+    application_id, loan_id, _ = await ready_loan(db, base)
+    approval_before = await db.fetchrow(
+        """SELECT savings_backing_bps,savings_backing_amount_kobo FROM approvals
+          WHERE cooperative_id=$1 AND application_id=$2 AND decision='approved'
+          ORDER BY created_at DESC LIMIT 1""",
+        base.cooperative_id,
+        application_id,
+    )
+    assert approval_before["savings_backing_bps"] == 2_000
+    assert approval_before["savings_backing_amount_kobo"] == 100_000
+
+    changed_effective_date = date.today() + timedelta(days=2)
+    await policy_service.supersede_policy(
+        session(base.cooperative_id, base.user_ids[0], "admin"),
+        base.policy_id,
+        changed_effective_date,
+        "Replace savings backing percentage",
+    )
+    changed_policy_id = await policy_service.propose_policy(
+        session(base.cooperative_id, base.user_ids[0], "admin"),
+        {
+            "effective_from": changed_effective_date,
+            "salary_basis": "net",
+            "deduction_cap_bps": 7_000,
+            "max_active_loans": 1,
+            "guarantors_required": 0,
+            "min_savings_kobo": 10_000,
+            "loan_to_savings_multiple_x100": 100_000,
+            "interest_method": "reducing_balance",
+            "settings": {"savings_backing_bps": 7_000},
+            "confirmation_expiry_minutes": 1_440,
+            "otp_validity_seconds": 300,
+        },
+        "Increase savings backing percentage",
+    )
+    await policy_service.approve_policy(
+        session(base.cooperative_id, base.user_ids[1], "admin"),
+        changed_policy_id,
+        "Approve updated backing percentage",
+    )
+    monkeypatch.setattr(disbursement_service, "_today_wat", lambda: changed_effective_date)
+
+    identifier = await prepare(
+        staff(base.cooperative_id, base.user_ids[0], "treasurer"), loan_id, None
+    )
+    assert identifier is not None
+    approval_after = await db.fetchrow(
+        """SELECT savings_backing_bps,savings_backing_amount_kobo FROM approvals
+          WHERE cooperative_id=$1 AND application_id=$2 AND decision='approved'
+          ORDER BY created_at DESC LIMIT 1""",
+        base.cooperative_id,
+        application_id,
+    )
+    locked = await db.fetchval(
+        "SELECT amount_kobo FROM savings_locks WHERE cooperative_id=$1 AND loan_id=$2 AND released_at IS NULL",
+        base.cooperative_id,
+        loan_id,
+    )
+    assert approval_after["savings_backing_bps"] == 2_000
+    assert approval_after["savings_backing_amount_kobo"] == 100_000
+    assert locked == 100_000

@@ -120,46 +120,27 @@ async def _validate(session: Any, cid: uuid.UUID, loan: Any) -> bool:
     )
     bps = approval["savings_backing_bps"]
     amount = approval["savings_backing_amount_kobo"]
-    # Fix the effective value on the loan decision once; later retries reuse this snapshot.
-    if bps is None:
-        settings = policy["settings"] or {}
-        configured_bps = settings.get("savings_backing_bps", 0)
-        if configured_bps is None:
-            configured_bps = 0
-        if (
-            isinstance(configured_bps, bool)
-            or not isinstance(configured_bps, int)
-            or not 0 <= configured_bps <= 10_000
-        ):
-            raise Conflict("Cooperative savings_backing_bps setting must be between 0 and 10000")
-        bps = configured_bps
-        percentage_amount = (int(loan["principal_kobo"]) * bps + 9_999) // 10_000
-        amount = max(int(policy["min_savings_kobo"]), percentage_amount)
-        if existing_lock is not None:
-            amount = max(amount, int(existing_lock["amount_kobo"]))
-    else:
-        bps = int(bps)
-        amount = int(amount)
-        if existing_lock is not None:
-            amount = max(amount, int(existing_lock["amount_kobo"]))
-    if amount > int(eligibility["available_savings_kobo"]):
+    if bps is None or amount is None:
+        raise Conflict("Approved loan decision is missing its savings backing snapshot")
+    amount = int(amount)
+    # Preserve a larger legacy lock, but never rewrite the approval-time snapshot.
+    existing_amount = int(existing_lock["amount_kobo"]) if existing_lock else 0
+    lock_amount = max(amount, existing_amount)
+    additional_lock = max(0, lock_amount - existing_amount)
+    if additional_lock > int(eligibility["available_savings_kobo"]):
         raise Conflict("Insufficient unlocked savings to back this loan")
-    if (
-        approval["savings_backing_bps"] is None
-        or int(approval["savings_backing_amount_kobo"] or 0) != amount
-    ):
-        await session.execute(
-            text("""UPDATE approvals SET savings_backing_bps=:bps,
-              savings_backing_amount_kobo=:amount WHERE cooperative_id=:cid AND id=:id"""),
-            {"bps": bps, "amount": amount, "cid": cid, "id": approval["id"]},
-        )
-    if amount > 0 and existing_lock is None:
+    if lock_amount > 0 and existing_lock is None:
         await session.execute(
             text("""INSERT INTO savings_locks(cooperative_id,member_id,loan_id,amount_kobo)
           VALUES(:cid,:member,:loan,:amount)"""),
-            {"cid": cid, "member": loan["member_id"], "loan": loan["id"], "amount": amount},
+            {
+                "cid": cid,
+                "member": loan["member_id"],
+                "loan": loan["id"],
+                "amount": lock_amount,
+            },
         )
-    elif existing_lock is not None and int(existing_lock["amount_kobo"]) != amount:
+    elif existing_lock is not None and int(existing_lock["amount_kobo"]) < amount:
         await session.execute(
             text(
                 "UPDATE savings_locks SET amount_kobo=:amount WHERE cooperative_id=:cid AND id=:id"
