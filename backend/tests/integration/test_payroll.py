@@ -376,3 +376,57 @@ async def test_payroll_run_rolls_back_prior_component_entries_if_later_item_fail
         )
         == 0
     )
+
+
+async def test_signoff_requires_posted_run_and_cannot_leave_it_unpostable(
+    db: asyncpg.Connection,
+) -> None:
+    cid, users, loans = await setup_payroll_fixture(db)
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    await service.export_expected(session(cid, users[0], "officer"), run_id)
+    await db.execute(
+        "UPDATE payroll_runs SET status='imported',file_total_kobo=160,imported_by=$3,imported_at=now() WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        run_id,
+        users[0],
+    )
+    await db.execute(
+        """INSERT INTO payroll_items(cooperative_id,run_id,member_id,staff_no_raw,expected_loan_kobo,
+          expected_savings_kobo,expected_dues_kobo,actual_kobo,classification)
+          VALUES($1,$2,$3,$4,110,30,20,160,'matched')""",
+        cid,
+        run_id,
+        loans[2][1],
+        loans[2][2],
+    )
+
+    with pytest.raises(Conflict, match="posted"):
+        await service.sign_off(session(cid, users[3], "admin"), run_id, 160)
+    assert (
+        await db.fetchval(
+            "SELECT status FROM payroll_runs WHERE cooperative_id=$1 AND id=$2", cid, run_id
+        )
+        == "imported"
+    )
+
+    assert await service.post_run(session(cid, users[2], "treasurer"), run_id) == 1
+    posted = await db.fetchrow(
+        """SELECT p.posted_repayment_id,r.journal_entry_id FROM payroll_items p
+           JOIN repayments r ON r.cooperative_id=p.cooperative_id AND r.id=p.posted_repayment_id
+           WHERE p.cooperative_id=$1 AND p.run_id=$2""",
+        cid,
+        run_id,
+    )
+    assert posted is not None and posted["posted_repayment_id"] is not None
+    assert posted["journal_entry_id"] is not None
+    await service.sign_off(session(cid, users[3], "admin"), run_id, 160)
+    assert (
+        await db.fetchval(
+            "SELECT status FROM payroll_runs WHERE cooperative_id=$1 AND id=$2", cid, run_id
+        )
+        == "signed_off"
+    )

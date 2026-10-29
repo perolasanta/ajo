@@ -501,6 +501,8 @@ async def sign_off(
             raise NotFound("Payroll run not found")
         if run["status"] == "signed_off" or run["imported_by"] == current.user_id:
             raise Conflict("A different administrator must sign off the payroll run")
+        if run["status"] != "posted":
+            raise Conflict("Payroll run must be posted before sign-off")
         if run["file_total_kobo"] != bank_total_kobo:
             raise Conflict("File total does not match bank receipt total")
         unresolved = await session.scalar(
