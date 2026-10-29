@@ -355,13 +355,18 @@ async def import_file(
                         "dues": row["dues_kobo"],
                     },
                 )
+        expected_total_kobo = sum(
+            int(row["loan_kobo"]) + int(row["savings_kobo"]) + int(row["dues_kobo"])
+            for row in by_staff.values()
+        )
         await session.execute(
             text(
-                "UPDATE payroll_runs SET status='imported',file_total_kobo=:total,file_sha256=:hash,imported_by=:actor,imported_at=now() WHERE cooperative_id=:cid AND id=:id"
+                "UPDATE payroll_runs SET status='imported',expected_total_kobo=:expected,file_total_kobo=:total,file_sha256=:hash,imported_by=:actor,imported_at=now() WHERE cooperative_id=:cid AND id=:id"
             ),
             {
                 "cid": cid,
                 "id": run_id,
+                "expected": expected_total_kobo,
                 "total": report.file_total_kobo,
                 "hash": digest,
                 "actor": current.user_id,
@@ -400,11 +405,31 @@ async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
         )
         if run is None or run["status"] not in {"imported", "posted"}:
             raise Conflict("Payroll run cannot be posted")
+        totals = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT coalesce(sum(expected_loan_kobo+expected_savings_kobo+
+                          expected_dues_kobo) FILTER (WHERE classification NOT IN
+                          ('duplicate','unknown_member')),0)::bigint AS components_kobo,
+                          coalesce(sum(actual_kobo),0)::bigint AS actual_kobo
+                          FROM payroll_items WHERE cooperative_id=:cid AND run_id=:run"""
+                    ),
+                    {"cid": cid, "run": run_id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        if int(totals["components_kobo"]) != int(run["expected_total_kobo"]):
+            raise Conflict("Payroll components do not reconcile to the expected run total")
+        if int(totals["actual_kobo"]) != int(run["file_total_kobo"]):
+            raise Conflict("Payroll item amounts do not reconcile to the imported run total")
         items = (
             (
                 await session.execute(
                     text(
-                        "SELECT * FROM payroll_items WHERE cooperative_id=:cid AND run_id=:run AND classification IN ('matched','short','over') AND posted_repayment_id IS NULL"
+                        "SELECT * FROM payroll_items WHERE cooperative_id=:cid AND run_id=:run AND classification IN ('matched','short','over') AND posted_repayment_id IS NULL ORDER BY id FOR UPDATE"
                     ),
                     {"cid": cid, "run": run_id},
                 )
@@ -412,41 +437,39 @@ async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
             .mappings()
             .all()
         )
-    posted = 0
-    for item in items:
-        async with transaction(cid) as session:
+        posted = 0
+        for item in items:
             loan = await session.scalar(
                 text(
-                    "SELECT id FROM loans WHERE cooperative_id=:cid AND member_id=:member AND status='repaying' AND NOT deductions_paused ORDER BY created_at LIMIT 1"
+                    "SELECT id FROM loans WHERE cooperative_id=:cid AND member_id=:member AND status='repaying' AND NOT deductions_paused ORDER BY created_at LIMIT 1 FOR UPDATE"
                 ),
                 {"cid": cid, "member": item["member_id"]},
             )
-        if loan is None:
-            continue
-        repayment_id = await post_repayment(
-            current,
-            loan_id=loan,
-            member_id=item["member_id"],
-            amount_kobo=int(item["actual_kobo"]),
-            source="payroll",
-            received_on=date(
-                int(run["period_year"]),
-                int(run["period_month"]),
-                monthrange(int(run["period_year"]), int(run["period_month"]))[1],
-            ),
-            reference=f"payroll:{run_id}:{item['id']}",
-            idempotency_key=f"payroll:{run_id}:{item['member_id']}",
-            ip=None,
-        )
-        async with transaction(cid) as session:
+            if loan is None:
+                continue
+            repayment_id = await post_repayment(
+                current,
+                loan_id=loan,
+                member_id=item["member_id"],
+                amount_kobo=int(item["actual_kobo"]),
+                source="payroll",
+                received_on=date(
+                    int(run["period_year"]),
+                    int(run["period_month"]),
+                    monthrange(int(run["period_year"]), int(run["period_month"]))[1],
+                ),
+                reference=f"payroll:{run_id}:{item['id']}",
+                idempotency_key=f"payroll:{run_id}:{item['member_id']}",
+                ip=None,
+                db_session=session,
+            )
             await session.execute(
                 text(
                     "UPDATE payroll_items SET posted_repayment_id=:repayment WHERE cooperative_id=:cid AND id=:id"
                 ),
                 {"cid": cid, "id": item["id"], "repayment": repayment_id},
             )
-        posted += 1
-    async with transaction(cid) as session:
+            posted += 1
         await session.execute(
             text(
                 "UPDATE payroll_runs SET status='posted',posted_at=now() WHERE cooperative_id=:cid AND id=:id AND status<>'signed_off'"

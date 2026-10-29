@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
@@ -35,6 +38,17 @@ def _role(current: CurrentSession, allowed: set[str]) -> str:
     return role
 
 
+@asynccontextmanager
+async def _transaction_or_session(
+    cooperative_id: uuid.UUID, db_session: AsyncSession | None
+) -> AsyncIterator[AsyncSession]:
+    if db_session is None:
+        async with transaction(cooperative_id) as session:
+            yield session
+    else:
+        yield db_session
+
+
 async def post_repayment(
     current: CurrentSession,
     *,
@@ -47,6 +61,7 @@ async def post_repayment(
     idempotency_key: str,
     ip: str | None,
     reason: str | None = None,
+    db_session: AsyncSession | None = None,
 ) -> uuid.UUID:
     role = _role(current, {"officer", "treasurer", "admin"})
     if amount_kobo <= 0 or source not in {"payroll", "bank_transfer", "cash"}:
@@ -54,7 +69,7 @@ async def post_repayment(
     if not reference.strip() or not idempotency_key.strip():
         raise ValueError("Repayment reference and idempotency key are required")
     cid = current.cooperative_id
-    async with transaction(cid) as session:
+    async with _transaction_or_session(cid, db_session) as session:
         await session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 9009))"),
             {"key": idempotency_key},

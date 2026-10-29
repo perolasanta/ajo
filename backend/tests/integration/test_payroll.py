@@ -168,20 +168,22 @@ async def test_disputed_and_paused_loans_are_excluded_from_payroll_deductions_an
     assert [(row["Staff"], row["Amount"]) for row in exported_rows] == [("STAFF-A", "160")]
 
     await db.execute(
-        "UPDATE payroll_runs SET status='imported',file_total_kobo=480,imported_by=$3,imported_at=now() WHERE cooperative_id=$1 AND id=$2",
+        "UPDATE payroll_runs SET status='imported',expected_total_kobo=160,file_total_kobo=480,imported_by=$3,imported_at=now() WHERE cooperative_id=$1 AND id=$2",
         cid,
         run_id,
         users[0],
     )
-    for _loan_id, member_id, staff_no in loans:
+    for index, (_loan_id, member_id, staff_no) in enumerate(loans):
+        expected = (110, 30, 20, "matched") if index == 2 else (0, 0, 0, "unknown_member")
         await db.execute(
             """INSERT INTO payroll_items(cooperative_id,run_id,member_id,staff_no_raw,expected_loan_kobo,
               expected_savings_kobo,expected_dues_kobo,actual_kobo,classification)
-              VALUES($1,$2,$3,$4,110,30,20,160,'matched')""",
+              VALUES($1,$2,$3,$4,$5,$6,$7,160,$8)""",
             cid,
             run_id,
             member_id,
             staff_no,
+            *expected,
         )
 
     assert await service.post_run(session(cid, users[2], "treasurer"), run_id) == 1
@@ -199,6 +201,23 @@ async def test_disputed_and_paused_loans_are_excluded_from_payroll_deductions_an
         )
         == 1
     )
+    ledger_lines = await db.fetch(
+        """SELECT a.code,sum(l.debit_kobo)::bigint debit_kobo,sum(l.credit_kobo)::bigint credit_kobo
+           FROM journal_lines l JOIN accounts a
+             ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
+           WHERE l.cooperative_id=$1 AND l.entry_id=(
+             SELECT journal_entry_id FROM repayments WHERE cooperative_id=$1 AND loan_id=$2)
+           GROUP BY a.code ORDER BY a.code""",
+        cid,
+        loans[2][0],
+    )
+    assert {(row["code"], row["debit_kobo"], row["credit_kobo"]) for row in ledger_lines} == {
+        ("bank", 160, 0),
+        ("dues_income", 0, 20),
+        ("interest_income", 0, 10),
+        ("loans_receivable", 0, 100),
+        ("member_savings", 0, 30),
+    }
 
 
 async def test_paused_repayment_is_manual_treasurer_only_and_records_reason(
@@ -273,4 +292,87 @@ async def test_paused_repayment_is_manual_treasurer_only_and_records_reason(
             str(repayment_id),
         )
         == "Manual cash receipt approved by treasurer"
+    )
+
+
+async def test_payroll_component_totals_reconcile_before_ledger_posting(
+    db: asyncpg.Connection,
+) -> None:
+    cid, users, loans = await setup_payroll_fixture(db)
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    await service.export_expected(session(cid, users[0], "officer"), run_id)
+    await db.execute(
+        "UPDATE payroll_runs SET status='imported',file_total_kobo=159,imported_by=$3,imported_at=now() WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        run_id,
+        users[0],
+    )
+    await db.execute(
+        """INSERT INTO payroll_items(cooperative_id,run_id,member_id,staff_no_raw,expected_loan_kobo,
+          expected_savings_kobo,expected_dues_kobo,actual_kobo,classification)
+          VALUES($1,$2,$3,$4,110,30,20,160,'matched')""",
+        cid,
+        run_id,
+        loans[2][1],
+        loans[2][2],
+    )
+
+    with pytest.raises(Conflict, match="reconcil"):
+        await service.post_run(session(cid, users[2], "treasurer"), run_id)
+
+    assert await db.fetchval("SELECT count(*) FROM repayments WHERE cooperative_id=$1", cid) == 0
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM journal_entries WHERE cooperative_id=$1 AND source_type='loan_repayment'",
+            cid,
+        )
+        == 0
+    )
+
+
+async def test_payroll_run_rolls_back_prior_component_entries_if_later_item_fails(
+    db: asyncpg.Connection,
+) -> None:
+    cid, users, loans = await setup_payroll_fixture(db)
+    await db.execute(
+        "UPDATE loans SET deductions_paused=false WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        loans[1][0],
+    )
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    await service.export_expected(session(cid, users[0], "officer"), run_id)
+    await db.execute(
+        "UPDATE payroll_runs SET status='imported',file_total_kobo=160,imported_by=$3,imported_at=now() WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        run_id,
+        users[0],
+    )
+    await db.executemany(
+        """INSERT INTO payroll_items(id,cooperative_id,run_id,member_id,staff_no_raw,expected_loan_kobo,
+          expected_savings_kobo,expected_dues_kobo,actual_kobo,classification)
+          VALUES($1,$2,$3,$4,$5,110,30,20,$6,'matched')""",
+        [
+            (uuid.UUID(int=1), cid, run_id, loans[2][1], loans[2][2], 160),
+            (uuid.UUID(int=2), cid, run_id, loans[1][1], loans[1][2], 0),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="invalid"):
+        await service.post_run(session(cid, users[2], "treasurer"), run_id)
+
+    assert await db.fetchval("SELECT count(*) FROM repayments WHERE cooperative_id=$1", cid) == 0
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM journal_entries WHERE cooperative_id=$1 AND source_type='loan_repayment'",
+            cid,
+        )
+        == 0
     )
