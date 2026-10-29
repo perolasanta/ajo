@@ -55,11 +55,11 @@ async def list_members(
           FROM members
           WHERE cooperative_id=:cid
             AND (
-              :search IS NULL
-              OR full_name ILIKE (:search || '%')
-              OR member_no ILIKE (:search || '%')
-              OR phone_e164 ILIKE (:search || '%')
-              OR staff_no ILIKE (:search || '%')
+              CAST(:search AS text) IS NULL
+              OR full_name ILIKE (CAST(:search AS text) || '%')
+              OR member_no ILIKE (CAST(:search AS text) || '%')
+              OR phone_e164 ILIKE (CAST(:search AS text) || '%')
+              OR staff_no ILIKE (CAST(:search AS text) || '%')
             )
           ORDER BY member_no"""),
             {"cid": current.cooperative_id, "search": search.strip() if search else None},
