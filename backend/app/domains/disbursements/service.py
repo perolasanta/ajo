@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
@@ -46,10 +46,7 @@ async def _load(session: Any, cid: uuid.UUID, loan_id: uuid.UUID) -> Any:
 
 
 async def _validate(session: Any, cid: uuid.UUID, loan: Any) -> bool:
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-        {"member": loan["member_id"]},
-    )
+    await lock_cooperative_member(session, cid, loan["member_id"])
     if loan["application_status"] != "ready_for_disbursement":
         raise Conflict("Loan is not ready for disbursement")
     consent = (

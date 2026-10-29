@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
@@ -81,10 +81,7 @@ async def post_repayment(
             raise NotFound("Loan for member not found")
         if loan["status"] not in {"repaying", "disputed"}:
             raise Conflict("Loan is not accepting repayments")
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-            {"member": member_id},
-        )
+        await lock_cooperative_member(session, cid, member_id)
         schedules = (
             (
                 await session.execute(
@@ -298,10 +295,7 @@ async def reverse_repayment(
             raise NotFound("Repayment not found")
         if repayment["status"] != "posted" or repayment["created_by"] == current.user_id:
             raise Conflict("A different approver must reverse a posted repayment")
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-            {"member": repayment["member_id"]},
-        )
+        await lock_cooperative_member(session, cid, repayment["member_id"])
         original_lines = (
             (
                 await session.execute(

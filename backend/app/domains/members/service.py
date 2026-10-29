@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.core.security import _fernet
 from app.domains.audit.service import append_audit
@@ -140,10 +140,7 @@ async def request_withdrawal(
     if amount_kobo <= 0:
         raise ValueError("amount must be positive")
     async with transaction(current.cooperative_id) as session:
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 5))"),
-            {"key": f"{current.cooperative_id}:{member_id}"},
-        )
+        await lock_cooperative_member(session, current.cooperative_id, member_id)
         balance = (
             await session.execute(
                 text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)
@@ -227,6 +224,7 @@ async def approve_withdrawal(current: CurrentSession, request_id: uuid.UUID) -> 
                     ).scalar_one()
                 )
             )
+        await lock_cooperative_member(session, current.cooperative_id, row.member_id)
         balance = (
             await session.execute(
                 text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)

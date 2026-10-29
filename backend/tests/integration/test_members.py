@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import asyncpg
@@ -92,6 +93,45 @@ async def test_same_user_withdrawal_approval_rejected(db: asyncpg.Connection) ->
     request_id = await service.request_withdrawal(posted, mid, 1000, "same-approval-request")
     with pytest.raises(Conflict, match="different user"):
         await service.approve_withdrawal(session(cid, uid, "admin"), request_id)
+
+
+async def test_concurrent_withdrawal_approvals_cannot_overdraw_member_savings(
+    db: asyncpg.Connection,
+) -> None:
+    cid, officer, treasurer, member, _ = await setup_tenant(db)
+    await service.record_contribution(
+        session(cid, officer), member, "savings", 10_000, "seed-savings"
+    )
+    requests = [
+        await service.request_withdrawal(session(cid, officer), member, 7_000, f"withdraw-{i}")
+        for i in range(2)
+    ]
+
+    results = await asyncio.gather(
+        *(
+            service.approve_withdrawal(session(cid, treasurer, "treasurer"), request_id)
+            for request_id in requests
+        ),
+        return_exceptions=True,
+    )
+
+    assert sum(not isinstance(result, BaseException) for result in results) == 1
+    assert sum(isinstance(result, Conflict) for result in results) == 1
+    assert (await service.member_balances(cid, member))["savings_kobo"] == 3_000
+    entries = await db.fetch(
+        """SELECT e.id,e.source_type,a.code,l.debit_kobo,l.credit_kobo
+           FROM journal_entries e JOIN journal_lines l
+             ON l.cooperative_id=e.cooperative_id AND l.entry_id=e.id
+           JOIN accounts a ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
+           WHERE e.cooperative_id=$1 AND e.source_type='withdrawal'
+           ORDER BY e.id,l.line_number""",
+        cid,
+    )
+    assert {(row["code"], row["debit_kobo"], row["credit_kobo"]) for row in entries} == {
+        ("member_savings", 7_000, 0),
+        ("bank", 0, 7_000),
+    }
+    assert len({row["id"] for row in entries}) == 1
 
 
 async def test_contribution_replay_posts_once(db: asyncpg.Connection) -> None:

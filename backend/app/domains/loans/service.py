@@ -5,14 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import date, datetime, time, timedelta
 from collections.abc import Callable
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
@@ -377,10 +377,7 @@ async def decide_application(
         ).scalar_one_or_none()
         if member_id is None:
             raise NotFound("Loan application not found")
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-            {"member": member_id},
-        )
+        await lock_cooperative_member(session, cid, member_id)
         application = await _load_application(session, cid, application_id)
         if application is None:
             raise NotFound("Loan application not found")

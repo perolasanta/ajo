@@ -183,3 +183,13 @@ async def transaction(cooperative_id: uuid.UUID | None = None) -> AsyncIterator[
                 {"cid": str(cooperative_id)},
             )
         yield session
+
+
+async def lock_cooperative_member(
+    session: AsyncSession, cooperative_id: uuid.UUID, member_id: uuid.UUID
+) -> None:
+    """Serialize financial mutations for one member within one cooperative."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 5))"),
+        {"lock_key": f"{cooperative_id}:{member_id}"},
+    )
