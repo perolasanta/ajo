@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import get_settings
 
-_SSL_REQUIRED = {"require", "verify-ca", "verify-full"}
+_SSL_REQUIRED = {"require"}
+_SSL_VERIFICATION_MODES = {"verify-ca", "verify-full"}
 
 
 def split_url(url: str) -> tuple[str, str | None]:
@@ -60,6 +61,11 @@ def to_sqlalchemy_async_url(
     parsed = urlparse(clean)
     params = dict(parse_qsl(parsed.query))
     connect_args: dict[str, Any] = {}
+    if sslmode in _SSL_VERIFICATION_MODES:
+        raise ValueError(
+            f"sslmode={sslmode} is not supported by this adapter; certificate verification "
+            "is not enforced by the SQLAlchemy asyncpg URL conversion"
+        )
     if sslmode in _SSL_REQUIRED:
         connect_args["ssl"] = "require"
     if disable_prepared_cache:

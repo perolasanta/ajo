@@ -89,7 +89,7 @@ def set_session_cookies(response: Response, result: LoginResult) -> None:
             httponly=True,
             secure=True,
             samesite="lax",
-            path="/api/v1/auth",
+            path="/api/v1",
         )
     if result.csrf_token is not None:
         response.set_cookie(
@@ -168,7 +168,7 @@ async def logout(
     await service.logout(current, client_ip(request))
     response = JSONResponse({"logged_out": True})
     response.delete_cookie(
-        SESSION_COOKIE, path="/api/v1/auth", secure=True, httponly=True, samesite="lax"
+        SESSION_COOKIE, path="/api/v1", secure=True, httponly=True, samesite="lax"
     )
     response.delete_cookie(CSRF_COOKIE, path="/", secure=True, samesite="lax")
     return response
@@ -181,7 +181,7 @@ async def revoke_all(
     await service.logout(current, client_ip(request), revoke_all=True)
     response = JSONResponse({"sessions_revoked": True})
     response.delete_cookie(
-        SESSION_COOKIE, path="/api/v1/auth", secure=True, httponly=True, samesite="lax"
+        SESSION_COOKIE, path="/api/v1", secure=True, httponly=True, samesite="lax"
     )
     return response
 
