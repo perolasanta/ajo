@@ -21,6 +21,7 @@ class RepaymentBody(BaseModel):
     received_on: date
     reference: str = Field(min_length=1, max_length=200)
     idempotency_key: str = Field(min_length=1, max_length=200)
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class ReversalBody(BaseModel):

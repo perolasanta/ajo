@@ -8,7 +8,9 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 import pytest
+from pydantic import ValidationError
 
+from app.api.policies import PolicyBody
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict
 from app.domains.auth.service import CurrentSession
@@ -229,4 +231,78 @@ async def test_module_disable_keeps_financial_history(db: asyncpg.Connection) ->
                 cid,
             )
             is False
+        )
+
+
+async def test_policy_savings_backing_bps_saves_valid_integer(db: asyncpg.Connection) -> None:
+    cid, proposer, _ = await tenant(db)
+    policy_id = await service.propose_policy(
+        session(cid, proposer),
+        {
+            "effective_from": date(2099, 1, 1),
+            "salary_basis": "net",
+            "deduction_cap_bps": 7_000,
+            "max_active_loans": 1,
+            "guarantors_required": 0,
+            "min_savings_kobo": 0,
+            "loan_to_savings_multiple_x100": 100_000,
+            "interest_method": "reducing_balance",
+            "settings": {"savings_backing_bps": 10_000},
+            "confirmation_expiry_minutes": 1_440,
+            "otp_validity_seconds": 300,
+        },
+        "Configure full-principal savings backing",
+    )
+    async with db.transaction():
+        await db.execute("SELECT set_config('app.cooperative_id',$1,true)", str(cid))
+        assert (
+            await db.fetchval(
+                "SELECT settings->>'savings_backing_bps' FROM cooperative_policy_versions "
+                "WHERE cooperative_id=$1 AND id=$2",
+                cid,
+                policy_id,
+            )
+            == "10000"
+        )
+
+
+@pytest.mark.parametrize("invalid_bps", [True, 1.5, -1, 10_001, "1000", None])
+async def test_policy_savings_backing_bps_rejects_invalid_values(
+    db: asyncpg.Connection, invalid_bps
+) -> None:
+    cid, proposer, _ = await tenant(db)
+    with pytest.raises(ValueError, match="savings_backing_bps"):
+        await service.propose_policy(
+            session(cid, proposer),
+            {
+                "effective_from": date(2099, 1, 1),
+                "salary_basis": "net",
+                "deduction_cap_bps": 7_000,
+                "max_active_loans": 1,
+                "guarantors_required": 0,
+                "min_savings_kobo": 0,
+                "loan_to_savings_multiple_x100": 100_000,
+                "interest_method": "reducing_balance",
+                "settings": {"savings_backing_bps": invalid_bps},
+                "confirmation_expiry_minutes": 1_440,
+                "otp_validity_seconds": 300,
+            },
+            "Reject invalid savings backing settings",
+        )
+
+
+@pytest.mark.parametrize("invalid_bps", [True, 1.5, -1, 10_001, "1000", None])
+def test_policy_api_rejects_invalid_savings_backing_bps(invalid_bps) -> None:
+    with pytest.raises(ValidationError, match="savings_backing_bps"):
+        PolicyBody(
+            effective_from=date(2099, 1, 1),
+            salary_basis="net",
+            deduction_cap_bps=7_000,
+            max_active_loans=1,
+            guarantors_required=0,
+            min_savings_kobo=0,
+            loan_to_savings_multiple_x100=100_000,
+            interest_method="reducing_balance",
+            settings={"savings_backing_bps": invalid_bps},
+            reason="Reject invalid savings backing settings",
         )

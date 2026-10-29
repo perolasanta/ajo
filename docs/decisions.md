@@ -28,7 +28,7 @@ Loans that are disputed or marked deduction-paused must be excluded from automat
 
 ## 4. Savings backing for loans
 
-Savings backing is configured per cooperative; there is no universal percentage for all tenants. At disbursement, lock the greater of the effective cooperative policy minimum and that cooperative's configured percentage of the loan principal. Keep the applied policy value with the loan's decision record. Release the lock only on full repayment or write-off.
+Savings backing is configured per cooperative in `cooperative_policy_versions.settings.savings_backing_bps` as an integer from 0 through 10,000; an absent key means 0 bps. At loan approval, snapshot the effective bps and computed amount on the approval record. Compute the amount in integer kobo as `max(min_savings_kobo, ceil(principal_kobo * savings_backing_bps / 10000))`, rounding any fractional kobo up. At disbursement, lock that snapshotted amount; later policy changes must not alter the stored values for an already-approved loan. Release the lock only on full repayment or write-off.
 
 ## 5. Borrower and beneficiary confirmation
 

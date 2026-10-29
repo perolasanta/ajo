@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
@@ -35,6 +39,17 @@ def _role(current: CurrentSession, allowed: set[str]) -> str:
     return role
 
 
+@asynccontextmanager
+async def _transaction_or_session(
+    cooperative_id: uuid.UUID, db_session: AsyncSession | None
+) -> AsyncIterator[AsyncSession]:
+    if db_session is None:
+        async with transaction(cooperative_id) as session:
+            yield session
+    else:
+        yield db_session
+
+
 async def post_repayment(
     current: CurrentSession,
     *,
@@ -46,6 +61,8 @@ async def post_repayment(
     reference: str,
     idempotency_key: str,
     ip: str | None,
+    reason: str | None = None,
+    db_session: AsyncSession | None = None,
 ) -> uuid.UUID:
     role = _role(current, {"officer", "treasurer", "admin"})
     if amount_kobo <= 0 or source not in {"payroll", "bank_transfer", "cash"}:
@@ -53,17 +70,43 @@ async def post_repayment(
     if not reference.strip() or not idempotency_key.strip():
         raise ValueError("Repayment reference and idempotency key are required")
     cid = current.cooperative_id
-    async with transaction(cid) as session:
+    normalized_reason = reason.strip() if reason and reason.strip() else None
+    request_payload = {
+        "operation": "loan_repayment",
+        "loan_id": str(loan_id),
+        "member_id": str(member_id),
+        "amount_kobo": amount_kobo,
+        "source": source,
+        "received_on": received_on.isoformat(),
+        "reference": reference,
+        "reason": normalized_reason,
+    }
+    payload_json = json.dumps(request_payload, separators=(",", ":"))
+    async with _transaction_or_session(cid, db_session) as session:
         await session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 9009))"),
-            {"key": idempotency_key},
+            {"key": f"{cid}:repayment:{idempotency_key}"},
         )
-        existing = await session.scalar(
-            text("SELECT id FROM repayments WHERE cooperative_id=:cid AND idempotency_key=:key"),
-            {"cid": cid, "key": idempotency_key},
+        request_hash = await session.scalar(
+            text("SELECT canonical_request_hash(CAST(:payload AS jsonb))"),
+            {"payload": payload_json},
+        )
+        existing = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id,request_hash FROM repayments WHERE cooperative_id=:cid AND idempotency_key=:key"
+                    ),
+                    {"cid": cid, "key": idempotency_key},
+                )
+            )
+            .mappings()
+            .one_or_none()
         )
         if existing is not None:
-            return uuid.UUID(str(existing))
+            if not hmac.compare_digest(bytes(existing["request_hash"]), bytes(request_hash)):
+                raise Conflict("Idempotency key was reused with a different payload")
+            return uuid.UUID(str(existing["id"]))
         loan = (
             (
                 await session.execute(
@@ -81,10 +124,18 @@ async def post_repayment(
             raise NotFound("Loan for member not found")
         if loan["status"] not in {"repaying", "disputed"}:
             raise Conflict("Loan is not accepting repayments")
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-            {"member": member_id},
-        )
+        if loan["status"] == "disputed" or loan["deductions_paused"]:
+            if source == "payroll":
+                raise Conflict(
+                    "Disputed or deduction-paused loans cannot be repaid through payroll"
+                )
+            if role != "treasurer":
+                raise Forbidden("Only a treasurer may manually repay a disputed or paused loan")
+            if not reason or not reason.strip():
+                raise Conflict(
+                    "A reason is required for manual repayment of a disputed or paused loan"
+                )
+        await lock_cooperative_member(session, cid, member_id)
         schedules = (
             (
                 await session.execute(
@@ -177,8 +228,8 @@ async def post_repayment(
                 }
             )
         entry_id = await session.scalar(
-            text("""SELECT post_journal_entry(:cid,:date,'loan_repayment',:source,
-          'Loan repayment receipt',:actor,:key,CAST(:lines AS jsonb),NULL)"""),
+            text("""SELECT post_journal_entry_with_payload(:cid,:date,'loan_repayment',:source,
+          'Loan repayment receipt',:actor,:key,CAST(:lines AS jsonb),CAST(:request_payload AS jsonb),NULL)"""),
             {
                 "cid": cid,
                 "date": received_on,
@@ -186,12 +237,13 @@ async def post_repayment(
                 "actor": current.user_id,
                 "key": f"repayment:{idempotency_key}",
                 "lines": json.dumps(lines),
+                "request_payload": payload_json,
             },
         )
         await session.execute(
             text("""INSERT INTO repayments(cooperative_id,id,loan_id,member_id,amount_kobo,source,
-          received_on,reference,journal_entry_id,idempotency_key,created_by) VALUES(:cid,:id,:loan,:member,:amount,
-          :source,:received,:reference,:entry,:key,:actor)"""),
+          received_on,reference,journal_entry_id,idempotency_key,request_hash,created_by,reason)
+          VALUES(:cid,:id,:loan,:member,:amount,:source,:received,:reference,:entry,:key,:request_hash,:actor,:reason)"""),
             {
                 "cid": cid,
                 "id": repayment_id,
@@ -203,14 +255,22 @@ async def post_repayment(
                 "reference": reference,
                 "entry": entry_id,
                 "key": idempotency_key,
+                "request_hash": request_hash,
                 "actor": current.user_id,
+                "reason": normalized_reason,
             },
         )
         for allocation in allocations:
             await session.execute(
                 text("""INSERT INTO repayment_allocations(cooperative_id,repayment_id,schedule_id,component,amount_kobo)
               VALUES(:cid,:repayment,:schedule,:component,:amount)"""),
-                {"cid": cid, "repayment": repayment_id, **allocation},
+                {
+                    "cid": cid,
+                    "repayment": repayment_id,
+                    "schedule": allocation["schedule_id"],
+                    "component": allocation["component"],
+                    "amount": allocation["amount_kobo"],
+                },
             )
         if remaining:
             await session.execute(
@@ -224,17 +284,30 @@ async def post_repayment(
               VALUES(:cid,'paused_deduction_receipt','repayment',:id,'{}'::jsonb)"""),
                 {"cid": cid, "id": repayment_id},
             )
-        outstanding_principal = await session.scalar(
-            text("""SELECT coalesce(sum(s.principal_kobo-a.allocated),0)
-          FROM loan_schedule s LEFT JOIN LATERAL (SELECT coalesce(sum(amount_kobo),0) AS allocated
+        outstanding_balance = await session.scalar(
+            text("""SELECT coalesce(sum(s.principal_kobo+s.interest_kobo+s.dues_kobo+s.savings_kobo
+            -coalesce(a.principal_kobo,0)-coalesce(a.interest_kobo,0)
+            -coalesce(a.dues_kobo,0)-coalesce(a.savings_kobo,0)),0)
+          FROM loan_schedule s LEFT JOIN LATERAL (SELECT
+            sum(amount_kobo) FILTER (WHERE component='principal') AS principal_kobo,
+            sum(amount_kobo) FILTER (WHERE component='interest') AS interest_kobo,
+            sum(amount_kobo) FILTER (WHERE component='dues') AS dues_kobo,
+            sum(amount_kobo) FILTER (WHERE component='savings') AS savings_kobo
             FROM repayment_allocations WHERE cooperative_id=s.cooperative_id AND schedule_id=s.id
-              AND component='principal' AND status='posted') a ON true
+              AND status='posted') a ON true
           WHERE s.cooperative_id=:cid AND s.loan_id=:loan"""),
             {"cid": cid, "loan": loan_id},
         )
-        if int(outstanding_principal or 0) == 0:
+        if int(outstanding_balance or 0) == 0:
             await session.execute(
                 text("UPDATE loans SET status='closed' WHERE cooperative_id=:cid AND id=:loan"),
+                {"cid": cid, "loan": loan_id},
+            )
+            await session.execute(
+                text("""UPDATE loan_applications SET status='closed',updated_at=now()
+                  WHERE cooperative_id=:cid AND id=(SELECT application_id FROM loans
+                    WHERE cooperative_id=:cid AND id=:loan)
+                    AND status IN ('repaying','disbursed','restructured')"""),
                 {"cid": cid, "loan": loan_id},
             )
             await session.execute(
@@ -270,6 +343,7 @@ async def post_repayment(
             },
             channel="api",
             ip=ip,
+            reason=reason,
         )
     return repayment_id
 
@@ -298,10 +372,7 @@ async def reverse_repayment(
             raise NotFound("Repayment not found")
         if repayment["status"] != "posted" or repayment["created_by"] == current.user_id:
             raise Conflict("A different approver must reverse a posted repayment")
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-            {"member": repayment["member_id"]},
-        )
+        await lock_cooperative_member(session, cid, repayment["member_id"])
         original_lines = (
             (
                 await session.execute(
@@ -357,6 +428,12 @@ async def reverse_repayment(
             text(
                 "UPDATE loans SET status='repaying' WHERE cooperative_id=:cid AND id=:loan AND status='closed'"
             ),
+            {"cid": cid, "loan": repayment["loan_id"]},
+        )
+        await session.execute(
+            text("""UPDATE loan_applications SET status='repaying',updated_at=now()
+              WHERE cooperative_id=:cid AND id=(SELECT application_id FROM loans
+                WHERE cooperative_id=:cid AND id=:loan) AND status='closed'"""),
             {"cid": cid, "loan": repayment["loan_id"]},
         )
         await session.execute(

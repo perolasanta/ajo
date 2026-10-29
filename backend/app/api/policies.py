@@ -7,7 +7,7 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.auth import current_session, require_csrf
 from app.domains.auth.service import CurrentSession
@@ -29,6 +29,16 @@ class PolicyBody(BaseModel):
     otp_validity_seconds: int = Field(default=300, gt=0)
     settings: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("settings")
+    @classmethod
+    def validate_savings_backing_bps(cls, settings: dict[str, Any]) -> dict[str, Any]:
+        if "savings_backing_bps" not in settings:
+            return settings
+        bps = settings["savings_backing_bps"]
+        if isinstance(bps, bool) or not isinstance(bps, int) or not 0 <= bps <= 10_000:
+            raise ValueError("savings_backing_bps must be an integer between 0 and 10000")
+        return settings
 
 
 class ReasonBody(BaseModel):

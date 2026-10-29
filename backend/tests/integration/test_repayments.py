@@ -13,6 +13,7 @@ from hypothesis import strategies as st
 
 from app.core.config import get_settings
 from app.core.db import asyncpg_dsn, dispose_engine
+from app.core.errors import Conflict
 from app.domains.disbursements.service import confirm_paid
 from app.domains.repayments.service import post_repayment, reverse_repayment
 from tests.integration.test_disbursements import authorized_transfer
@@ -57,7 +58,25 @@ async def repaying_loan(db: asyncpg.Connection, base: LoanBase) -> tuple[uuid.UU
             code,
             account_type,
         )
-    disbursement_id, loan_id, authorizer = await authorized_transfer(db, base)
+    rate_product_id = uuid.uuid4()
+    await db.execute(
+        """INSERT INTO loan_products(cooperative_id,id,code,name,interest_method,annual_rate_bps,
+          min_amount_kobo,max_amount_kobo,min_tenor_months,max_tenor_months,fee_bps,
+          guarantors_required,status,approved_at)
+          VALUES($1,$2,$3,'Repayment test','reducing_balance',100,1,100000000,1,36,0,0,'approved',now())""",
+        base.cooperative_id,
+        rate_product_id,
+        f"REPAY-{rate_product_id.hex[:8]}",
+    )
+    repayment_base = LoanBase(
+        base.cooperative_id,
+        base.user_ids,
+        rate_product_id,
+        base.policy_id,
+        base.bank_account_id,
+        base.savings_account_id,
+    )
+    disbursement_id, loan_id, authorizer = await authorized_transfer(db, repayment_base)
     await confirm_paid(session(base.cooperative_id, authorizer, "committee"), disbursement_id, None)
     member_id = await db.fetchval(
         "SELECT member_id FROM loans WHERE cooperative_id=$1 AND id=$2",
@@ -134,12 +153,24 @@ async def test_overpayment_is_unallocated_and_replay_posts_once(
     first = await post_repayment(session(cid, loan_base.user_ids[0], "treasurer"), **kwargs)
     second = await post_repayment(session(cid, loan_base.user_ids[0], "treasurer"), **kwargs)
     assert first == second
+    with pytest.raises(Conflict, match="different payload"):
+        await post_repayment(
+            session(cid, loan_base.user_ids[0], "treasurer"),
+            **{**kwargs, "amount_kobo": int(due) + 100},
+        )
     assert (
         await db.fetchval(
             "SELECT count(*) FROM repayments WHERE cooperative_id=$1 AND idempotency_key='replay-1'",
             cid,
         )
         == 1
+    )
+    assert (
+        await db.fetchval(
+            "SELECT octet_length(request_hash) FROM repayments WHERE cooperative_id=$1 AND idempotency_key='replay-1'",
+            cid,
+        )
+        == 32
     )
     assert (
         await db.fetchval(
@@ -204,6 +235,56 @@ async def test_closing_releases_locks_and_reversal_restores_schedule(
             repayment_id,
         )
         == 0
+    )
+    assert await db.fetchval(
+        "SELECT released_at IS NULL FROM savings_locks WHERE cooperative_id=$1 AND loan_id=$2",
+        cid,
+        loan_id,
+    )
+
+
+async def test_principal_paid_with_savings_component_outstanding_keeps_lock_active(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    loan_id, member_id = await repaying_loan(db, loan_base)
+    cid = loan_base.cooperative_id
+    owner = await asyncpg.connect(test_database.owner_url)
+    try:
+        await owner.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
+        await owner.execute(
+            "UPDATE loan_schedule SET savings_kobo=200 WHERE cooperative_id=$1 AND loan_id=$2 AND installment_no=(SELECT max(installment_no) FROM loan_schedule WHERE cooperative_id=$1 AND loan_id=$2)",
+            cid,
+            loan_id,
+        )
+    finally:
+        await owner.close()
+    await db.execute(
+        "INSERT INTO savings_locks(cooperative_id,member_id,loan_id,amount_kobo) VALUES($1,$2,$3,1)",
+        cid,
+        member_id,
+        loan_id,
+    )
+    principal_and_interest = await db.fetchval(
+        "SELECT sum(principal_kobo+interest_kobo) FROM loan_schedule WHERE cooperative_id=$1 AND loan_id=$2",
+        cid,
+        loan_id,
+    )
+    await post_repayment(
+        session(cid, loan_base.user_ids[0], "treasurer"),
+        loan_id=loan_id,
+        member_id=member_id,
+        amount_kobo=int(principal_and_interest),
+        source="bank_transfer",
+        received_on=date(2099, 1, 1),
+        reference="PARTIAL-COMPONENT-1",
+        idempotency_key="partial-component-1",
+        ip=None,
+    )
+    assert (
+        await db.fetchval(
+            "SELECT status FROM loans WHERE cooperative_id=$1 AND id=$2", cid, loan_id
+        )
+        == "repaying"
     )
     assert await db.fetchval(
         "SELECT released_at IS NULL FROM savings_locks WHERE cooperative_id=$1 AND loan_id=$2",

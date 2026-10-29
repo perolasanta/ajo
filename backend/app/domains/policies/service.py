@@ -57,6 +57,16 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
         )
         fields = {key: values[key] for key in _POLICY_FIELDS if key in values}
         fields.setdefault("settings", {})
+        if not isinstance(fields["settings"], dict):
+            raise ValueError("Policy settings must be an object")
+        if "savings_backing_bps" in fields["settings"]:
+            backing_bps = fields["settings"]["savings_backing_bps"]
+            if (
+                isinstance(backing_bps, bool)
+                or not isinstance(backing_bps, int)
+                or not 0 <= backing_bps <= 10_000
+            ):
+                raise ValueError("savings_backing_bps must be an integer between 0 and 10000")
         policy_id = uuid.uuid4()
         await session.execute(
             text("""
