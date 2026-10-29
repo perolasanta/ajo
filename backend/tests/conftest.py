@@ -16,6 +16,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 # Test-only secrets must exist before any module can load cached application settings.
+os.environ["APP_ENV"] = "development"
 os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 os.environ.setdefault("SECRET_KEY", secrets.token_urlsafe(32))
 

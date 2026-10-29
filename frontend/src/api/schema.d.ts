@@ -10,10 +10,18 @@ export type MemberListItem = {
   joined_on: string;
 };
 
+export type MemberBalances = {
+  savings_kobo: number;
+  shares_kobo: number;
+  dues_paid_kobo: number;
+  locked_kobo: number;
+  available_kobo: number;
+};
+
 export type MemberDetail = MemberListItem & {
   staff_no: string | null;
   employer: string | null;
-  balances: Record<string, number>;
+  balances: MemberBalances;
   bank_accounts: Array<{
     bank_code: string;
     last4: string;

@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         docs_url=None if settings.is_production else "/api/docs",
         openapi_url=None if settings.is_production else "/api/openapi.json",
+        redoc_url=None if settings.is_production else "/redoc",
     )
     install_error_handlers(app)
     app.include_router(health.router, prefix="/api/v1")

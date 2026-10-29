@@ -21,6 +21,7 @@ Roles created in the Console, CLI or API, including the project's default owner 
 | Role | Created how | Used for |
 |---|---|---|
 | `neondb_owner` (default) | by Neon | Alembic migrations and `pg_dump` only. **Never** used by API, worker, or scheduler |
+| Neon project owner role (default, e.g. `neondb_owner`; actual name may vary by project) | by Neon | Alembic migrations, `pg_dump`, scheduler lock. **Never** used by the API |
 | `ajo_app` | **SQL** (`backend/scripts/neon_roles.sql`) | API and worker, pooled connection, RLS applies |
 | `ajo_readonly` | **SQL** | Reports and auditor exports |
 | `ajo_scheduler` | **SQL** (`backend/scripts/neon_roles.sql`) | Scheduler's direct session advisory lock only; no `BYPASSRLS` |

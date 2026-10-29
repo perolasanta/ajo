@@ -28,6 +28,13 @@ def test_local_no_ssl():
     assert "ssl" not in args
 
 
+@pytest.mark.parametrize("sslmode", ["verify-ca", "verify-full"])
+def test_certificate_verification_modes_are_rejected(sslmode: str) -> None:
+    url = DATABASE_URL_EXAMPLE.replace("sslmode=require", f"sslmode={sslmode}")
+    with pytest.raises(ValueError, match=rf"sslmode={sslmode}.*not supported"):
+        to_sqlalchemy_async_url(url)
+
+
 def test_asyncpg_dsn_keeps_sslmode_drops_channel_binding():
     dsn = asyncpg_dsn(DATABASE_URL_EXAMPLE)
     assert "sslmode=require" in dsn and "channel_binding" not in dsn

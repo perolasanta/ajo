@@ -2,6 +2,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
+import type { MemberBalances } from "../api/schema";
 import { ApiError, getMember, request } from "../api/client";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -14,12 +15,12 @@ import { Select } from "../ui/Select";
 
 type Session = { roles: string[] };
 
-const balanceNames: Array<[string, string]> = [
-  ["savings", "Savings"],
-  ["shares", "Shares"],
-  ["dues", "Dues paid"],
-  ["locked", "Locked"],
-  ["available", "Available"],
+const balanceNames: Array<[keyof MemberBalances, string]> = [
+  ["savings_kobo", "Savings"],
+  ["shares_kobo", "Shares"],
+  ["dues_paid_kobo", "Dues paid"],
+  ["locked_kobo", "Locked"],
+  ["available_kobo", "Available"],
 ];
 
 const sections = [
@@ -124,9 +125,9 @@ export default function MemberDetailPage() {
 }
 
 function Overview({ member }: { member: Awaited<ReturnType<typeof getMember>> }) {
-  const savings = member.balances.savings ?? 0;
-  const locked = member.balances.locked ?? 0;
-  const available = member.balances.available;
+  const savings = member.balances.savings_kobo;
+  const locked = member.balances.locked_kobo;
+  const available = member.balances.available_kobo;
 
   return (
     <div className="space-y-5">
@@ -140,12 +141,12 @@ function Overview({ member }: { member: Awaited<ReturnType<typeof getMember>> })
               ) : (
                 <Money kobo={member.balances[key]} className="text-lg font-semibold" />
               )}
-              {key === "available" && (
+              {key === "available_kobo" && (
                 <WhyPopover
                   steps={[
                     `Savings: ₦${(savings / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
                     `Locked: ₦${(locked / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
-                    `Available: ₦${((available ?? savings - locked) / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
+                    `Available: ₦${(available / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
                   ]}
                 />
               )}
