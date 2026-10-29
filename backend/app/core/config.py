@@ -18,8 +18,10 @@ class Settings(BaseSettings):
 
     # Pooled URL (-pooler host, role ajo_app): API and worker.
     database_url: str = Field(default="")
-    # Direct URL (owner role): Alembic, scheduler, pg_dump.
+    # Direct URL (owner role): one-shot Alembic migrations and pg_dump only.
     database_url_direct: str = Field(default="")
+    # Direct URL (ajo_scheduler role): the scheduler's session advisory lock only.
+    database_url_scheduler: str = Field(default="")
     database_url_readonly: str = Field(default="")
 
     db_disable_prepared_cache: bool = True

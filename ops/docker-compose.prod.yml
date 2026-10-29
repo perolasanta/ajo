@@ -1,8 +1,6 @@
 name: ajo
-
 x-common: &common
   restart: unless-stopped
-  env_file: .env
   networks:
     - ajo_net
   logging:
@@ -10,12 +8,33 @@ x-common: &common
     options:
       max-size: 10m
       max-file: "3"
-
 services:
   api:
     <<: *common
     container_name: ajo-api
     image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      APP_NAME: ${APP_NAME:-ajo}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GIT_SHA: ${GIT_SHA:-unknown}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DB_DISABLE_PREPARED_CACHE: ${DB_DISABLE_PREPARED_CACHE:-true}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-30}
+      SESSION_ABSOLUTE_HOURS: ${SESSION_ABSOLUTE_HOURS:-12}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
+      LOGIN_LOCKOUT_MINUTES: ${LOGIN_LOCKOUT_MINUTES:-15}
+      LOGIN_RATE_LIMIT_ATTEMPTS: ${LOGIN_RATE_LIMIT_ATTEMPTS:-20}
+      LOGIN_RATE_LIMIT_WINDOW_MINUTES: ${LOGIN_RATE_LIMIT_WINDOW_MINUTES:-5}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
     ports:
       - 127.0.0.1:${AJO_API_PORT:-18101}:8000
     mem_limit: 512m
@@ -25,25 +44,51 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
   worker:
     <<: *common
     container_name: ajo-worker
     image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GIT_SHA: ${GIT_SHA:-unknown}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DB_DISABLE_PREPARED_CACHE: ${DB_DISABLE_PREPARED_CACHE:-true}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
     command: ["python", "-m", "app.worker"]
     mem_limit: 256m
     cpus: 0.5
-
   scheduler:
     <<: *common
     container_name: ajo-scheduler
     image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GIT_SHA: ${GIT_SHA:-unknown}
+      DATABASE_URL_SCHEDULER: ${DATABASE_URL_SCHEDULER:?DATABASE_URL_SCHEDULER is required}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
     command: ["python", "-m", "app.scheduler"]
     mem_limit: 128m
     cpus: 0.25
     deploy:
       replicas: 1
-
+  migration:
+    <<: *common
+    image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
+    profiles: ["migration"]
+    restart: "no"
+    environment:
+      APP_ENV: ${APP_ENV:?APP_ENV is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL_DIRECT: ${DATABASE_URL_DIRECT:?DATABASE_URL_DIRECT is required for migrations}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+    command: ["alembic", "upgrade", "head"]
   web:
     <<: *common
     container_name: ajo-web
@@ -52,7 +97,6 @@ services:
       - 127.0.0.1:${AJO_WEB_PORT:-18102}:80
     mem_limit: 64m
     cpus: 0.25
-
 networks:
   ajo_net:
     name: ajo_net

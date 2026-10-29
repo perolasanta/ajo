@@ -15,14 +15,16 @@ from app.api import (
     repayments,
 )
 from app.core.config import get_settings
-from app.core.db import dispose_engine
+from app.core.db import check_application_role, dispose_engine
 from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    configure_logging(get_settings().log_level)
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    await check_application_role(settings.database_url)
     yield
     await dispose_engine()
 
