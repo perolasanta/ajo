@@ -46,6 +46,7 @@ async def post_repayment(
     reference: str,
     idempotency_key: str,
     ip: str | None,
+    reason: str | None = None,
 ) -> uuid.UUID:
     role = _role(current, {"officer", "treasurer", "admin"})
     if amount_kobo <= 0 or source not in {"payroll", "bank_transfer", "cash"}:
@@ -81,6 +82,17 @@ async def post_repayment(
             raise NotFound("Loan for member not found")
         if loan["status"] not in {"repaying", "disputed"}:
             raise Conflict("Loan is not accepting repayments")
+        if loan["status"] == "disputed" or loan["deductions_paused"]:
+            if source == "payroll":
+                raise Conflict(
+                    "Disputed or deduction-paused loans cannot be repaid through payroll"
+                )
+            if role != "treasurer":
+                raise Forbidden("Only a treasurer may manually repay a disputed or paused loan")
+            if not reason or not reason.strip():
+                raise Conflict(
+                    "A reason is required for manual repayment of a disputed or paused loan"
+                )
         await lock_cooperative_member(session, cid, member_id)
         schedules = (
             (
@@ -187,8 +199,8 @@ async def post_repayment(
         )
         await session.execute(
             text("""INSERT INTO repayments(cooperative_id,id,loan_id,member_id,amount_kobo,source,
-          received_on,reference,journal_entry_id,idempotency_key,created_by) VALUES(:cid,:id,:loan,:member,:amount,
-          :source,:received,:reference,:entry,:key,:actor)"""),
+          received_on,reference,journal_entry_id,idempotency_key,created_by,reason) VALUES(:cid,:id,:loan,:member,:amount,
+          :source,:received,:reference,:entry,:key,:actor,:reason)"""),
             {
                 "cid": cid,
                 "id": repayment_id,
@@ -201,13 +213,20 @@ async def post_repayment(
                 "entry": entry_id,
                 "key": idempotency_key,
                 "actor": current.user_id,
+                "reason": reason.strip() if reason and reason.strip() else None,
             },
         )
         for allocation in allocations:
             await session.execute(
                 text("""INSERT INTO repayment_allocations(cooperative_id,repayment_id,schedule_id,component,amount_kobo)
               VALUES(:cid,:repayment,:schedule,:component,:amount)"""),
-                {"cid": cid, "repayment": repayment_id, **allocation},
+                {
+                    "cid": cid,
+                    "repayment": repayment_id,
+                    "schedule": allocation["schedule_id"],
+                    "component": allocation["component"],
+                    "amount": allocation["amount_kobo"],
+                },
             )
         if remaining:
             await session.execute(
@@ -267,6 +286,7 @@ async def post_repayment(
             },
             channel="api",
             ip=ip,
+            reason=reason,
         )
     return repayment_id
 

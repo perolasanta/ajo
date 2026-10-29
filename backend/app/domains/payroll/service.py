@@ -158,7 +158,9 @@ async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
                     text("""SELECT m.id,m.staff_no,m.full_name,coalesce(sum(s.principal_kobo+s.interest_kobo),0)::bigint loan_kobo,
           coalesce(sum(s.savings_kobo),0)::bigint savings_kobo,coalesce(sum(s.dues_kobo),0)::bigint dues_kobo
           FROM loan_schedule s JOIN loans l ON l.cooperative_id=s.cooperative_id AND l.id=s.loan_id JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id
-          WHERE s.cooperative_id=:cid AND l.status IN ('repaying','disputed') AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month
+          WHERE s.cooperative_id=:cid AND l.status='repaying' AND NOT l.deductions_paused
+            AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year
+            AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month
           GROUP BY m.id,m.staff_no,m.full_name ORDER BY m.staff_no"""),
                     {"cid": cid, "year": run["period_year"], "month": run["period_month"]},
                 )
@@ -291,7 +293,7 @@ async def import_file(
             (
                 await session.execute(
                     text(
-                        """SELECT m.id,m.staff_no,coalesce(sum(s.principal_kobo+s.interest_kobo),0)::bigint loan_kobo,coalesce(sum(s.savings_kobo),0)::bigint savings_kobo,coalesce(sum(s.dues_kobo),0)::bigint dues_kobo FROM loan_schedule s JOIN loans l ON l.cooperative_id=s.cooperative_id AND l.id=s.loan_id JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id WHERE s.cooperative_id=:cid AND l.status IN ('repaying','disputed') AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month GROUP BY m.id,m.staff_no"""
+                        """SELECT m.id,m.staff_no,coalesce(sum(s.principal_kobo+s.interest_kobo),0)::bigint loan_kobo,coalesce(sum(s.savings_kobo),0)::bigint savings_kobo,coalesce(sum(s.dues_kobo),0)::bigint dues_kobo FROM loan_schedule s JOIN loans l ON l.cooperative_id=s.cooperative_id AND l.id=s.loan_id JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id WHERE s.cooperative_id=:cid AND l.status='repaying' AND NOT l.deductions_paused AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month GROUP BY m.id,m.staff_no"""
                     ),
                     {"cid": cid, "year": run["period_year"], "month": run["period_month"]},
                 )
@@ -415,7 +417,7 @@ async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
         async with transaction(cid) as session:
             loan = await session.scalar(
                 text(
-                    "SELECT id FROM loans WHERE cooperative_id=:cid AND member_id=:member AND status IN ('repaying','disputed') ORDER BY created_at LIMIT 1"
+                    "SELECT id FROM loans WHERE cooperative_id=:cid AND member_id=:member AND status='repaying' AND NOT deductions_paused ORDER BY created_at LIMIT 1"
                 ),
                 {"cid": cid, "member": item["member_id"]},
             )
