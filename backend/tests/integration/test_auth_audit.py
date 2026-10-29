@@ -175,6 +175,50 @@ async def test_session_expiry_is_enforced(tenant: dict[str, object], test_databa
         await auth_service.load_session(cookie, require_authenticated=True)
 
 
+async def test_http_login_cookie_reaches_protected_business_endpoint(
+    tenant: dict[str, object],
+) -> None:
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import create_app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=create_app()),
+        base_url="https://testserver",
+    ) as client:
+        csrf = (await client.get("/api/v1/auth/csrf")).json()["csrf_token"]
+        login = await client.post(
+            "/api/v1/auth/login",
+            headers={"X-CSRF-Token": csrf},
+            json={
+                "cooperative_slug": tenant["slug"],
+                "email": tenant["email"],
+                "password": tenant["password"],
+            },
+        )
+        assert login.status_code == 200
+        secret = pyotp.parse_uri(login.json()["provisioning_uri"]).secret
+        csrf = client.cookies.get("ajo_csrf")
+        enrolled = await client.post(
+            "/api/v1/auth/mfa/enroll",
+            headers={"X-CSRF-Token": csrf},
+            json={"code": pyotp.TOTP(secret).now()},
+        )
+        assert enrolled.status_code == 200
+
+        members = await client.post(
+            "/api/v1/members/import",
+            headers={"X-CSRF-Token": client.cookies.get("ajo_csrf")},
+            json={
+                "csv_text": "member_no,full_name,phone_e164\nM-HTTP,Http Test,+2348000000000",
+                "confirm": False,
+            },
+        )
+
+    assert members.status_code == 200
+    assert members.json() == {"imported": 0, "errors": [], "valid_rows": 1}
+
+
 async def test_audit_chain_verifies_and_detects_owner_tampering(
     tenant: dict[str, object], test_database
 ) -> None:

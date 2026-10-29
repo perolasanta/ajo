@@ -150,7 +150,7 @@ Neon facts used here (checked October 2026; reconfirm on neon.com/pricing): Laun
 2. **Two connection strings:**
    - *Pooled* (`-pooler` host) for the API and worker. PgBouncer is in transaction mode, so: use `pg_advisory_xact_lock` (transaction-level) only; set `SET LOCAL` for tenant context inside each transaction; configure asyncpg with `statement_cache_size=0` (and equivalent SQLAlchemy settings).
    - *Direct* for Alembic migrations and the scheduler (session-level features allowed).
-3. Roles: `ajo_owner` (migrations only), `ajo_app` (API/worker), `ajo_readonly` (reporting, auditor exports). `ajo_app` has no UPDATE/DELETE on ledger and audit tables.
+3. Roles: the Neon project owner role (the Neon-provisioned default, e.g. `neondb_owner`; the actual name may vary by project) (migrations only), `ajo_app` (API/worker), `ajo_readonly` (reporting, auditor exports). `ajo_app` has no UPDATE/DELETE on ledger and audit tables.
 4. Use branches to rehearse every migration and every opening-balance import before running on `main`.
 5. Check the **restore window and instant-restore behaviour** for the chosen plan, and test a restore. In addition run a nightly encrypted `pg_dump` to storage outside Neon and the VPS (for example a different provider's object storage). Keep a monthly restore drill record.
 6. Stay portable: no Neon-specific SQL, no Neon Data API, no dependency on Neon Auth. Ajo handles its own authentication.
