@@ -56,14 +56,20 @@ export default function MemberDetailPage() {
     <>
       <PageHeader title={member.full_name} breadcrumb={`Members / ${member.full_name}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge>{member.status}</Badge>
+          {member.status && <Badge>{member.status}</Badge>}
           <Button variant="secondary" disabled title="Member actions are not available yet.">
             Actions coming soon
           </Button>
         </div>
       </PageHeader>
       <p className="-mt-4 mb-6 text-sm text-muted">
-        {member.member_no} · Joined <DateTime value={member.joined_on} />
+        {member.member_no}
+        {member.joined_on && (
+          <>
+            {" "}
+            · Joined <DateTime value={member.joined_on} />
+          </>
+        )}
       </p>
 
       <Tabs.Root value={section} onValueChange={(value) => setSection(value as typeof section)}>
@@ -125,35 +131,41 @@ export default function MemberDetailPage() {
 }
 
 function Overview({ member }: { member: Awaited<ReturnType<typeof getMember>> }) {
-  const savings = member.balances.savings_kobo;
-  const locked = member.balances.locked_kobo;
-  const available = member.balances.available_kobo;
+  const balances = member.balances;
+  const bankAccounts = member.bank_accounts;
+  const hasContactDetails =
+    member.phone_e164 !== undefined ||
+    member.email !== undefined ||
+    member.staff_no !== undefined ||
+    member.employer !== undefined;
 
   return (
     <div className="space-y-5">
-      <section className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {balanceNames.map(([key, label]) => (
-          <Card key={key} className="p-4">
-            <p className="text-sm text-muted">{label}</p>
-            <div className="mt-2 flex items-center justify-between gap-2">
-              {member.balances[key] == null ? (
-                <span>—</span>
-              ) : (
-                <Money kobo={member.balances[key]} className="text-lg font-semibold" />
-              )}
-              {key === "available_kobo" && (
-                <WhyPopover
-                  steps={[
-                    `Savings: ₦${(savings / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
-                    `Locked: ₦${(locked / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
-                    `Available: ₦${(available / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
-                  ]}
-                />
-              )}
-            </div>
-          </Card>
-        ))}
-      </section>
+      {balances && (
+        <section className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {balanceNames.map(([key, label]) => (
+            <Card key={key} className="p-4">
+              <p className="text-sm text-muted">{label}</p>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                {balances[key] == null ? (
+                  <span>—</span>
+                ) : (
+                  <Money kobo={balances[key]} className="text-lg font-semibold" />
+                )}
+                {key === "available_kobo" && (
+                  <WhyPopover
+                    steps={[
+                      `Savings: ₦${(balances.savings_kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
+                      `Locked: ₦${(balances.locked_kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
+                      `Available: ₦${(balances.available_kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`,
+                    ]}
+                  />
+                )}
+              </div>
+            </Card>
+          ))}
+        </section>
+      )}
 
       <section className="grid items-start gap-5 lg:grid-cols-2">
         <Card>
@@ -162,47 +174,55 @@ function Overview({ member }: { member: Awaited<ReturnType<typeof getMember>> })
             Salary basis, amount and effective date are not available from this read-only endpoint.
           </p>
         </Card>
-        <Card>
-          <h2 className="font-serif text-lg font-semibold">Contact details</h2>
-          <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-            <Item label="Phone" value={member.phone_e164 ?? "—"} />
-            <Item label="Email" value={member.email ?? "—"} />
-            <Item label="Staff no." value={member.staff_no ?? "—"} />
-            <Item label="Employer" value={member.employer ?? "—"} />
-          </dl>
-        </Card>
+        {hasContactDetails && (
+          <Card>
+            <h2 className="font-serif text-lg font-semibold">Contact details</h2>
+            <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+              <Item label="Phone" value={member.phone_e164 ?? "—"} />
+              <Item label="Email" value={member.email ?? "—"} />
+              <Item label="Staff no." value={member.staff_no ?? "—"} />
+              <Item label="Employer" value={member.employer ?? "—"} />
+            </dl>
+          </Card>
+        )}
       </section>
 
-      <Card>
-        <h2 className="font-serif text-lg font-semibold">Bank accounts</h2>
-        {member.bank_accounts.length ? (
-          <ul className="mt-4 space-y-3 text-sm">
-            {member.bank_accounts.map((account) => (
-              <li
-                key={`${account.bank_code}-${account.last4}`}
-                className="grid gap-1 sm:grid-cols-2"
-              >
-                <div>
-                  <p className="font-medium">Bank: {account.bank_code}</p>
-                  <p className="text-muted">•••• {account.last4}</p>
-                  <p className="text-muted">{account.account_name}</p>
-                </div>
-                <p className="sm:text-right">
-                  {account.verified_at ? (
-                    <>
-                      Verified <DateTime value={account.verified_at} />
-                    </>
-                  ) : (
-                    "Pending verification"
-                  )}
-                </p>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-3 text-sm text-muted">No bank account on file.</p>
-        )}
-      </Card>
+      {bankAccounts !== undefined && (
+        <Card>
+          <h2 className="font-serif text-lg font-semibold">Bank accounts</h2>
+          {bankAccounts.length ? (
+            <ul className="mt-4 space-y-3 text-sm">
+              {bankAccounts.map((account) => (
+                <li
+                  key={`${account.bank_code}-${account.last4}`}
+                  className="grid gap-1 sm:grid-cols-2"
+                >
+                  <div>
+                    <p className="font-medium">Bank: {account.bank_code}</p>
+                    <p className="text-muted">•••• {account.last4}</p>
+                    {account.account_name && <p className="text-muted">{account.account_name}</p>}
+                  </div>
+                  <p className="sm:text-right">
+                    {account.verified_at ? (
+                      <>
+                        Verified <DateTime value={account.verified_at} />
+                      </>
+                    ) : account.status ? (
+                      account.status === "verified" ? (
+                        "Verified"
+                      ) : (
+                        "Pending verification"
+                      )
+                    ) : null}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-muted">No bank account on file.</p>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

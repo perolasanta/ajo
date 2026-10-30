@@ -12,11 +12,27 @@ Enforce these permissions server-side; hiding fields or navigation in the user i
 
 | Role | Permitted member data and actions |
 |---|---|
-| **admin** | Full member read and staff management. Must not post financial transactions. |
-| **treasurer** | Member name, balances, and bank-account last four digits. No phone number or email. |
-| **officer** | Full member read for onboarding and follow-up. |
-| **committee** | Member name and loan-relevant summary only. No contact, bank-account, or salary details. |
-| **auditor** | Read-only access. Contact and bank details must be masked; no financial posting. |
+| **admin** | Full member read and staff management. Must not post financial transactions. Full bank-account numbers are never returned by member endpoints. |
+| **treasurer** | `GET /members`: `id`, `member_no`, `full_name`. `GET /members/{member_id}`: those fields, balances (`savings_kobo`, `shares_kobo`, `dues_paid_kobo`, `locked_kobo`, `available_kobo`), and bank-account `bank_code` and `last4` only. No contacts, account names, `staff_no`, or employer; none are needed in current treasurer workflows. |
+| **officer** | Full member read for onboarding and follow-up, limited to fields currently returned by member endpoints. Full bank-account numbers are never returned. |
+| **committee** | `id`, `member_no`, and `full_name` only on both member endpoints. No contact, bank-account, salary, or balance data. **Committee loan-summary TODO:** define the fields before implementing committee loan review. |
+| **auditor** | Read-only. `GET /members`: `id`, `member_no`, `full_name`, `status`, `joined_on`. `GET /members/{member_id}`: those fields plus balances (`savings_kobo`, `shares_kobo`, `dues_paid_kobo`, `locked_kobo`, `available_kobo`). Omit contacts, `staff_no`, employer, bank accounts, and salary fields; no financial posting. |
+
+## 1b. Payroll access and reporting
+
+| Payroll operation | Allowed role(s) |
+|---|---|
+| `POST /payroll/runs` | Officer and treasurer |
+| `GET /payroll/runs/{run_id}/expected.csv` | Officer and treasurer |
+| `POST /payroll/runs/{run_id}/dry-run` | Officer and treasurer |
+| `POST /payroll/runs/{run_id}/import` | Officer and treasurer |
+| `POST /payroll/runs/{run_id}/post` | Treasurer only |
+| `POST /payroll/profiles` | Admin only |
+| `POST /payroll/runs/{run_id}/sign-off` | Admin only; the signer must differ from the poster, or the importer for a run posted before poster tracking |
+
+Committee and auditor roles have no payroll access. **TODO:** read-only sign-off report for auditors.
+
+`payroll_items.resolution_note` currently has no application write path. Any future writer must validate its length and keep personal and bank data out. Exported resolution notes are capped at 500 characters.
 
 ## 2. Staff role changes
 

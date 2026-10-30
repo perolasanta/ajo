@@ -31,6 +31,28 @@ class ImportReport:
     errors: list[dict[str, Any]]
 
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_csv_row(
+    values: dict[str, Any],
+    text_fields: set[str],
+    max_lengths: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    sanitized = dict(values)
+    limits = max_lengths or {}
+    for field in text_fields:
+        value = sanitized.get(field)
+        if not isinstance(value, str):
+            continue
+        if value.startswith(_CSV_FORMULA_PREFIXES):
+            value = "'" + value
+        if field in limits:
+            value = value[: limits[field]]
+        sanitized[field] = value
+    return sanitized
+
+
 def _role(current: CurrentSession, allowed: set[str]) -> str:
     role = next((item for item in current.roles if item in allowed), None)
     if role is None:
@@ -113,7 +135,7 @@ async def create_profile(current: CurrentSession, values: dict[str, Any]) -> uui
 async def create_run(
     current: CurrentSession, profile_id: uuid.UUID, year: int, month: int
 ) -> uuid.UUID:
-    _role(current, {"officer", "treasurer", "admin"})
+    _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run_id = uuid.uuid4()
@@ -133,7 +155,7 @@ async def create_run(
 
 
 async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
-    _role(current, {"officer", "treasurer", "admin"})
+    role = _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run = (
@@ -181,12 +203,30 @@ async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
             value = {run["staff_no_column"]: row["staff_no"], run["amount_column"]: amount}
             if run["name_column"]:
                 value[run["name_column"]] = row["full_name"]
-            writer.writerow(value)
+            text_fields = {run["staff_no_column"]}
+            if run["name_column"]:
+                text_fields.add(run["name_column"])
+            writer.writerow(_sanitize_csv_row(value, text_fields))
         await session.execute(
             text(
                 "UPDATE payroll_runs SET expected_total_kobo=:total,status='exported' WHERE cooperative_id=:cid AND id=:id"
             ),
             {"cid": cid, "id": run_id, "total": total},
+        )
+        await append_audit(
+            session,
+            cooperative_id=cid,
+            actor_user_id=current.user_id,
+            role=role,
+            action="payroll_expected_exported",
+            entity_type="payroll_run",
+            entity_id=str(run_id),
+            summary={
+                "period_year": int(run["period_year"]),
+                "period_month": int(run["period_month"]),
+            },
+            channel="api",
+            ip=None,
         )
     return output.getvalue().encode()
 
@@ -194,7 +234,7 @@ async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
 async def dry_run(
     current: CurrentSession, run_id: uuid.UUID, content: bytes, filename: str
 ) -> ImportReport:
-    _role(current, {"officer", "treasurer", "admin"})
+    _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run = (
@@ -260,7 +300,7 @@ async def dry_run(
 async def import_file(
     current: CurrentSession, run_id: uuid.UUID, content: bytes, filename: str
 ) -> ImportReport:
-    role = _role(current, {"officer", "treasurer", "admin"})
+    role = _role(current, {"officer", "treasurer"})
     report = await dry_run(current, run_id, content, filename)
     if report.errors:
         return report
@@ -388,7 +428,7 @@ async def import_file(
 
 
 async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
-    _role(current, {"treasurer", "admin"})
+    _role(current, {"treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run = (
@@ -472,9 +512,9 @@ async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
             posted += 1
         await session.execute(
             text(
-                "UPDATE payroll_runs SET status='posted',posted_at=now() WHERE cooperative_id=:cid AND id=:id AND status<>'signed_off'"
+                "UPDATE payroll_runs SET status='posted',posted_by=CASE WHEN status='imported' THEN :actor ELSE posted_by END,posted_at=now() WHERE cooperative_id=:cid AND id=:id AND status<>'signed_off'"
             ),
-            {"cid": cid, "id": run_id},
+            {"cid": cid, "id": run_id, "actor": current.user_id},
         )
     return posted
 
@@ -499,7 +539,8 @@ async def sign_off(
         )
         if run is None:
             raise NotFound("Payroll run not found")
-        if run["status"] == "signed_off" or run["imported_by"] == current.user_id:
+        poster_id = run["posted_by"] if run["posted_by"] is not None else run["imported_by"]
+        if run["status"] == "signed_off" or poster_id == current.user_id:
             raise Conflict("A different administrator must sign off the payroll run")
         if run["status"] != "posted":
             raise Conflict("Payroll run must be posted before sign-off")
@@ -529,6 +570,12 @@ async def sign_off(
             key: sum(row["classification"] == key for row in items)
             for key in ("matched", "short", "over", "missing", "unknown_member", "duplicate")
         }
+        export_items = []
+        for row in items:
+            item = dict(row)
+            if item["resolution_note"] is not None:
+                item["resolution_note"] = str(item["resolution_note"])[:500]
+            export_items.append(item)
         report = {
             "run_id": str(run_id),
             "expected_total_kobo": run["expected_total_kobo"],
@@ -536,7 +583,7 @@ async def sign_off(
             "bank_receipt_total_kobo": bank_total_kobo,
             "variance_kobo": int(run["file_total_kobo"]) - bank_total_kobo,
             "counts": counts,
-            "exceptions": [dict(row) for row in items if row["classification"] != "matched"],
+            "exceptions": [row for row in export_items if row["classification"] != "matched"],
         }
         await session.execute(
             text(
@@ -561,5 +608,12 @@ async def sign_off(
         output, fieldnames=["staff_no_raw", "classification", "actual_kobo", "resolution_note"]
     )
     writer.writeheader()
-    writer.writerows(report["exceptions"])
+    writer.writerows(
+        _sanitize_csv_row(
+            row,
+            {"staff_no_raw", "classification", "resolution_note"},
+            {"resolution_note": 500},
+        )
+        for row in report["exceptions"]
+    )
     return output.getvalue().encode(), json.dumps(report, sort_keys=True, default=str).encode()

@@ -430,3 +430,158 @@ async def test_signoff_requires_posted_run_and_cannot_leave_it_unpostable(
         )
         == "signed_off"
     )
+
+
+@pytest.mark.parametrize("trigger", ["=", "+", "-", "@", "\t", "\r"])
+async def test_expected_csv_escapes_text_cells_and_preserves_amount(
+    db: asyncpg.Connection, test_database, trigger: str
+) -> None:
+    cid, users, loans = await setup_payroll_fixture(db)
+    staff_no = f"{trigger}staff"
+    full_name = f"{trigger}Member"
+    owner = await asyncpg.connect(asyncpg_dsn(test_database.owner_url))
+    try:
+        await owner.execute(
+            "UPDATE members SET staff_no=$1,full_name=$2 WHERE cooperative_id=$3 AND id=$4",
+            staff_no,
+            full_name,
+            cid,
+            loans[2][1],
+        )
+    finally:
+        await owner.close()
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount", "name_column": "Name"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+
+    csv_bytes = await service.export_expected(session(cid, users[0], "officer"), run_id)
+    reader = csv.DictReader(io.StringIO(csv_bytes.decode()))
+    rows = list(reader)
+
+    assert reader.fieldnames == ["Staff", "Amount", "Name"]
+    assert len(rows) == 1
+    assert rows[0]["Staff"] == f"'{staff_no}"
+    assert rows[0]["Name"] == f"'{full_name}"
+    assert rows[0]["Amount"] == "160"
+
+
+async def test_each_expected_csv_download_has_its_own_audit_entry(
+    db: asyncpg.Connection,
+) -> None:
+    cid, users, _ = await setup_payroll_fixture(db)
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    current = session(cid, users[0], "officer")
+
+    await service.export_expected(current, run_id)
+    await service.export_expected(current, run_id)
+
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM audit_logs WHERE cooperative_id=$1 AND action='payroll_expected_exported' AND entity_id=$2",
+            cid,
+            str(run_id),
+        )
+        == 2
+    )
+
+
+async def test_signoff_caps_and_sanitizes_exported_resolution_note(
+    db: asyncpg.Connection,
+) -> None:
+    cid, users, loans = await setup_payroll_fixture(db)
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    note = "+" + ("n" * 600)
+    await db.execute(
+        "UPDATE payroll_runs SET status='posted',expected_total_kobo=160,file_total_kobo=160,imported_by=$3 WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        run_id,
+        users[0],
+    )
+    await db.execute(
+        """INSERT INTO payroll_items(cooperative_id,run_id,member_id,staff_no_raw,
+          expected_loan_kobo,expected_savings_kobo,expected_dues_kobo,actual_kobo,
+          classification,resolution_note)
+          VALUES($1,$2,$3,$4,110,30,20,160,'short',$5)""",
+        cid,
+        run_id,
+        loans[2][1],
+        "STAFF-A",
+        note,
+    )
+
+    csv_report, json_report = await service.sign_off(session(cid, users[3], "admin"), run_id, 160)
+    csv_note = next(csv.DictReader(io.StringIO(csv_report.decode())))["resolution_note"]
+    json_note = json.loads(json_report)["exceptions"][0]["resolution_note"]
+
+    assert csv_note == ("'" + note)[:500]
+    assert len(csv_note) == 500
+    assert json_note == note[:500]
+    assert len(json_note) == 500
+
+
+async def test_posted_by_is_recorded_and_cannot_sign_off_own_posted_run(
+    db: asyncpg.Connection,
+) -> None:
+    cid, users, loans = await setup_payroll_fixture(db)
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    await db.execute(
+        "UPDATE payroll_runs SET status='imported',expected_total_kobo=160,file_total_kobo=160,imported_by=$3,imported_at=now() WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        run_id,
+        users[0],
+    )
+    await db.execute(
+        """INSERT INTO payroll_items(cooperative_id,run_id,member_id,staff_no_raw,
+          expected_loan_kobo,expected_savings_kobo,expected_dues_kobo,actual_kobo,classification)
+          VALUES($1,$2,$3,$4,110,30,20,160,'matched')""",
+        cid,
+        run_id,
+        loans[2][1],
+        loans[2][2],
+    )
+
+    assert await service.post_run(session(cid, users[2], "treasurer"), run_id) == 1
+    assert (
+        await db.fetchval(
+            "SELECT posted_by FROM payroll_runs WHERE cooperative_id=$1 AND id=$2", cid, run_id
+        )
+        == users[2]
+    )
+    with pytest.raises(Conflict, match="different administrator"):
+        await service.sign_off(session(cid, users[2], "admin"), run_id, 160)
+    await service.sign_off(session(cid, users[3], "admin"), run_id, 160)
+
+
+async def test_legacy_posted_run_falls_back_to_importer_for_signoff_separation(
+    db: asyncpg.Connection,
+) -> None:
+    cid, users, _ = await setup_payroll_fixture(db)
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    await db.execute(
+        """UPDATE payroll_runs SET status='posted',file_total_kobo=10,
+          imported_by=$3,posted_by=NULL WHERE cooperative_id=$1 AND id=$2""",
+        cid,
+        run_id,
+        users[3],
+    )
+
+    with pytest.raises(Conflict, match="different administrator"):
+        await service.sign_off(session(cid, users[3], "admin"), run_id, 10)
