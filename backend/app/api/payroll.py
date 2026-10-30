@@ -4,9 +4,8 @@ import base64
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, Response
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import current_session, require_csrf
 from app.domains.auth.service import CurrentSession
@@ -37,6 +36,53 @@ class SignOffBody(BaseModel):
     bank_receipt_total_kobo: int = Field(ge=0)
 
 
+class _PayrollResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+
+class ProfileResponse(_PayrollResponse):
+    profile_id: str
+
+
+class RunResponse(_PayrollResponse):
+    run_id: str
+
+
+class DryRunRowResponse(_PayrollResponse):
+    row: int
+    staff_no_raw: str
+    member_id: str | None
+    actual_kobo: int
+    classification: str
+
+
+class PayrollImportErrorResponse(_PayrollResponse):
+    row: int
+    error: str
+
+
+class DryRunResponse(_PayrollResponse):
+    file_sha256: str
+    file_total_kobo: int
+    rows: list[DryRunRowResponse]
+    errors: list[PayrollImportErrorResponse]
+
+
+class ImportResponse(_PayrollResponse):
+    file_sha256: str
+    file_total_kobo: int
+    errors: list[PayrollImportErrorResponse]
+
+
+class PostResponse(_PayrollResponse):
+    posted: int
+
+
+class SignOffResponse(_PayrollResponse):
+    csv_base64: str
+    json_base64: str
+
+
 def _content(value: str) -> bytes:
     try:
         return base64.b64decode(value, validate=True)
@@ -44,7 +90,7 @@ def _content(value: str) -> bytes:
         raise ValueError("Invalid file encoding") from exc
 
 
-@router.post("/payroll/profiles")
+@router.post("/payroll/profiles", response_model=ProfileResponse)
 async def create_profile(
     body: ProfileBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, str]:
@@ -52,7 +98,7 @@ async def create_profile(
     return {"profile_id": str(profile_id)}
 
 
-@router.post("/payroll/runs")
+@router.post("/payroll/runs", response_model=RunResponse)
 async def create_run(
     body: RunBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, str]:
@@ -60,14 +106,18 @@ async def create_run(
     return {"run_id": str(run_id)}
 
 
-@router.get("/payroll/runs/{run_id}/expected.csv")
+@router.get("/payroll/runs/{run_id}/expected.csv", response_class=Response, response_model=None)
 async def export_expected(
     run_id: uuid.UUID, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> Response:
-    return Response(await service.export_expected(current, run_id), media_type="text/csv")
+    return Response(
+        await service.export_expected(current, run_id),
+        media_type="text/csv",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
-@router.post("/payroll/runs/{run_id}/dry-run")
+@router.post("/payroll/runs/{run_id}/dry-run", response_model=DryRunResponse)
 async def dry_run(
     run_id: uuid.UUID, body: FileBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, object]:
@@ -80,7 +130,7 @@ async def dry_run(
     }
 
 
-@router.post("/payroll/runs/{run_id}/import")
+@router.post("/payroll/runs/{run_id}/import", response_model=ImportResponse)
 async def import_file(
     run_id: uuid.UUID, body: FileBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, object]:
@@ -94,20 +144,22 @@ async def import_file(
     }
 
 
-@router.post("/payroll/runs/{run_id}/post")
+@router.post("/payroll/runs/{run_id}/post", response_model=PostResponse)
 async def post_run(
     run_id: uuid.UUID, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, int]:
     return {"posted": await service.post_run(current, run_id)}
 
 
-@router.post("/payroll/runs/{run_id}/sign-off")
+@router.post("/payroll/runs/{run_id}/sign-off", response_model=SignOffResponse)
 async def sign_off(
     run_id: uuid.UUID,
     body: SignOffBody,
     current: Annotated[CurrentSession, Depends(current_session)],
+    response: Response,
 ) -> dict[str, str]:
     csv_report, json_report = await service.sign_off(current, run_id, body.bank_receipt_total_kobo)
+    response.headers["Cache-Control"] = "no-store"
     return {
         "csv_base64": base64.b64encode(csv_report).decode(),
         "json_base64": base64.b64encode(json_report).decode(),

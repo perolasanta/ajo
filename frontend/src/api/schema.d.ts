@@ -3,11 +3,11 @@ export type MemberListItem = {
   id: string;
   member_no: string;
   full_name: string;
-  phone_e164: string | null;
-  email: string | null;
+  phone_e164?: string | null;
+  email?: string | null;
   staff_no?: string | null;
-  status: string;
-  joined_on: string;
+  status?: string;
+  joined_on?: string | null;
 };
 
 export type MemberBalances = {
@@ -19,15 +19,14 @@ export type MemberBalances = {
 };
 
 export type MemberDetail = MemberListItem & {
-  staff_no: string | null;
-  employer: string | null;
-  balances: MemberBalances;
-  bank_accounts: Array<{
+  employer?: string | null;
+  balances?: MemberBalances;
+  bank_accounts?: Array<{
     bank_code: string;
     last4: string;
-    account_name: string;
+    account_name?: string;
     verified_at?: string | null;
-    status: string;
+    status?: string;
   }>;
 };
 

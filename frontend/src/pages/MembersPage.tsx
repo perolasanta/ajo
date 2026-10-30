@@ -50,7 +50,10 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
       fakeMembers ? Promise.resolve(fakeMembers) : getMembers(debouncedSearch || undefined),
   });
   const statuses = useMemo(
-    () => [...new Set((members.data ?? []).map((member) => member.status))],
+    () =>
+      [...new Set((members.data ?? []).map((member) => member.status))].filter(
+        (status): status is string => typeof status === "string" && status.length > 0,
+      ),
     [members.data],
   );
   const filtered = useMemo(() => {
@@ -67,6 +70,14 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
   }, [debouncedSearch, fakeMembers, members.data, status]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageMembers = filtered.slice(page * perPage, page * perPage + perPage);
+  const visibleColumns = memberColumns.filter((column) => {
+    if (column.key === "staffNo")
+      return pageMembers.some((member) => member.staff_no !== undefined);
+    if (column.key === "phone")
+      return pageMembers.some((member) => member.phone_e164 !== undefined);
+    if (column.key === "status") return pageMembers.some((member) => member.status !== undefined);
+    return true;
+  });
 
   useEffect(() => setPage(0), [debouncedSearch, status]);
   useEffect(() => setPage((current) => Math.min(current, totalPages - 1)), [totalPages]);
@@ -79,20 +90,22 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           aria-label="Search members"
-          placeholder="Search full name, member no., phone or staff no."
+          placeholder="Search member name or number."
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
-        <Select
-          aria-label="Filter by status"
-          value={status}
-          onChange={(event) => setStatus(event.target.value)}
-        >
-          <option value="all">All statuses</option>
-          {statuses.map((value) => (
-            <option key={value}>{value}</option>
-          ))}
-        </Select>
+        {statuses.length > 0 && (
+          <Select
+            aria-label="Filter by status"
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+          >
+            <option value="all">All statuses</option>
+            {statuses.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </Select>
+        )}
         <div className="hidden md:block">
           <TableDensityToggle dense={dense} onChange={setDense} />
         </div>
@@ -103,7 +116,7 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
       {members.data && filtered.length === 0 && (
         <EmptyState
           title="No members found"
-          detail="Try a different full name, member number, phone number, staff number or status."
+          detail="Try a different member name, member number or status."
           action={
             <Button
               variant="secondary"
@@ -121,7 +134,7 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
         <>
           <ResponsiveTable
             data={pageMembers}
-            columns={memberColumns}
+            columns={visibleColumns}
             getRowKey={(member) => member.id}
             dense={dense}
           />
