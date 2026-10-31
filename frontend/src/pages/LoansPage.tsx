@@ -20,6 +20,7 @@ import { Input } from "../ui/Input";
 import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
 import { ResponsiveTable, type ResponsiveColumn } from "../ui/Table";
+import { canSubmitLoans } from "../loanPolicy";
 
 const pageSize = 10;
 
@@ -69,8 +70,7 @@ export default function LoansPage() {
     () => [...new Set((loans.data?.items ?? []).map((item) => item.status))],
     [loans.data],
   );
-  const canSubmit =
-    session.data?.roles.some((role) => role === "admin" || role === "officer") ?? false;
+  const canSubmit = canSubmitLoans(session.data?.roles ?? []);
   const totalPages = Math.max(1, Math.ceil((loans.data?.total ?? 0) / pageSize));
   useEffect(() => setPage(1), [debouncedSearch, status]);
 

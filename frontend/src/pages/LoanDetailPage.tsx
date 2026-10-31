@@ -12,6 +12,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
 import { Table, TableCell, TableHead } from "../ui/Table";
 import type { LoanApplicationDetail } from "../api/schema";
+import { canDecideLoans, canSeeDestinationAccount } from "../loanPolicy";
 
 type Session = { roles: string[] };
 
@@ -42,7 +43,7 @@ function LoanDetail({ detail, roles }: { detail: LoanApplicationDetail; roles: s
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const canDecide = roles.includes("committee") && detail.status === "under_review";
+  const canDecide = canDecideLoans(roles, detail.status);
   const mutation = useMutation({
     mutationFn: () => decideLoanApplication(detail.id, { decision, reason: reason.trim() }),
     onSuccess: () => {
@@ -196,7 +197,7 @@ function LoanDetail({ detail, roles }: { detail: LoanApplicationDetail; roles: s
               <p className="mt-3 text-sm text-muted">No guarantors recorded.</p>
             )}
           </Card>
-          {detail.destination_bank_account && (
+          {canSeeDestinationAccount(roles) && detail.destination_bank_account && (
             <Card>
               <h2 className="font-serif text-lg font-semibold">Destination account</h2>
               <p className="mt-3 text-sm">
