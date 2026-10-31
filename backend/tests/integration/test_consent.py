@@ -11,6 +11,7 @@ import pytest
 
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import AppError, Conflict, Forbidden, NotFound
+from app.domains.consent import service as consent_service
 from app.domains.consent.service import decide as decide_consent
 from app.domains.consent.service import send_otp
 from app.domains.disbursements.service import prepare
@@ -166,7 +167,9 @@ async def confirm_token(
     )
     assert row is not None
     assert destination == row["phone_e164"]
-    return await decide_consent(slug, token, code, "confirm", "127.0.0.1", "test-agent")
+    details = await consent_service.verify_otp(slug, token, code, "127.0.0.1")
+    assert details is not None
+    return await decide_consent(slug, token, "confirm", "127.0.0.1", "test-agent")
 
 
 async def test_third_party_requires_both_member_confirmations_and_uses_each_phone(
@@ -392,7 +395,7 @@ async def test_otp_attempts_accumulate_across_resends_and_lock_after_five(
     for _ in range(2):
         code = sender.sent[-1][1]
         wrong_code = "000000" if code != "000000" else "000001"
-        assert await decide_consent(slug, token, wrong_code, "confirm", ip, "test") == "unavailable"
+        assert await consent_service.verify_otp(slug, token, wrong_code, ip) is None
     assert (
         await db.fetchval(
             "SELECT otp_attempts FROM member_consents WHERE cooperative_id=$1 AND token_hash=$2",
@@ -414,7 +417,7 @@ async def test_otp_attempts_accumulate_across_resends_and_lock_after_five(
     for _ in range(3):
         code = sender.sent[-1][1]
         wrong_code = "000000" if code != "000000" else "000001"
-        assert await decide_consent(slug, token, wrong_code, "confirm", ip, "test") == "unavailable"
+        assert await consent_service.verify_otp(slug, token, wrong_code, ip) is None
     locked = await db.fetchrow(
         "SELECT status,otp_attempts FROM member_consents WHERE cooperative_id=$1 AND token_hash=$2",
         cid,
@@ -449,7 +452,7 @@ async def test_locked_consent_can_be_reissued_by_an_officer(
     for _ in range(5):
         code = sender.sent[-1][1]
         wrong_code = "000000" if code != "000000" else "000001"
-        await decide_consent(slug, token, wrong_code, "confirm", ip, "test")
+        await consent_service.verify_otp(slug, token, wrong_code, ip)
     assert (
         await db.fetchval(
             "SELECT status FROM member_consents WHERE cooperative_id=$1 AND id=$2", cid, old_id
@@ -486,3 +489,33 @@ async def test_locked_consent_can_be_reissued_by_an_officer(
     ) == (new_id, "final_terms", borrower, "pending", 0)
     assert new_consent["token_hash"] != token_hash
     await send_otp(slug, new_tokens[0], ip, sender)
+
+
+async def test_confirmation_metadata_is_minimal_until_otp_verification(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    application, _, _, _, tokens = await approved_loan(
+        db,
+        loan_base,
+        test_database,
+        phone_pair=("+2348030600001", "+2348030600002"),
+    )
+    cid = loan_base.cooperative_id
+    token = await final_terms_token(db, cid, application, tokens)
+    slug = await db.fetchval("SELECT slug FROM cooperatives WHERE id=$1", cid)
+    metadata = await consent_service.view(slug, token)
+    assert set(metadata) == {"cooperative_name", "kind", "expires_at"}
+    assert metadata["cooperative_name"] == await db.fetchval(
+        "SELECT name FROM cooperatives WHERE id=$1", cid
+    )
+
+    sender = FakeOtpSender()
+    ip = "198.51.100.61"
+    await send_otp(slug, token, ip, sender)
+    verify = getattr(consent_service, "verify_otp", None)
+    assert callable(verify), "a separate OTP verification step is required"
+    details = await verify(slug, token, sender.sent[-1][1], ip)
+    assert details is not None
+    assert details["applicant"]
+    assert details["terms"]
+    assert await decide_consent(slug, token, "confirm", ip, "test-agent") == "recorded"
