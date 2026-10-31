@@ -8,7 +8,7 @@ export const navigation = [
   {
     name: "Loans",
     path: "/loans",
-    roles: ["officer", "committee", "admin", "auditor"],
+    roles: ["officer", "committee", "treasurer", "admin", "auditor"],
   },
   { name: "Disbursements", path: "/disbursements", roles: ["treasurer", "admin", "auditor"] },
   {

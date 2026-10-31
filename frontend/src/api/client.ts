@@ -1,5 +1,12 @@
 import createClient from "openapi-fetch";
-import type { MemberDetail, MemberListItem, paths } from "./schema";
+import type {
+  LoanApplicationDetail,
+  LoanApplicationPage,
+  LoanProduct,
+  MemberDetail,
+  MemberListItem,
+  paths,
+} from "./schema";
 
 const API_BASE = "/api/v1";
 const STATE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -56,12 +63,15 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const errorBody = (await response
       .clone()
       .json()
-      .catch(() => null)) as { error?: string } | null;
+      .catch(() => null)) as { error?: string; detail?: string; message?: string } | null;
     throw new ApiError(
       response.status,
       response.status === 403
         ? "You do not have permission to view this information."
-        : "Request failed. Please try again.",
+        : (errorBody?.error ??
+            errorBody?.detail ??
+            errorBody?.message ??
+            "Request failed. Please try again."),
       response.headers.get("X-Request-ID") ?? undefined,
       errorBody?.error,
     );
@@ -89,5 +99,57 @@ export async function getMembers(search?: string): Promise<MemberListItem[]> {
 export async function getMember(memberId: string): Promise<MemberDetail> {
   return unwrap(
     await api.GET("/members/{member_id}", { params: { path: { member_id: memberId } } }),
+  );
+}
+
+export async function getLoanApplications(
+  params: {
+    status?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<LoanApplicationPage> {
+  const query = new URLSearchParams();
+  if (params.status && params.status !== "all") query.set("status", params.status);
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 10));
+  return request<LoanApplicationPage>(`/loan-applications?${query.toString()}`);
+}
+
+export function getLoanApplication(applicationId: string): Promise<LoanApplicationDetail> {
+  return request<LoanApplicationDetail>(`/loan-applications/${applicationId}`);
+}
+
+export function getLoanProducts(): Promise<LoanProduct[]> {
+  return request<LoanProduct[]>("/loan-products");
+}
+
+export function submitLoanApplication(body: {
+  member_id: string;
+  product_id: string;
+  principal_kobo: number;
+  tenor_months: number;
+  destination_bank_account_id?: string;
+}): Promise<{ application_id: string }> {
+  return request<{ application_id: string }>("/loan-applications", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function decideLoanApplication(
+  applicationId: string,
+  body: { decision: "approved" | "rejected"; reason: string },
+): Promise<{ loan_id: string | null; decision: string }> {
+  return request<{ loan_id: string | null; decision: string }>(
+    `/loan-applications/${applicationId}/decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
   );
 }
