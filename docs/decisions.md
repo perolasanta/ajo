@@ -75,3 +75,20 @@ Keep delivery provider-neutral until procurement. Implement delivery behind a pr
 ## 9. Loan term changes
 
 Revalidate loan amount, tenor, and rate against the applicable loan-product limits both when terms are edited and when the loan is approved. Reject a change or approval if any term is outside those limits.
+
+## 1c. Loan read access
+
+Enforce this matrix server-side with role-specific response schemas. Read endpoints are tenant-scoped through the existing transaction and RLS. New fields are omitted by default. No loan read endpoint returns phone, email, salary, staff number, full account numbers, consent tokens, token hashes, or OTP data.
+
+| Role | Loan read access |
+|---|---|
+| **admin** | Paginated application summaries and details, approved current loan products, masked destination bank account (`bank_code`, `last4`), terms, timeline, consent statuses, guarantor names, and repayment schedule. |
+| **officer** | Same read fields as admin. |
+| **treasurer** | Same loan read fields as admin, including masked destination bank account. |
+| **committee** | Conservative application summary/detail only: application id, member number, member name, product name, principal, tenor, annual rate, status, submitted date, decision, decision reason, decided date, consent type/status, guarantor count and guarantor names. No bank fields or member contact fields. |
+| **auditor** | Same conservative loan summary/detail fields as committee. No bank fields or member contact fields. |
+| **all other roles** | HTTP 403. |
+
+Bank-account ids are returned by admin/officer/treasurer member detail responses only so the submit form can select an account; account numbers remain masked to last four digits.
+
+**TODO:** define a fuller committee loan-review summary after real committee review needs are validated.

@@ -45,7 +45,7 @@ ROLE_FIELDS = {
             "bank_accounts",
             "balances",
         },
-        "bank": {"bank_code", "last4", "account_name", "verified_at", "status"},
+        "bank": {"id", "bank_code", "last4", "account_name", "verified_at", "status"},
     },
     "officer": {
         "list": {
@@ -71,12 +71,12 @@ ROLE_FIELDS = {
             "bank_accounts",
             "balances",
         },
-        "bank": {"bank_code", "last4", "account_name", "verified_at", "status"},
+        "bank": {"id", "bank_code", "last4", "account_name", "verified_at", "status"},
     },
     "treasurer": {
         "list": {"id", "member_no", "full_name"},
         "detail": {"id", "member_no", "full_name", "bank_accounts", "balances"},
-        "bank": {"bank_code", "last4"},
+        "bank": {"id", "bank_code", "last4"},
     },
     "committee": {
         "list": {"id", "member_no", "full_name"},
@@ -106,6 +106,7 @@ MEMBER_DETAIL_ROW: dict[str, Any] = {
     "employer": "Example Employer",
 }
 BANK_ROW: dict[str, Any] = {
+    "id": uuid.UUID("55555555-5555-5555-5555-555555555555"),
     "bank_code": "058",
     "last4": "4321",
     "account_name": "Ada Example",
