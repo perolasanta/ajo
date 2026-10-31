@@ -427,7 +427,7 @@ async def import_members(current: CurrentSession, csv_text: str, confirm: bool) 
                     "email": row.get("email") or None,
                     "staff": row.get("staff_no") or None,
                     "employer": row.get("employer") or None,
-                    "joined": row.get("joined_on") or None,
+                    "joined": date.fromisoformat(row["joined_on"]) if row.get("joined_on") else None,
                 },
             )
             created.append({"member_no": row["member_no"], "id": str(member_id)})

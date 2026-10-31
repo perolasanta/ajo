@@ -121,6 +121,9 @@ class _CapturingOtp:
     def __init__(self) -> None:
         self.codes: dict[str, str] = {}
 
+    def __call__(self, destination: str, code: str) -> None:
+        self.codes[destination] = code
+
     async def send(self, destination: str, code: str) -> None:
         self.codes[destination] = code
 
@@ -133,10 +136,10 @@ async def _confirm(
     decision: str = "confirm",
 ) -> None:
     """Run the real OTP + consent-decide path for one consent token."""
-    await send_otp(slug, token, "127.0.0.1", sender)
+    ip = f"127.0.1.{int(member_phone[-3:])}"  # distinct per member, stays under the per-IP limit
+    await send_otp(slug, token, ip, sender)
     code = sender.codes[member_phone]
-    await decide(slug, token, code, decision, "127.0.0.1", "seed-demo")
-
+    await decide(slug, token, code, decision, ip, "seed-demo")
 
 async def _submit(
     officer: CurrentSession,
