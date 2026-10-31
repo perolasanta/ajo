@@ -71,6 +71,7 @@ class MemberBalancesResponse(_MemberResponse):
 
 
 class MemberBankAccountAdminOfficerResponse(_MemberResponse):
+    id: uuid.UUID
     bank_code: str
     last4: str
     account_name: str
@@ -79,6 +80,7 @@ class MemberBankAccountAdminOfficerResponse(_MemberResponse):
 
 
 class MemberBankAccountTreasurerResponse(_MemberResponse):
+    id: uuid.UUID
     bank_code: str
     last4: str
 
@@ -160,10 +162,10 @@ MEMBER_DETAIL_QUERIES = {
     "committee": RESTRICTED_MEMBER_DETAIL_QUERY,
     "auditor": AUDITOR_MEMBER_DETAIL_QUERY,
 }
-FULL_BANK_ACCOUNT_QUERY = text("""SELECT bank_code,last4,account_name,verified_at,status
+FULL_BANK_ACCOUNT_QUERY = text("""SELECT id,bank_code,last4,account_name,verified_at,status
   FROM bank_accounts WHERE cooperative_id=:cid AND member_id=:id""")
 TREASURER_BANK_ACCOUNT_QUERY = text(
-    "SELECT bank_code,last4 FROM bank_accounts WHERE cooperative_id=:cid AND member_id=:id"
+    "SELECT id,bank_code,last4 FROM bank_accounts WHERE cooperative_id=:cid AND member_id=:id"
 )
 BANK_ACCOUNT_QUERIES = {
     "admin": FULL_BANK_ACCOUNT_QUERY,
