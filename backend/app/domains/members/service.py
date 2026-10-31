@@ -376,6 +376,7 @@ def validate_member_csv(csv_text: str) -> tuple[list[dict[str, str]], list[dict[
     errors: list[dict[str, Any]] = []
     for line, row in enumerate(reader, start=2):
         normalized = {key: (value or "").strip() for key, value in row.items() if key}
+        invalid = False
         if (
             not normalized.get("member_no")
             or not normalized.get("full_name")
@@ -384,7 +385,14 @@ def validate_member_csv(csv_text: str) -> tuple[list[dict[str, str]], list[dict[
             errors.append(
                 {"row": line, "error": "member_no, full_name and E.164 phone are required"}
             )
-        else:
+            invalid = True
+        if normalized.get("joined_on"):
+            try:
+                date.fromisoformat(normalized["joined_on"])
+            except ValueError:
+                errors.append({"row": line, "error": "joined_on must be a valid ISO date"})
+                invalid = True
+        if not invalid:
             valid.append(normalized)
     return valid, errors
 
@@ -427,7 +435,9 @@ async def import_members(current: CurrentSession, csv_text: str, confirm: bool) 
                     "email": row.get("email") or None,
                     "staff": row.get("staff_no") or None,
                     "employer": row.get("employer") or None,
-                    "joined": date.fromisoformat(row["joined_on"]) if row.get("joined_on") else None,
+                    "joined": date.fromisoformat(row["joined_on"])
+                    if row.get("joined_on")
+                    else None,
                 },
             )
             created.append({"member_no": row["member_no"], "id": str(member_id)})

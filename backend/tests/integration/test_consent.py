@@ -606,3 +606,40 @@ async def test_outbox_worker_delivers_encrypted_confirmation_otp(
         destination == expected_destination and expected_code in message
         for destination, message in gateway.sent
     )
+
+
+async def test_rejecting_final_terms_opens_loan_level_dispute(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    application, loan_id, borrower, _, tokens = await approved_loan(db, loan_base, test_database)
+    cid = loan_base.cooperative_id
+    token = await final_terms_token(db, cid, application, tokens)
+    slug = await db.fetchval("SELECT slug FROM cooperatives WHERE id=$1", cid)
+    sender = FakeOtpSender()
+    ip = "198.51.100.90"
+    await send_otp(slug, token, ip, sender)
+    _, code = sender.sent[-1]
+    assert await consent_service.verify_otp(slug, token, code, ip) is not None
+    assert await decide_consent(slug, token, "reject", ip, "test-agent") == "recorded"
+
+    dispute = await db.fetchrow(
+        "SELECT application_id,loan_id,member_id FROM disputes "
+        "WHERE cooperative_id=$1 AND loan_id=$2",
+        cid,
+        loan_id,
+    )
+    assert dispute is not None
+    assert dispute["application_id"] is None
+    assert dispute["loan_id"] == loan_id
+    assert dispute["member_id"] == borrower
+    state = await db.fetchrow(
+        """SELECT a.status AS application_status,l.status AS loan_status,l.deductions_paused
+             FROM loan_applications a JOIN loans l
+               ON l.cooperative_id=a.cooperative_id AND l.application_id=a.id
+            WHERE a.cooperative_id=$1 AND a.id=$2""",
+        cid,
+        application,
+    )
+    assert state["application_status"] == "disputed"
+    assert state["loan_status"] == "disputed"
+    assert state["deductions_paused"] is True

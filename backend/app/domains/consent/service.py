@@ -291,9 +291,10 @@ async def decide(slug: str, token: str, decision: str, ip: str, user_agent: str)
                 action="member_consent_confirmed", entity_type="loan_application", entity_id=str(row["application_id"]),
                 summary={"consent_id": str(row["id"]), "kind": row["kind"]}, channel="sms", ip=ip)
         else:
+            dispute_application_id = row["application_id"] if row["loan_id"] is None else None
             await session.execute(text("""INSERT INTO disputes(cooperative_id,application_id,loan_id,member_id,
               opened_via,reason) VALUES(:cid,:app,:loan,:member,'signed_link','This is not mine')"""),
-              {"cid": cid, "app": row["application_id"], "loan": row["loan_id"], "member": row["member_id"]})
+              {"cid": cid, "app": dispute_application_id, "loan": row["loan_id"], "member": row["member_id"]})
             await session.execute(text("UPDATE loan_applications SET status='disputed',updated_at=now() WHERE cooperative_id=:cid AND id=:id"), {"cid": cid, "id": row["application_id"]})
             if row["loan_id"]:
                 await session.execute(text("UPDATE loans SET status='disputed',deductions_paused=true WHERE cooperative_id=:cid AND id=:id"), {"cid": cid, "id": row["loan_id"]})

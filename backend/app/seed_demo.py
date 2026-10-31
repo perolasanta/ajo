@@ -23,7 +23,7 @@ from app.core.config import get_settings
 from app.core.db import transaction
 from app.domains.auth.service import CurrentSession, resolve_tenant_slug
 from app.domains.auth.staff import create_staff_user, get_bootstrap_admin
-from app.domains.consent.service import decide, send_otp
+from app.domains.consent.service import decide, send_otp, verify_otp
 from app.domains.disbursements.service import authorize, confirm_paid, prepare, record_transfer
 from app.domains.loans.calculations import build_schedule
 from app.domains.loans.service import decide_application, submit_application
@@ -124,22 +124,22 @@ class _CapturingOtp:
     def __call__(self, destination: str, code: str) -> None:
         self.codes[destination] = code
 
-    async def send(self, destination: str, code: str) -> None:
-        self.codes[destination] = code
-
 
 async def _confirm(
     slug: str,
     token: str,
-    member_phone: str,
+    member_no: str,
     sender: _CapturingOtp,
     decision: str = "confirm",
 ) -> None:
     """Run the real OTP + consent-decide path for one consent token."""
-    ip = f"127.0.1.{int(member_phone[-3:])}"  # distinct per member, stays under the per-IP limit
+    ip = f"127.0.1.{int(member_no[-3:])}"  # distinct per member, stays under the per-IP limit
     await send_otp(slug, token, ip, sender)
-    code = sender.codes[member_phone]
-    await decide(slug, token, code, decision, ip, "seed-demo")
+    code = sender.codes[_phone(int(member_no[-3:]))]
+    if await verify_otp(slug, token, code, ip) is None:
+        raise RuntimeError("demo consent OTP verification failed")
+    await decide(slug, token, decision, ip, "seed-demo")
+
 
 async def _submit(
     officer: CurrentSession,
@@ -183,10 +183,11 @@ async def _drive_to_ready(
     principal_kobo: int,
     tenor_months: int,
     bank_account_id: uuid.UUID,
-    member_phone: str,
+    member_no: str,
     sender: _CapturingOtp,
+    final_decision: str | None = "confirm",
 ) -> tuple[uuid.UUID, uuid.UUID]:
-    """Submit, confirm the applicant ack, approve, and confirm final terms -> ready for disbursement.
+    """Submit, confirm the applicant ack, approve, and decide the final terms consent.
 
     Returns (application_id, loan_id).
     """
@@ -205,12 +206,13 @@ async def _drive_to_ready(
         guarantors=None,
         consent_delivery_observer=capture,
     )
-    await _confirm(slug, tokens[0], member_phone, sender)  # applicant_ack -> under_review
+    await _confirm(slug, tokens[0], member_no, sender)  # applicant_ack -> under_review
     loan_id = await decide_application(
         committee, application_id, "approved", "demo approval", consent_delivery_observer=capture
     )
     assert loan_id is not None
-    await _confirm(slug, tokens[1], member_phone, sender)  # final_terms -> ready_for_disbursement
+    if final_decision is not None:
+        await _confirm(slug, tokens[1], member_no, sender, decision=final_decision)
     return application_id, loan_id
 
 
@@ -229,18 +231,11 @@ async def _disburse(
     await confirm_paid(admin, disbursement_id, "127.0.0.1")
 
 
-def _schedule_payments(principal_kobo: int, tenor_months: int, first_due: date) -> list[int]:
-    schedule = build_schedule(
-        principal_kobo, ANNUAL_RATE_BPS, tenor_months, "reducing_balance", first_due
-    )
-    return [installment.payment_kobo for installment in schedule]
-
-
 async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
     """Seed one cooperative with a fixed policy, product, staff, members and 14 loans.
 
     Refuses in production, without the fake-data flag, for an unknown slug, or when the
-    cooperative already has members. Returns a counts summary; prints the one-time staff
+    cooperative already contains demo/domain data. Returns a counts summary; prints staff
     passwords once and a short summary. Never prints account numbers or other secrets.
     """
     if get_settings().is_production:
@@ -255,11 +250,22 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
 
     async with transaction(cooperative_id) as session:
         existing = await session.scalar(
-            text("SELECT count(*) FROM members WHERE cooperative_id = :cid"),
+            text("""
+                SELECT (
+                    EXISTS(SELECT 1 FROM members WHERE cooperative_id=:cid)
+                    OR EXISTS(SELECT 1 FROM user_roles
+                              WHERE cooperative_id=:cid AND role <> 'admin')
+                    OR EXISTS(SELECT 1 FROM cooperative_policy_versions WHERE cooperative_id=:cid)
+                    OR EXISTS(SELECT 1 FROM loan_products WHERE cooperative_id=:cid)
+                    OR EXISTS(SELECT 1 FROM loan_applications WHERE cooperative_id=:cid)
+                )
+            """),
             {"cid": cooperative_id},
         )
-    if int(existing or 0) > 0:
-        raise RuntimeError("slug already has members")
+    if existing:
+        raise RuntimeError(
+            "slug already contains data; seed-demo cannot resume a partial run—use a new slug"
+        )
 
     bootstrap = await get_bootstrap_admin(cooperative_id)
     if bootstrap is None:
@@ -278,6 +284,7 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
         user_id = await create_staff_user(admin, email=email, password=password, roles=(role,))
         staff_ids[role] = user_id
         staff_passwords.append((role, password))
+    _print_staff_passwords(staff_passwords, slug)
 
     officer = _session(
         cooperative_id, slug, staff_ids["officer"], f"officer@{slug}.demo", "officer"
@@ -353,6 +360,7 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
     borrowing_member_count = len(LOAN_PLAN)
     member_bank_accounts: dict[int, uuid.UUID] = {}
     for k in range(1, MEMBER_COUNT + 1):
+        print(f"member {k}/{MEMBER_COUNT}", flush=True)
         member_no = f"M-{k:03d}"
         member_id = member_ids[member_no]
         await add_salary_record(
@@ -383,6 +391,7 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
     sender = _CapturingOtp()
     first_due = today + timedelta(days=32)
     for plan_index, (member_index, target_state, repayments) in enumerate(LOAN_PLAN):
+        print(f"loan {plan_index + 1}/{len(LOAN_PLAN)} target={target_state}", flush=True)
         k = member_index + 1
         member_no = f"M-{k:03d}"
         member_id = member_ids[member_no]
@@ -410,23 +419,7 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
                 tenor_months=tenor_months,
                 bank_account_id=bank_account_id,
             )
-            await _confirm(slug, tokens[0], _phone(k), sender)
-            continue
-
-        if target_state == "disputed":
-            # Last reachable disputed state: reject the applicant_ack consent. A loan-level
-            # dispute is unreachable because consent.decide reject sets both application_id
-            # and loan_id on a final-terms reject, violating the disputes CHECK (exactly one
-            # of application_id / loan_id must be non-null). See the status report.
-            _, tokens = await _submit(
-                officer,
-                member_id=member_id,
-                product_id=product_id,
-                principal_kobo=principal_kobo,
-                tenor_months=tenor_months,
-                bank_account_id=bank_account_id,
-            )
-            await _confirm(slug, tokens[0], _phone(k), sender, decision="reject")
+            await _confirm(slug, tokens[0], member_no, sender)
             continue
 
         # approved_awaiting_final, ready_for_disbursement, repaying, closed all require the
@@ -440,9 +433,19 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
             principal_kobo=principal_kobo,
             tenor_months=tenor_months,
             bank_account_id=bank_account_id,
-            member_phone=_phone(k),
+            member_no=member_no,
             sender=sender,
+            final_decision=(
+                None
+                if target_state == "approved_awaiting_final"
+                else "reject"
+                if target_state == "disputed"
+                else "confirm"
+            ),
         )
+
+        if target_state == "disputed":
+            continue  # final-terms rejection creates a genuine loan-level dispute
 
         if target_state == "approved_awaiting_final":
             continue  # loan approved, application awaiting_borrower_final_confirmation
@@ -454,7 +457,10 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
         await _disburse(
             treasurer=treasurer, admin=admin, loan_id=loan_id, reference=f"BANK-REF-{plan_index}"
         )
-        payments = _schedule_payments(principal_kobo, tenor_months, first_due)
+        schedule = build_schedule(
+            principal_kobo, ANNUAL_RATE_BPS, tenor_months, "reducing_balance", first_due
+        )
+        payments = [installment.payment_kobo for installment in schedule]
 
         if target_state == "repaying":
             for payment_index in range(repayments):
@@ -476,28 +482,32 @@ async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
                 member_id=member_id,
                 amount_kobo=sum(payments),
                 source="bank_transfer",
-                received_on=date(2099, 1, 1),
+                received_on=schedule[-1].due_at.date(),
                 reference=f"CLOSE-{plan_index}",
                 idempotency_key=f"seed-close-{plan_index}",
                 ip="127.0.0.1",
             )
 
-    _print_output(staff_passwords, slug)
+    _print_output(slug)
     return {
         "members": MEMBER_COUNT,
         "loan_applications": len(LOAN_PLAN),
-        "loans": 8,
+        "loans": 9,
         "staff_users": 5,
-        "disputed_loan_reachable": False,
+        "disputed_loan_reachable": True,
     }
 
 
-def _print_output(staff_passwords: list[tuple[str, str]], slug: str) -> None:
-    """Print the one-time staff passwords and a short summary. No account numbers or other secrets."""
+def _print_staff_passwords(staff_passwords: list[tuple[str, str]], slug: str) -> None:
+    """Print one-time passwords as soon as all demo staff users have been created."""
     print("One-time temporary staff passwords (shown once, store securely):")
     for role, password in staff_passwords:
-        print(f"  {role}@{slug}.demo: {password}")
+        print(f"  {role}@{slug}.demo: {password}", flush=True)
+
+
+def _print_output(slug: str) -> None:
+    """Print a short completion summary without repeating the one-time passwords."""
     print(
-        "Seed complete: members=25, loan_applications=14, loans=8, staff_users=5. "
-        "Disputed loan state unreachable through services (disputed application produced instead)."
+        f"Seed complete for {slug}: members=25, loan_applications=14, loans=9, staff_users=5.",
+        flush=True,
     )

@@ -264,6 +264,22 @@ async def test_csv_dry_run_writes_nothing(db: asyncpg.Connection) -> None:
     assert before == after
 
 
+async def test_csv_import_reports_invalid_joined_on_as_a_row_error(
+    db: asyncpg.Connection,
+) -> None:
+    cid, uid, _, _, _ = await setup_tenant(db)
+    result = await service.import_members(
+        session(cid, uid),
+        "member_no,full_name,phone_e164,joined_on\nM-2,Second,+2348012345678,2024-02-30\n",
+        True,
+    )
+    assert result == {
+        "imported": 0,
+        "errors": [{"row": 2, "error": "joined_on must be a valid ISO date"}],
+        "valid_rows": 0,
+    }
+
+
 async def test_salary_and_bank_account_tenant_isolated_and_audited(
     db: asyncpg.Connection,
 ) -> None:
