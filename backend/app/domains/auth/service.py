@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_engine, transaction
-from app.core.errors import Forbidden, NotFound
+from app.core.errors import Conflict, Forbidden, NotFound
 from app.core.security import (
     decrypt_mfa_secret,
     encrypt_mfa_secret,
@@ -919,54 +919,516 @@ async def logout(current: CurrentSession, ip: str | None, *, revoke_all: bool = 
         )
 
 
-async def change_role(
+async def _lock_cooperative_role_changes(session: AsyncSession, cooperative_id: uuid.UUID) -> None:
+    """Serialize all role proposals and approvals within one cooperative."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:cooperative_id, 0))"),
+        {"cooperative_id": str(cooperative_id)},
+    )
+
+
+async def _current_user_roles(
+    session: AsyncSession, cooperative_id: uuid.UUID, user_id: uuid.UUID
+) -> list[str]:
+    result = await session.execute(
+        text(
+            "SELECT r.role FROM user_roles r JOIN users u "
+            "ON u.cooperative_id = r.cooperative_id AND u.id = r.user_id "
+            "WHERE r.cooperative_id = :cooperative_id AND r.user_id = :user_id "
+            "AND u.status = 'active' ORDER BY r.role"
+        ),
+        {"cooperative_id": cooperative_id, "user_id": user_id},
+    )
+    return [row[0] for row in result]
+
+
+async def _require_current_admin(session: AsyncSession, current: CurrentSession) -> list[str]:
+    roles = await _current_user_roles(session, current.cooperative_id, current.user_id)
+    if "admin" not in roles:
+        raise Forbidden("Admin role required")
+    return roles
+
+
+async def _active_admin_count(session: AsyncSession, cooperative_id: uuid.UUID) -> int:
+    result = await session.execute(
+        text(
+            "SELECT count(DISTINCT r.user_id) FROM user_roles r JOIN users u "
+            "ON u.cooperative_id = r.cooperative_id AND u.id = r.user_id "
+            "WHERE r.cooperative_id = :cooperative_id AND r.role = 'admin' "
+            "AND u.status = 'active'"
+        ),
+        {"cooperative_id": cooperative_id},
+    )
+    return int(result.scalar_one())
+
+
+async def _audit_role_change(
+    session: AsyncSession,
+    *,
+    cooperative_id: uuid.UUID,
+    proposal_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    actor_user_id: uuid.UUID | None,
+    actor_roles: list[str],
+    event: str,
+    role: str,
+    action: str,
+    reason: str,
+    ip: str | None,
+    detail: str | None = None,
+) -> None:
+    summary: dict[str, Any] = {
+        "proposal_id": str(proposal_id),
+        "actor_user_id": str(actor_user_id) if actor_user_id else None,
+        "target_user_id": str(target_user_id),
+        "role": role,
+        "action": action,
+        "old_role": role if action == "remove" else None,
+        "new_role": role if action == "add" else None,
+        "reason": reason,
+    }
+    if detail is not None:
+        summary["detail"] = detail
+    await append_audit(
+        session,
+        cooperative_id=cooperative_id,
+        actor_user_id=actor_user_id,
+        role=_roles_text(actor_roles) if actor_roles else None,
+        action=f"role_change_{event}",
+        entity_type="user",
+        entity_id=str(target_user_id),
+        summary=summary,
+        channel="system" if event == "expired" else "web",
+        ip=ip,
+        reason=reason,
+    )
+
+
+async def _expire_due_role_change_proposals(
+    session: AsyncSession, cooperative_id: uuid.UUID
+) -> None:
+    result = await session.execute(
+        text(
+            "UPDATE role_change_proposals SET status = 'expired', decided_at = now(), "
+            "decided_by = NULL WHERE cooperative_id = :cooperative_id "
+            "AND status = 'pending' AND expires_at <= now() "
+            "RETURNING id, target_user_id, role, action, reason"
+        ),
+        {"cooperative_id": cooperative_id},
+    )
+    for row in result.mappings():
+        await _audit_role_change(
+            session,
+            cooperative_id=cooperative_id,
+            proposal_id=row["id"],
+            target_user_id=row["target_user_id"],
+            actor_user_id=None,
+            actor_roles=[],
+            event="expired",
+            role=row["role"],
+            action=row["action"],
+            reason=row["reason"],
+            ip=None,
+        )
+
+
+async def propose_role_change(
     current: CurrentSession,
     target_user_id: uuid.UUID,
     role: str,
-    enabled: bool,
+    action: str,
+    reason: str,
     ip: str | None,
-) -> None:
-    if "admin" not in current.roles:
-        raise Forbidden("Admin role required")
+) -> uuid.UUID:
     if role not in VALID_ROLES:
         raise ValueError("Invalid role")
+    if action not in {"add", "remove"}:
+        raise ValueError("Invalid role-change action")
+    reason = reason.strip()
+    if not reason or len(reason) > 500:
+        raise Conflict("A reason of 1 to 500 characters is required")
+
     async with transaction(current.cooperative_id) as session:
-        exists = await session.execute(
+        await _lock_cooperative_role_changes(session, current.cooperative_id)
+        actor_roles = await _require_current_admin(session, current)
+        await _expire_due_role_change_proposals(session, current.cooperative_id)
+        if await _active_admin_count(session, current.cooperative_id) < 2:
+            raise Conflict("At least two active admins are required for maker-checker role changes")
+
+        target = await session.execute(
             text("SELECT 1 FROM users WHERE cooperative_id = :cooperative_id AND id = :user_id"),
             {"cooperative_id": current.cooperative_id, "user_id": target_user_id},
         )
-        if exists.scalar_one_or_none() is None:
+        if target.scalar_one_or_none() is None:
             raise NotFound("User not found")
-        if enabled:
-            await session.execute(
+        current_role = await session.execute(
+            text(
+                "SELECT 1 FROM user_roles WHERE cooperative_id = :cooperative_id "
+                "AND user_id = :user_id AND role = :role"
+            ),
+            {
+                "cooperative_id": current.cooperative_id,
+                "user_id": target_user_id,
+                "role": role,
+            },
+        )
+        already_has_role = current_role.scalar_one_or_none() is not None
+        if action == "add" and already_has_role:
+            raise Conflict("Target already holds the proposed role")
+        if action == "remove" and not already_has_role:
+            raise Conflict("Target does not hold the role proposed for removal")
+
+        duplicate = await session.execute(
+            text(
+                "SELECT 1 FROM role_change_proposals WHERE cooperative_id = :cooperative_id "
+                "AND target_user_id = :target_user_id AND role = :role AND action = :action "
+                "AND status = 'pending' AND expires_at > now() LIMIT 1"
+            ),
+            {
+                "cooperative_id": current.cooperative_id,
+                "target_user_id": target_user_id,
+                "role": role,
+                "action": action,
+            },
+        )
+        if duplicate.scalar_one_or_none() is not None:
+            raise Conflict("A pending proposal already exists for this target, role and action")
+
+        proposal_result = await session.execute(
+            text(
+                "INSERT INTO role_change_proposals "
+                "(cooperative_id, target_user_id, proposer_user_id, role, action, reason) "
+                "VALUES (:cooperative_id, :target_user_id, :proposer_user_id, :role, :action, :reason) "
+                "RETURNING id"
+            ),
+            {
+                "cooperative_id": current.cooperative_id,
+                "target_user_id": target_user_id,
+                "proposer_user_id": current.user_id,
+                "role": role,
+                "action": action,
+                "reason": reason,
+            },
+        )
+        proposal_id = uuid.UUID(str(proposal_result.scalar_one()))
+        await _audit_role_change(
+            session,
+            cooperative_id=current.cooperative_id,
+            proposal_id=proposal_id,
+            target_user_id=target_user_id,
+            actor_user_id=current.user_id,
+            actor_roles=actor_roles,
+            event="proposed",
+            role=role,
+            action=action,
+            reason=reason,
+            ip=ip,
+        )
+    return proposal_id
+
+
+async def approve_role_change(
+    current: CurrentSession, proposal_id: uuid.UUID, ip: str | None
+) -> None:
+    failure: Conflict | None = None
+    async with transaction(current.cooperative_id) as session:
+        await _lock_cooperative_role_changes(session, current.cooperative_id)
+        actor_roles = await _require_current_admin(session, current)
+        proposal_result = await session.execute(
+            text(
+                "SELECT target_user_id, proposer_user_id, role, action, reason, status "
+                "FROM role_change_proposals WHERE cooperative_id = :cooperative_id "
+                "AND id = :proposal_id FOR UPDATE"
+            ),
+            {"cooperative_id": current.cooperative_id, "proposal_id": proposal_id},
+        )
+        proposal = proposal_result.mappings().one_or_none()
+        if proposal is None:
+            raise NotFound("Role-change proposal not found")
+        target_user_id = proposal["target_user_id"]
+        if proposal["proposer_user_id"] == current.user_id:
+            raise Forbidden("The proposer cannot approve their own proposal")
+        if proposal["action"] == "add" and target_user_id == current.user_id:
+            raise Forbidden("The target cannot approve a role addition")
+
+        await _expire_due_role_change_proposals(session, current.cooperative_id)
+        refreshed = await session.execute(
+            text(
+                "SELECT status FROM role_change_proposals WHERE cooperative_id = :cooperative_id "
+                "AND id = :proposal_id"
+            ),
+            {"cooperative_id": current.cooperative_id, "proposal_id": proposal_id},
+        )
+        status = refreshed.scalar_one()
+        if status == "expired":
+            failure = Conflict("Role-change proposal has expired")
+        elif status != "pending":
+            failure = Conflict("Role-change proposal is no longer pending")
+        else:
+            target_result = await session.execute(
                 text(
-                    "INSERT INTO user_roles (cooperative_id, user_id, role) "
-                    "VALUES (:cooperative_id, :user_id, :role) ON CONFLICT DO NOTHING"
+                    "SELECT status FROM users WHERE cooperative_id = :cooperative_id "
+                    "AND id = :target_user_id FOR UPDATE"
+                ),
+                {"cooperative_id": current.cooperative_id, "target_user_id": target_user_id},
+            )
+            target_user = target_result.one_or_none()
+            role_result = await session.execute(
+                text(
+                    "SELECT 1 FROM user_roles WHERE cooperative_id = :cooperative_id "
+                    "AND user_id = :target_user_id AND role = :role"
                 ),
                 {
                     "cooperative_id": current.cooperative_id,
-                    "user_id": target_user_id,
-                    "role": role,
+                    "target_user_id": target_user_id,
+                    "role": proposal["role"],
                 },
             )
+            role_present = role_result.scalar_one_or_none() is not None
+            stale = (
+                target_user is None
+                or (proposal["action"] == "add" and role_present)
+                or (proposal["action"] == "remove" and not role_present)
+            )
+            if stale:
+                await session.execute(
+                    text(
+                        "UPDATE role_change_proposals SET status = 'rejected', decided_at = now(), "
+                        "decided_by = :actor_user_id WHERE cooperative_id = :cooperative_id "
+                        "AND id = :proposal_id"
+                    ),
+                    {
+                        "actor_user_id": current.user_id,
+                        "cooperative_id": current.cooperative_id,
+                        "proposal_id": proposal_id,
+                    },
+                )
+                await _audit_role_change(
+                    session,
+                    cooperative_id=current.cooperative_id,
+                    proposal_id=proposal_id,
+                    target_user_id=target_user_id,
+                    actor_user_id=current.user_id,
+                    actor_roles=actor_roles,
+                    event="rejected",
+                    role=proposal["role"],
+                    action=proposal["action"],
+                    reason=proposal["reason"],
+                    ip=ip,
+                    detail="stale",
+                )
+                failure = Conflict("Role-change proposal is stale; it has been rejected")
+            elif proposal["action"] == "remove" and proposal["role"] == "admin":
+                admin_count = await _active_admin_count(session, current.cooperative_id)
+                if admin_count <= 1:
+                    await session.execute(
+                        text(
+                            "UPDATE role_change_proposals SET status = 'rejected', decided_at = now(), "
+                            "decided_by = :actor_user_id WHERE cooperative_id = :cooperative_id "
+                            "AND id = :proposal_id"
+                        ),
+                        {
+                            "actor_user_id": current.user_id,
+                            "cooperative_id": current.cooperative_id,
+                            "proposal_id": proposal_id,
+                        },
+                    )
+                    await _audit_role_change(
+                        session,
+                        cooperative_id=current.cooperative_id,
+                        proposal_id=proposal_id,
+                        target_user_id=target_user_id,
+                        actor_user_id=current.user_id,
+                        actor_roles=actor_roles,
+                        event="rejected",
+                        role=proposal["role"],
+                        action=proposal["action"],
+                        reason=proposal["reason"],
+                        ip=ip,
+                        detail="last_active_admin",
+                    )
+                    failure = Conflict("Cannot remove the last active admin role")
+            if failure is None:
+                if proposal["action"] == "add":
+                    await session.execute(
+                        text(
+                            "INSERT INTO user_roles (cooperative_id, user_id, role) "
+                            "VALUES (:cooperative_id, :target_user_id, :role)"
+                        ),
+                        {
+                            "cooperative_id": current.cooperative_id,
+                            "target_user_id": target_user_id,
+                            "role": proposal["role"],
+                        },
+                    )
+                else:
+                    await session.execute(
+                        text(
+                            "DELETE FROM user_roles WHERE cooperative_id = :cooperative_id "
+                            "AND user_id = :target_user_id AND role = :role"
+                        ),
+                        {
+                            "cooperative_id": current.cooperative_id,
+                            "target_user_id": target_user_id,
+                            "role": proposal["role"],
+                        },
+                    )
+                await session.execute(
+                    text(
+                        "UPDATE user_sessions SET revoked_at = now() "
+                        "WHERE cooperative_id = :cooperative_id AND user_id = :target_user_id "
+                        "AND revoked_at IS NULL"
+                    ),
+                    {"cooperative_id": current.cooperative_id, "target_user_id": target_user_id},
+                )
+                await session.execute(
+                    text(
+                        "UPDATE role_change_proposals SET status = 'approved', decided_at = now(), "
+                        "decided_by = :actor_user_id WHERE cooperative_id = :cooperative_id "
+                        "AND id = :proposal_id"
+                    ),
+                    {
+                        "actor_user_id": current.user_id,
+                        "cooperative_id": current.cooperative_id,
+                        "proposal_id": proposal_id,
+                    },
+                )
+                await _audit_role_change(
+                    session,
+                    cooperative_id=current.cooperative_id,
+                    proposal_id=proposal_id,
+                    target_user_id=target_user_id,
+                    actor_user_id=current.user_id,
+                    actor_roles=actor_roles,
+                    event="approved",
+                    role=proposal["role"],
+                    action=proposal["action"],
+                    reason=proposal["reason"],
+                    ip=ip,
+                )
+    if failure is not None:
+        raise failure
+
+
+async def reject_role_change(
+    current: CurrentSession, proposal_id: uuid.UUID, ip: str | None
+) -> None:
+    failure: Conflict | None = None
+    async with transaction(current.cooperative_id) as session:
+        await _lock_cooperative_role_changes(session, current.cooperative_id)
+        actor_roles = await _require_current_admin(session, current)
+        proposal_result = await session.execute(
+            text(
+                "SELECT target_user_id, role, action, reason, status "
+                "FROM role_change_proposals WHERE cooperative_id = :cooperative_id "
+                "AND id = :proposal_id FOR UPDATE"
+            ),
+            {"cooperative_id": current.cooperative_id, "proposal_id": proposal_id},
+        )
+        proposal = proposal_result.mappings().one_or_none()
+        if proposal is None:
+            raise NotFound("Role-change proposal not found")
+        await _expire_due_role_change_proposals(session, current.cooperative_id)
+        status_result = await session.execute(
+            text(
+                "SELECT status FROM role_change_proposals WHERE cooperative_id = :cooperative_id "
+                "AND id = :proposal_id"
+            ),
+            {"cooperative_id": current.cooperative_id, "proposal_id": proposal_id},
+        )
+        if status_result.scalar_one() == "expired":
+            failure = Conflict("Role-change proposal has expired")
+        elif proposal["status"] != "pending":
+            failure = Conflict("Role-change proposal is no longer pending")
         else:
             await session.execute(
                 text(
-                    "DELETE FROM user_roles WHERE cooperative_id = :cooperative_id "
-                    "AND user_id = :user_id AND role = :role"
+                    "UPDATE role_change_proposals SET status = 'rejected', decided_at = now(), "
+                    "decided_by = :actor_user_id WHERE cooperative_id = :cooperative_id "
+                    "AND id = :proposal_id"
                 ),
                 {
+                    "actor_user_id": current.user_id,
                     "cooperative_id": current.cooperative_id,
-                    "user_id": target_user_id,
-                    "role": role,
+                    "proposal_id": proposal_id,
                 },
             )
-        await _audit_auth(
-            session,
-            cooperative_id=current.cooperative_id,
-            actor_user_id=current.user_id,
-            role=_roles_text(list(current.roles)),
-            action="role_changed",
-            ip=ip,
-            summary={"target_user_id": str(target_user_id), "role": role, "enabled": enabled},
+            await _audit_role_change(
+                session,
+                cooperative_id=current.cooperative_id,
+                proposal_id=proposal_id,
+                target_user_id=proposal["target_user_id"],
+                actor_user_id=current.user_id,
+                actor_roles=actor_roles,
+                event="rejected",
+                role=proposal["role"],
+                action=proposal["action"],
+                reason=proposal["reason"],
+                ip=ip,
+            )
+    if failure is not None:
+        raise failure
+
+
+async def cancel_role_change(
+    current: CurrentSession, proposal_id: uuid.UUID, ip: str | None
+) -> None:
+    failure: Conflict | None = None
+    async with transaction(current.cooperative_id) as session:
+        await _lock_cooperative_role_changes(session, current.cooperative_id)
+        proposal_result = await session.execute(
+            text(
+                "SELECT target_user_id, proposer_user_id, role, action, reason, status "
+                "FROM role_change_proposals WHERE cooperative_id = :cooperative_id "
+                "AND id = :proposal_id FOR UPDATE"
+            ),
+            {"cooperative_id": current.cooperative_id, "proposal_id": proposal_id},
         )
+        proposal = proposal_result.mappings().one_or_none()
+        if proposal is None:
+            raise NotFound("Role-change proposal not found")
+        if proposal["proposer_user_id"] != current.user_id:
+            raise Forbidden("Only the proposer can cancel this proposal")
+        await _expire_due_role_change_proposals(session, current.cooperative_id)
+        status_result = await session.execute(
+            text(
+                "SELECT status FROM role_change_proposals WHERE cooperative_id = :cooperative_id "
+                "AND id = :proposal_id"
+            ),
+            {"cooperative_id": current.cooperative_id, "proposal_id": proposal_id},
+        )
+        if status_result.scalar_one() == "expired":
+            failure = Conflict("Role-change proposal has expired")
+        elif proposal["status"] != "pending":
+            failure = Conflict("Role-change proposal is no longer pending")
+        else:
+            await session.execute(
+                text(
+                    "UPDATE role_change_proposals SET status = 'cancelled', decided_at = now(), "
+                    "decided_by = :actor_user_id WHERE cooperative_id = :cooperative_id "
+                    "AND id = :proposal_id"
+                ),
+                {
+                    "actor_user_id": current.user_id,
+                    "cooperative_id": current.cooperative_id,
+                    "proposal_id": proposal_id,
+                },
+            )
+            actor_roles = await _current_user_roles(
+                session, current.cooperative_id, current.user_id
+            )
+            await _audit_role_change(
+                session,
+                cooperative_id=current.cooperative_id,
+                proposal_id=proposal_id,
+                target_user_id=proposal["target_user_id"],
+                actor_user_id=current.user_id,
+                actor_roles=actor_roles,
+                event="cancelled",
+                role=proposal["role"],
+                action=proposal["action"],
+                reason=proposal["reason"],
+                ip=ip,
+            )
+    if failure is not None:
+        raise failure
