@@ -81,3 +81,17 @@ async def change_terms(
     changes = body.model_dump(exclude={"reason"}, exclude_unset=True)
     await service.change_application_terms(current, application_id, changes, body.reason)
     return {"updated": True}
+
+
+@router.post(
+    "/loan-applications/{application_id}/consents/{consent_id}/reissue",
+    dependencies=[Depends(require_csrf)],
+    status_code=201,
+)
+async def reissue_consent(
+    application_id: uuid.UUID,
+    consent_id: uuid.UUID,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, str]:
+    new_consent_id = await service.reissue_consent(current, application_id, consent_id)
+    return {"consent_id": str(new_consent_id)}

@@ -595,12 +595,24 @@ async def decide_application(
                     session,
                     cooperative_id=cid,
                     application_id=application_id,
-                    member_id=application["beneficiary_member_id"] or member_id,
+                    member_id=member_id,
                     kind="final_terms",
                     terms_hash=hashlib.sha256(canonical.encode()).digest(),
                     slug=current.slug,
                     delivery_observer=consent_delivery_observer,
                 )
+                beneficiary_id = application["beneficiary_member_id"]
+                if beneficiary_id is not None and beneficiary_id != member_id:
+                    await create_consent(
+                        session,
+                        cooperative_id=cid,
+                        application_id=application_id,
+                        member_id=beneficiary_id,
+                        kind="beneficiary",
+                        terms_hash=hashlib.sha256(canonical.encode()).digest(),
+                        slug=current.slug,
+                        delivery_observer=consent_delivery_observer,
+                    )
             else:
                 await session.execute(
                     text(
@@ -729,3 +741,79 @@ async def change_application_terms(
             ip=None,
             reason=reason,
         )
+
+
+async def reissue_consent(
+    current: CurrentSession,
+    application_id: uuid.UUID,
+    consent_id: uuid.UUID,
+    delivery_observer: Callable[[str], None] | None = None,
+) -> uuid.UUID:
+    role = _role(current, {"officer"})
+    cid = current.cooperative_id
+    async with transaction(cid) as session:
+        row = (
+            await session.execute(
+                text("""SELECT c.member_id,c.kind,c.status,c.otp_attempts,
+                  a.member_id AS borrower_id,a.beneficiary_member_id,a.status AS application_status,
+                  a.current_terms_snapshot_id,s.terms_sha256
+                  FROM member_consents c
+                  JOIN loan_applications a ON a.cooperative_id=c.cooperative_id AND a.id=c.application_id
+                  LEFT JOIN loan_terms_snapshots s ON s.cooperative_id=a.cooperative_id AND s.id=a.current_terms_snapshot_id
+                  WHERE c.cooperative_id=:cid AND c.application_id=:app AND c.id=:consent
+                  FOR UPDATE OF c,a"""),
+                {"cid": cid, "app": application_id, "consent": consent_id},
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            raise NotFound("Consent not found")
+        if row["status"] != "invalidated" or row["otp_attempts"] < 5:
+            raise Conflict("Consent is not locked by exhausted OTP attempts")
+        if row["kind"] not in {"final_terms", "beneficiary"}:
+            raise Conflict("Only final-terms and beneficiary consents can be reissued")
+        if row["application_status"] not in {
+            "awaiting_borrower_final_confirmation",
+            "ready_for_disbursement",
+        } or row["current_terms_snapshot_id"] is None or row["terms_sha256"] is None:
+            raise Conflict("Current approved terms are unavailable for reissue")
+        expected_member_id = row["borrower_id"]
+        if row["kind"] == "beneficiary":
+            expected_member_id = row["beneficiary_member_id"]
+            if expected_member_id is None or expected_member_id == row["borrower_id"]:
+                raise Conflict("This application has no separate beneficiary consent")
+        if row["member_id"] != expected_member_id:
+            raise Conflict("Consent member no longer matches the approved loan terms")
+        await session.execute(
+            text("""UPDATE member_consents SET status='invalidated'
+              WHERE cooperative_id=:cid AND application_id=:app AND kind=:kind AND member_id=:member
+                AND status='pending'"""),
+            {
+                "cid": cid,
+                "app": application_id,
+                "kind": row["kind"],
+                "member": row["member_id"],
+            },
+        )
+        new_consent_id = await create_consent(
+            session,
+            cooperative_id=cid,
+            application_id=application_id,
+            member_id=row["member_id"],
+            kind=row["kind"],
+            terms_hash=bytes(row["terms_sha256"]),
+            slug=current.slug,
+            delivery_observer=delivery_observer,
+        )
+        await append_audit(
+            session,
+            cooperative_id=cid,
+            actor_user_id=current.user_id,
+            role=role,
+            action="member_consent_reissued",
+            entity_type="member_consent",
+            entity_id=str(new_consent_id),
+            summary={"application_id": str(application_id), "previous_consent_id": str(consent_id), "kind": row["kind"]},
+            channel="api",
+            ip=None,
+        )
+        return new_consent_id
