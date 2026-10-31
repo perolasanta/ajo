@@ -9,6 +9,7 @@ export class ApiError extends Error {
     public readonly status: number,
     message: string,
     public readonly requestId?: string,
+    public readonly code?: string,
   ) {
     super(message);
   }
@@ -52,12 +53,17 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { ...init, credentials: "include", headers });
   if (response.status === 401) window.dispatchEvent(new Event("ajo:unauthenticated"));
   if (!response.ok) {
+    const errorBody = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { error?: string } | null;
     throw new ApiError(
       response.status,
       response.status === 403
         ? "You do not have permission to view this information."
         : "Request failed. Please try again.",
       response.headers.get("X-Request-ID") ?? undefined,
+      errorBody?.error,
     );
   }
   return response.json() as Promise<T>;
