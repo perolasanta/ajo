@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hmac
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import JSONResponse
@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.core.db import transaction
-from app.core.errors import Forbidden
+from app.core.errors import Conflict, Forbidden
 from app.core.security import csrf_matches, hash_csrf_token, hash_session_token, new_csrf_token
 from app.domains.auth import service
 from app.domains.auth.service import CurrentSession, LoginResult
@@ -37,6 +37,13 @@ class CodeBody(BaseModel):
 class RoleChangeBody(BaseModel):
     role: str
     enabled: bool
+
+
+class RoleChangeProposalBody(BaseModel):
+    target_user_id: uuid.UUID
+    role: Literal["officer", "committee", "treasurer", "admin", "auditor"]
+    action: Literal["add", "remove"]
+    reason: str = Field(min_length=1, max_length=500)
 
 
 def client_ip(request: Request) -> str | None:
@@ -192,6 +199,53 @@ async def change_role(
     body: RoleChangeBody,
     request: Request,
     current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, object]:
+    del user_id, body, request, current
+    raise Conflict("Immediate role changes are disabled; submit a role-change proposal")
+
+
+@router.post("/role-change-proposals", dependencies=[Depends(require_csrf)])
+async def propose_role_change(
+    body: RoleChangeProposalBody,
+    request: Request,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, object]:
+    proposal_id = await service.propose_role_change(
+        current,
+        body.target_user_id,
+        body.role,
+        body.action,
+        body.reason,
+        client_ip(request),
+    )
+    return {"proposal_id": str(proposal_id), "status": "pending"}
+
+
+@router.post("/role-change-proposals/{proposal_id}/approve", dependencies=[Depends(require_csrf)])
+async def approve_role_change(
+    proposal_id: uuid.UUID,
+    request: Request,
+    current: Annotated[CurrentSession, Depends(current_session)],
 ) -> dict[str, bool]:
-    await service.change_role(current, user_id, body.role, body.enabled, client_ip(request))
-    return {"updated": True}
+    await service.approve_role_change(current, proposal_id, client_ip(request))
+    return {"approved": True}
+
+
+@router.post("/role-change-proposals/{proposal_id}/reject", dependencies=[Depends(require_csrf)])
+async def reject_role_change(
+    proposal_id: uuid.UUID,
+    request: Request,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, bool]:
+    await service.reject_role_change(current, proposal_id, client_ip(request))
+    return {"rejected": True}
+
+
+@router.post("/role-change-proposals/{proposal_id}/cancel", dependencies=[Depends(require_csrf)])
+async def cancel_role_change(
+    proposal_id: uuid.UUID,
+    request: Request,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, bool]:
+    await service.cancel_role_change(current, proposal_id, client_ip(request))
+    return {"cancelled": True}

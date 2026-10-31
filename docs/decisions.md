@@ -36,7 +36,15 @@ Committee and auditor roles have no payroll access. **TODO:** read-only sign-off
 
 ## 2. Staff role changes
 
-A role change must be proposed by one cooperative admin and approved by a different cooperative admin. The proposer cannot approve their own change. The last remaining admin must never be demoted; reject any change that would leave the cooperative without an admin.
+A role-change proposal targets one user, one role, and one action (`add` or `remove`), and must include a reason. Approval adds or removes only that role; all other roles remain unchanged. A cooperative admin proposes the change, and a different cooperative admin approves it. The proposer cannot approve. The target of an `add` proposal also cannot approve it. A pending duplicate for the same target, role, and action is rejected.
+
+At approval time, the approver must still be an active admin and the target must still exist. An `add` is stale if the target already holds that role; a `remove` is stale if the target no longer holds it. Stale proposals are rejected. Proposals expire seven days after creation and cannot be approved after expiry. The proposer may cancel a pending proposal; an admin may reject one. Every propose, approve, reject, cancel, and expire event is audit-logged with actor (null for system expiry), target, old role, and new role.
+
+Removing the admin role is permitted only when at least one active admin will remain. Enforce this inside the approval transaction under a per-cooperative advisory lock so concurrent approvals cannot remove the last two admins. On an effective role change, revoke all of the target's active sessions. This flow does not change account status or deactivate users. The former immediate role-change endpoint is gated and returns an error directing clients to proposals.
+
+A cooperative with only one active admin cannot use maker-checker role changes: proposal creation returns a clear conflict until a second admin exists. The current bootstrap CLI creates the initial admin, and there is no staff-list or staff-invite API. Until a second admin is provisioned operationally, role changes remain blocked. There is no self-approval or single-admin bypass in the application.
+
+**Follow-up work:** define role-combination and separation-of-duties rules; add staff-list and staff-invite endpoints if needed.
 
 ## 3. Disputed or paused loans and repayments
 
