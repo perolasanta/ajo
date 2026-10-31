@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ensureCsrf, request } from "../api/client";
+import { ApiError, ensureCsrf, request } from "../api/client";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
@@ -25,15 +25,26 @@ export default function LoginPage() {
     const fields = new FormData(form);
     try {
       await ensureCsrf();
-      const data = await request<LoginReply>("/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cooperative_slug: fields.get("cooperative_slug"),
-          email: fields.get("email"),
-          password: fields.get("password"),
-        }),
-      });
+      const submit = () =>
+        request<LoginReply>("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cooperative_slug: fields.get("cooperative_slug"),
+            email: fields.get("email"),
+            password: fields.get("password"),
+          }),
+        });
+      let data: LoginReply;
+      try {
+        data = await submit();
+      } catch (requestError) {
+        if (!(requestError instanceof ApiError) || requestError.code !== "csrf_failed") {
+          throw requestError;
+        }
+        await ensureCsrf();
+        data = await submit();
+      }
       const setup = data.mfa_enrollment ?? data;
       if (setup.provisioning_uri) {
         const secret = new URL(setup.provisioning_uri).searchParams.get("secret");

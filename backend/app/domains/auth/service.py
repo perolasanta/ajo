@@ -537,58 +537,72 @@ async def load_session(cookie_value: str | None, *, require_authenticated: bool)
         result = await session.execute(
             text(
                 """
-                SELECT s.id AS session_id, s.user_id, s.csrf_token_hash, s.expires_at,
-                       s.last_seen_at, s.revoked_at, s.mfa_pending, s.authenticated_at,
-                       u.email, u.status
-                  FROM user_sessions AS s
-                  JOIN users AS u ON u.cooperative_id = s.cooperative_id AND u.id = s.user_id
-                 WHERE s.cooperative_id = :cooperative_id AND s.token_hash = :token_hash
-                 FOR UPDATE OF s
+                WITH candidate AS MATERIALIZED (
+                    SELECT s.id AS session_id, s.user_id, s.csrf_token_hash,
+                           u.email
+                      FROM user_sessions AS s
+                      JOIN users AS u ON u.cooperative_id = s.cooperative_id AND u.id = s.user_id
+                     WHERE s.cooperative_id = :cooperative_id AND s.token_hash = :token_hash
+                       AND s.revoked_at IS NULL AND s.expires_at > now()
+                       AND s.last_seen_at > now() - make_interval(mins => :idle_minutes)
+                       AND u.status = 'active'
+                       AND (NOT :require_authenticated OR
+                            (NOT s.mfa_pending AND s.authenticated_at IS NOT NULL))
+                     FOR UPDATE OF s
+                ), touched AS (
+                    UPDATE user_sessions AS s SET last_seen_at = now()
+                      FROM candidate AS c
+                     WHERE s.cooperative_id = :cooperative_id AND s.id = c.session_id
+                    RETURNING s.id
+                )
+                SELECT c.session_id, c.user_id, c.csrf_token_hash, c.email,
+                       ARRAY(SELECT role FROM user_roles
+                              WHERE cooperative_id = :cooperative_id
+                                AND user_id = c.user_id ORDER BY role) AS roles
+                  FROM candidate AS c JOIN touched AS t ON t.id = c.session_id
                 """
             ),
-            {"cooperative_id": cooperative_id, "token_hash": hash_session_token(token)},
+            {
+                "cooperative_id": cooperative_id,
+                "token_hash": hash_session_token(token),
+                "idle_minutes": settings.session_idle_minutes,
+                "require_authenticated": require_authenticated,
+            },
         )
         row = result.mappings().one_or_none()
-        now = datetime.now(UTC)
-        if (
-            row is None
-            or row["revoked_at"] is not None
-            or row["expires_at"] <= now
-            or row["last_seen_at"] <= now - timedelta(minutes=settings.session_idle_minutes)
-            or row["status"] != "active"
-            or (require_authenticated and (row["mfa_pending"] or row["authenticated_at"] is None))
-        ):
-            if row is not None and row["revoked_at"] is None:
-                await session.execute(
-                    text(
-                        "UPDATE user_sessions SET revoked_at = now() "
-                        "WHERE cooperative_id = :cooperative_id AND id = :session_id"
-                    ),
-                    {"cooperative_id": cooperative_id, "session_id": row["session_id"]},
-                )
+        if row is None:
+            await session.execute(
+                text(
+                    """
+                    UPDATE user_sessions AS s SET revoked_at = now()
+                     WHERE s.cooperative_id = :cooperative_id
+                       AND s.token_hash = :token_hash AND s.revoked_at IS NULL
+                       AND (s.expires_at <= now()
+                            OR s.last_seen_at <= now() - make_interval(mins => :idle_minutes)
+                            OR NOT EXISTS (
+                                SELECT 1 FROM users AS u
+                                 WHERE u.cooperative_id = s.cooperative_id
+                                   AND u.id = s.user_id AND u.status = 'active'
+                            )
+                            OR (:require_authenticated AND
+                                (s.mfa_pending OR s.authenticated_at IS NULL)))
+                    """
+                ),
+                {
+                    "cooperative_id": cooperative_id,
+                    "token_hash": hash_session_token(token),
+                    "idle_minutes": settings.session_idle_minutes,
+                    "require_authenticated": require_authenticated,
+                },
+            )
             raise Forbidden("Authentication required")
-        await session.execute(
-            text(
-                "UPDATE user_sessions SET last_seen_at = now() "
-                "WHERE cooperative_id = :cooperative_id AND id = :session_id"
-            ),
-            {"cooperative_id": cooperative_id, "session_id": row["session_id"]},
-        )
-        roles_result = await session.execute(
-            text(
-                "SELECT role FROM user_roles WHERE cooperative_id = :cooperative_id "
-                "AND user_id = :user_id ORDER BY role"
-            ),
-            {"cooperative_id": cooperative_id, "user_id": row["user_id"]},
-        )
-        roles = tuple(value[0] for value in roles_result)
         return CurrentSession(
             cooperative_id,
             slug,
             row["session_id"],
             row["user_id"],
             row["email"],
-            roles,
+            tuple(row["roles"]),
             bytes(row["csrf_token_hash"]),
         )
 

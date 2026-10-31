@@ -11,7 +11,7 @@ docs/       context.md, neon.md (setup guide + learning log), adr/
 ```
 
 ## First run
-1. `cp .env.example .env` and follow `docs/neon.md` (create project, roles, branches, connection strings).
+1. For local development with PostgreSQL, follow [`docs/local-development.md`](docs/local-development.md). For Neon setup, follow [`docs/neon.md`](docs/neon.md) and configure the appropriate branch and roles.
 2. `make setup`
 3. `make migrate`  then  `make smoke`  (all critical checks must pass)
 4. `make api` (http://localhost:8000/api/docs) and `make web` (http://localhost:5173)

@@ -4,7 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Menu, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
-import { ensureCsrf, request } from "./api/client";
+import { request } from "./api/client";
+import { visibleNavigation } from "./navigation";
 import type { MemberListItem } from "./api/schema";
 import { Avatar } from "./ui/Avatar";
 import { Skeleton } from "./ui/Feedback";
@@ -15,27 +16,6 @@ const LoginPage = lazy(() => import("./pages/LoginPage"));
 const MembersPage = lazy(() => import("./pages/MembersPage"));
 const MemberDetailPage = lazy(() => import("./pages/MemberDetailPage"));
 const DesignPage = lazy(() => import("./pages/DesignPage"));
-
-const navigation = [
-  {
-    name: "Dashboard",
-    path: "/dashboard",
-    roles: ["officer", "committee", "treasurer", "admin", "auditor"],
-  },
-  { name: "Members", path: "/members", roles: ["officer", "admin", "auditor"] },
-  {
-    name: "Loans",
-    path: "/loans",
-    roles: ["officer", "committee", "admin", "auditor"],
-  },
-  { name: "Disbursements", path: "/disbursements", roles: ["treasurer", "admin", "auditor"] },
-  {
-    name: "Payroll",
-    path: "/payroll",
-    roles: ["treasurer", "officer", "admin", "auditor"],
-  },
-  { name: "Audit", path: "/audit", roles: ["admin", "auditor"] },
-];
 
 const fakeMembers: MemberListItem[] = [
   {
@@ -86,9 +66,7 @@ function Shell({
   children: React.ReactNode;
 }) {
   const [drawer, setDrawer] = useState(false);
-  const links = navigation.filter((item) =>
-    item.roles.some((role) => session.roles.includes(role)),
-  );
+  const links = visibleNavigation(session.roles);
   const userName = session.email
     .split("@")[0]
     .replace(/\b\w/g, (character) => character.toUpperCase());
@@ -124,6 +102,19 @@ function Shell({
           <p className="text-xs text-white/65">{session.roles[0] ?? "member"}</p>
         </div>
       </div>
+      {onLogout && (
+        <button
+          type="button"
+          className="mt-3 flex min-h-10 items-center rounded-control px-3 text-sm text-white/85 transition hover:bg-white/10"
+          onClick={() => {
+            closeDrawer();
+            onLogout();
+          }}
+        >
+          <LogOut className="mr-2 size-4" />
+          Log out
+        </button>
+      )}
     </>
   );
 
@@ -220,11 +211,10 @@ function ProtectedShell() {
     return <main className="p-8">Your account does not have officer access.</main>;
   const logout = async () => {
     try {
-      await ensureCsrf();
       await request("/auth/logout", { method: "POST" });
     } finally {
       queryClient.clear();
-      navigate("/login");
+      navigate("/login", { replace: true });
     }
   };
   return (

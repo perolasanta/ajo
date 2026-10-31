@@ -23,6 +23,11 @@ class Forbidden(AppError):
     code = "forbidden"
 
 
+class CsrfFailure(AppError):
+    status_code = 403
+    code = "csrf_failed"
+
+
 class Conflict(AppError):
     status_code = 409
     code = "conflict"

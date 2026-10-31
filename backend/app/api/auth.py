@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.core.db import transaction
-from app.core.errors import Conflict, Forbidden
+from app.core.errors import Conflict, CsrfFailure, Forbidden
 from app.core.security import csrf_matches, hash_csrf_token, hash_session_token, new_csrf_token
 from app.domains.auth import service
 from app.domains.auth.service import CurrentSession, LoginResult
@@ -56,7 +56,7 @@ async def require_csrf(
 ) -> None:
     cookie_token = request.cookies.get(CSRF_COOKIE)
     if cookie_token is None or header_token is None or not csrf_matches(cookie_token, header_token):
-        raise Forbidden("CSRF validation failed")
+        raise CsrfFailure("CSRF validation failed")
     parts = service.split_session_cookie(request.cookies.get(SESSION_COOKIE))
     if parts is not None:
         slug, token = parts
@@ -78,7 +78,7 @@ async def require_csrf(
             if stored_hash is not None and not hmac.compare_digest(
                 bytes(stored_hash), hash_csrf_token(cookie_token)
             ):
-                raise Forbidden("CSRF validation failed")
+                raise CsrfFailure("CSRF validation failed")
 
 
 async def current_session(request: Request) -> CurrentSession:
@@ -111,8 +111,26 @@ def set_session_cookies(response: Response, result: LoginResult) -> None:
 
 
 @router.get("/csrf")
-async def csrf_token(response: Response) -> dict[str, str]:
+async def csrf_token(request: Request, response: Response) -> dict[str, str]:
     token = new_csrf_token()
+    parts = service.split_session_cookie(request.cookies.get(SESSION_COOKIE))
+    if parts is not None:
+        slug, session_token = parts
+        tenant = await service.resolve_tenant_slug(slug)
+        if tenant is not None and tenant[1] == "active":
+            async with transaction(tenant[0]) as session:
+                await session.execute(
+                    text(
+                        "UPDATE user_sessions SET csrf_token_hash = :csrf_hash "
+                        "WHERE cooperative_id = :cooperative_id AND token_hash = :token_hash "
+                        "AND revoked_at IS NULL AND expires_at > now()"
+                    ),
+                    {
+                        "csrf_hash": hash_csrf_token(token),
+                        "cooperative_id": tenant[0],
+                        "token_hash": hash_session_token(session_token),
+                    },
+                )
     response.set_cookie(
         CSRF_COOKIE,
         token,
