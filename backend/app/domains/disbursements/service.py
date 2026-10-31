@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
@@ -27,7 +27,7 @@ async def _load(session: Any, cid: uuid.UUID, loan_id: uuid.UUID) -> Any:
             await session.execute(
                 text("""SELECT l.id,l.member_id,l.status AS loan_status,l.application_id,
       a.status AS application_status,a.submitted_by,a.policy_version_id,a.product_id,a.current_terms_snapshot_id,
-      a.destination_bank_account_id,a.principal_kobo,s.terms,s.terms_sha256,p.fee_bps,
+      a.destination_bank_account_id,a.beneficiary_member_id,a.principal_kobo,s.terms,s.terms_sha256,p.fee_bps,
       b.bank_code,b.last4,b.account_name,b.status AS bank_status,b.verified_at
       FROM loans l JOIN loan_applications a ON a.cooperative_id=l.cooperative_id AND a.id=l.application_id
       JOIN loan_terms_snapshots s ON s.cooperative_id=a.cooperative_id AND s.id=a.current_terms_snapshot_id
@@ -46,22 +46,33 @@ async def _load(session: Any, cid: uuid.UUID, loan_id: uuid.UUID) -> Any:
 
 
 async def _validate(session: Any, cid: uuid.UUID, loan: Any) -> bool:
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-        {"member": loan["member_id"]},
-    )
+    await lock_cooperative_member(session, cid, loan["member_id"])
     if loan["application_status"] != "ready_for_disbursement":
         raise Conflict("Loan is not ready for disbursement")
     consent = (
         await session.execute(
             text("""SELECT terms_hash FROM member_consents
-      WHERE cooperative_id=:cid AND application_id=:app AND kind='final_terms' AND status='confirmed'
+      WHERE cooperative_id=:cid AND application_id=:app AND member_id=:borrower
+        AND kind='final_terms' AND status='confirmed'
       ORDER BY decided_at DESC LIMIT 1"""),
-            {"cid": cid, "app": loan["application_id"]},
+            {"cid": cid, "app": loan["application_id"], "borrower": loan["member_id"]},
         )
     ).scalar_one_or_none()
     if consent is None or bytes(consent) != bytes(loan["terms_sha256"]):
-        raise Conflict("Confirmed terms are missing or no longer current")
+        raise Conflict("Borrower final-terms confirmation is missing or no longer current")
+    beneficiary_id = loan["beneficiary_member_id"]
+    if beneficiary_id is not None and beneficiary_id != loan["member_id"]:
+        beneficiary_consent = (
+            await session.execute(
+                text("""SELECT terms_hash FROM member_consents
+                  WHERE cooperative_id=:cid AND application_id=:app AND member_id=:beneficiary
+                    AND kind='beneficiary' AND status='confirmed'
+                  ORDER BY decided_at DESC LIMIT 1"""),
+                {"cid": cid, "app": loan["application_id"], "beneficiary": beneficiary_id},
+            )
+        ).scalar_one_or_none()
+        if beneficiary_consent is None or bytes(beneficiary_consent) != bytes(loan["terms_sha256"]):
+            raise Conflict("Beneficiary confirmation is missing or no longer current")
     open_dispute = await session.scalar(
         text("""SELECT EXISTS(SELECT 1 FROM disputes WHERE cooperative_id=:cid
       AND application_id=:app AND status IN ('open','under_investigation'))"""),
@@ -96,12 +107,59 @@ async def _validate(session: Any, cid: uuid.UUID, loan: Any) -> bool:
     eligibility = await _eligibility(session, application, policy, exclude_loan_id=loan["id"])
     if not eligibility["eligible"]:
         raise Conflict("Loan no longer meets current eligibility rules")
-    lock_amount = int(policy["min_savings_kobo"])
-    if lock_amount:
+    approval = (
+        (
+            await session.execute(
+                text("""SELECT id,savings_backing_bps,savings_backing_amount_kobo
+                  FROM approvals WHERE cooperative_id=:cid AND application_id=:app AND decision='approved'
+                  ORDER BY created_at DESC LIMIT 1"""),
+                {"cid": cid, "app": loan["application_id"]},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if approval is None:
+        raise Conflict("Approved loan decision record is missing")
+    existing_lock = (
+        (
+            await session.execute(
+                text("""SELECT id,amount_kobo FROM savings_locks
+                  WHERE cooperative_id=:cid AND loan_id=:loan AND released_at IS NULL FOR UPDATE"""),
+                {"cid": cid, "loan": loan["id"]},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    bps = approval["savings_backing_bps"]
+    amount = approval["savings_backing_amount_kobo"]
+    if bps is None or amount is None:
+        raise Conflict("Approved loan decision is missing its savings backing snapshot")
+    amount = int(amount)
+    # Preserve a larger legacy lock, but never rewrite the approval-time snapshot.
+    existing_amount = int(existing_lock["amount_kobo"]) if existing_lock else 0
+    lock_amount = max(amount, existing_amount)
+    additional_lock = max(0, lock_amount - existing_amount)
+    if additional_lock > int(eligibility["available_savings_kobo"]):
+        raise Conflict("Insufficient unlocked savings to back this loan")
+    if lock_amount > 0 and existing_lock is None:
         await session.execute(
             text("""INSERT INTO savings_locks(cooperative_id,member_id,loan_id,amount_kobo)
-          VALUES(:cid,:member,:loan,:amount) ON CONFLICT DO NOTHING"""),
-            {"cid": cid, "member": loan["member_id"], "loan": loan["id"], "amount": lock_amount},
+          VALUES(:cid,:member,:loan,:amount)"""),
+            {
+                "cid": cid,
+                "member": loan["member_id"],
+                "loan": loan["id"],
+                "amount": lock_amount,
+            },
+        )
+    elif existing_lock is not None and int(existing_lock["amount_kobo"]) < amount:
+        await session.execute(
+            text(
+                "UPDATE savings_locks SET amount_kobo=:amount WHERE cooperative_id=:cid AND id=:id"
+            ),
+            {"cid": cid, "id": existing_lock["id"], "amount": amount},
         )
     return True
 

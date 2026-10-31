@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
+import asyncpg  # type: ignore[import-untyped]
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -28,7 +29,60 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import get_settings
 
-_SSL_REQUIRED = {"require", "verify-ca", "verify-full"}
+_SSL_REQUIRED = {"require"}
+_SSL_VERIFICATION_MODES = {"verify-ca", "verify-full"}
+
+
+def validate_application_role_identity(
+    *,
+    current_user: str,
+    is_database_owner: bool,
+    bypasses_rls: bool,
+    member_of_bypass_role: bool,
+) -> None:
+    """Reject credentials that would defeat tenant RLS for API/worker processes."""
+    if is_database_owner:
+        raise RuntimeError(
+            f"database role {current_user!r} must not be the database owner for an application process"
+        )
+    if bypasses_rls or member_of_bypass_role:
+        raise RuntimeError(
+            f"database role {current_user!r} must not bypass row-level security for an application process"
+        )
+
+
+async def check_application_role(url: str) -> None:
+    """Verify the configured connection role is not an owner or RLS bypass role."""
+    if not url:
+        raise RuntimeError("DATABASE_URL is required for an application process")
+    conn = await asyncpg.connect(asyncpg_dsn(url))
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT current_user,
+                   (r.oid = d.datdba) AS is_database_owner,
+                   r.rolsuper OR r.rolbypassrls AS bypasses_rls,
+                   EXISTS (
+                       SELECT 1
+                       FROM pg_roles bypass_role
+                       WHERE bypass_role.rolbypassrls
+                         AND pg_has_role(current_user, bypass_role.oid, 'member')
+                   ) AS member_of_bypass_role
+            FROM pg_roles r
+            CROSS JOIN pg_database d
+            WHERE r.rolname = current_user AND d.datname = current_database()
+            """
+        )
+    finally:
+        await conn.close()
+    if row is None:
+        raise RuntimeError("could not inspect the configured database role")
+    validate_application_role_identity(
+        current_user=row["current_user"],
+        is_database_owner=row["is_database_owner"],
+        bypasses_rls=row["bypasses_rls"],
+        member_of_bypass_role=row["member_of_bypass_role"],
+    )
 
 
 def split_url(url: str) -> tuple[str, str | None]:
@@ -60,6 +114,11 @@ def to_sqlalchemy_async_url(
     parsed = urlparse(clean)
     params = dict(parse_qsl(parsed.query))
     connect_args: dict[str, Any] = {}
+    if sslmode in _SSL_VERIFICATION_MODES:
+        raise ValueError(
+            f"sslmode={sslmode} is not supported by this adapter; certificate verification "
+            "is not enforced by the SQLAlchemy asyncpg URL conversion"
+        )
     if sslmode in _SSL_REQUIRED:
         connect_args["ssl"] = "require"
     if disable_prepared_cache:
@@ -124,3 +183,13 @@ async def transaction(cooperative_id: uuid.UUID | None = None) -> AsyncIterator[
                 {"cid": str(cooperative_id)},
             )
         yield session
+
+
+async def lock_cooperative_member(
+    session: AsyncSession, cooperative_id: uuid.UUID, member_id: uuid.UUID
+) -> None:
+    """Serialize financial mutations for one member within one cooperative."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 5))"),
+        {"lock_key": f"{cooperative_id}:{member_id}"},
+    )

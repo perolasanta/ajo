@@ -7,7 +7,7 @@ The VPS holds only `/opt/ajo`, the Ajo Nginx vhost, and its certificate. Other A
 3. Install `ops/nginx/ajo.conf.example` as a separate host vhost, uncomment/set the Certbot TLS paths, then run `sudo nginx -t` and `sudo systemctl reload nginx`. Do not replace existing Nginx configuration.
 4. `cd /opt/ajo && docker login ghcr.io`
 5. `docker compose pull`
-6. Run migrations before starting the new services: `docker compose run --rm api alembic upgrade head`
+6. Run migrations before starting the new services through the owner-only one-shot service: `docker compose --profile migration run --rm migration`
 7. `docker compose up -d`
 8. Check `docker compose ps`, `curl --fail https://ajo.petbell.com.ng/api/v1/health`, and `curl --fail https://ajo.petbell.com.ng/api/v1/health/db`.
 

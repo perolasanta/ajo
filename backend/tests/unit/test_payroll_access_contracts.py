@@ -1,0 +1,283 @@
+"""Regression tests for payroll access controls and response contracts."""
+
+from __future__ import annotations
+
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi import FastAPI, Response
+from httpx import ASGITransport, AsyncClient
+from pydantic import BaseModel
+
+from app.api import payroll as payroll_api
+from app.core.errors import install_error_handlers
+from app.domains.auth.service import CurrentSession
+from app.domains.payroll import service
+
+pytestmark = pytest.mark.unit
+
+ROOT = Path(__file__).resolve().parents[3]
+RUN_ID = "11111111-1111-1111-1111-111111111111"
+PROFILE_ID = "22222222-2222-2222-2222-222222222222"
+
+
+def _session_for(role: str) -> CurrentSession:
+    return CurrentSession(
+        uuid.uuid4(),
+        "payroll-contract-test",
+        uuid.uuid4(),
+        uuid.uuid4(),
+        "staff@example.test",
+        (role,),
+        bytes(32),
+    )
+
+
+@asynccontextmanager
+async def _unexpected_transaction(*args: Any, **kwargs: Any) -> Any:
+    raise AssertionError("authorization must reject before opening a database transaction")
+    yield None
+
+
+JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] = {
+    ("POST", "/payroll/profiles"): ({"profile_id"}, {"profile_id": PROFILE_ID}),
+    ("POST", "/payroll/runs"): ({"run_id"}, {"run_id": RUN_ID}),
+    (
+        "POST",
+        "/payroll/runs/{run_id}/dry-run",
+    ): (
+        {"file_sha256", "file_total_kobo", "rows", "errors"},
+        {
+            "file_sha256": "a" * 64,
+            "file_total_kobo": 12,
+            "rows": [
+                {
+                    "row": 2,
+                    "staff_no_raw": "S-1",
+                    "member_id": None,
+                    "actual_kobo": 12,
+                    "classification": "pending",
+                    "future_row_field": "must be hidden",
+                }
+            ],
+            "errors": [{"row": 3, "error": "invalid amount", "future_error_field": True}],
+        },
+    ),
+    (
+        "POST",
+        "/payroll/runs/{run_id}/import",
+    ): (
+        {"file_sha256", "file_total_kobo", "errors"},
+        {
+            "file_sha256": "b" * 64,
+            "file_total_kobo": 12,
+            "errors": [{"row": 3, "error": "invalid amount", "future_error_field": True}],
+        },
+    ),
+    ("POST", "/payroll/runs/{run_id}/post"): ({"posted"}, {"posted": 1}),
+    (
+        "POST",
+        "/payroll/runs/{run_id}/sign-off",
+    ): ({"csv_base64", "json_base64"}, {"csv_base64": "YQ==", "json_base64": "e30="}),
+}
+
+
+def _route(method: str, path: str) -> Any:
+    return next(
+        route
+        for route in payroll_api.router.routes
+        if route.path == path and method in route.methods
+    )
+
+
+def test_payroll_json_endpoints_have_explicit_narrow_response_schemas() -> None:
+    for (method, path), (expected_keys, sample) in JSON_RESPONSE_CONTRACTS.items():
+        model = _route(method, path).response_model
+        assert isinstance(model, type) and issubclass(model, BaseModel), (
+            f"{method} {path} must declare a named response model"
+        )
+        assert set(model.model_fields) == expected_keys
+        response = model.model_validate({**sample, "future_field": "must be hidden"})
+        assert set(response.model_dump()) == expected_keys
+        assert "future_field" not in response.model_dump()
+
+
+def test_nested_dry_run_response_models_hide_new_row_and_error_fields() -> None:
+    model = _route("POST", "/payroll/runs/{run_id}/dry-run").response_model
+    assert isinstance(model, type) and issubclass(model, BaseModel)
+    sample = JSON_RESPONSE_CONTRACTS[("POST", "/payroll/runs/{run_id}/dry-run")][1]
+    response = model.model_validate(sample)
+    assert set(response.rows[0].model_dump()) == {
+        "row",
+        "staff_no_raw",
+        "member_id",
+        "actual_kobo",
+        "classification",
+    }
+    assert set(response.errors[0].model_dump()) == {"row", "error"}
+
+
+def test_expected_csv_route_is_explicitly_a_csv_not_a_json_object() -> None:
+    route = _route("GET", "/payroll/runs/{run_id}/expected.csv")
+    assert route.response_model is None
+
+
+@pytest.mark.parametrize("trigger", ["=", "+", "-", "@", "\t", "\r"])
+def test_csv_sanitization_is_text_only_and_leaves_negative_numbers_unchanged(
+    trigger: str,
+) -> None:
+    sanitize = getattr(
+        service, "_sanitize_csv_row", lambda values, text_fields, max_lengths=None: values
+    )
+    text_fields = {"staff_no_raw", "name", "classification", "resolution_note"}
+    row: dict[str, Any] = {field: f"{trigger}formula" for field in text_fields}
+    row["actual_kobo"] = -123
+
+    sanitized = sanitize(row, text_fields, {"resolution_note": 500})
+
+    for field in text_fields:
+        expected = f"'{trigger}formula"
+        if field == "resolution_note":
+            expected = expected[:500]
+        assert sanitized[field] == expected
+    assert sanitized["actual_kobo"] == -123
+    assert isinstance(sanitized["actual_kobo"], int)
+
+
+def test_csv_sanitization_caps_exported_resolution_note_at_500_characters() -> None:
+    sanitize = getattr(
+        service, "_sanitize_csv_row", lambda values, text_fields, max_lengths=None: values
+    )
+    sanitized = sanitize(
+        {"resolution_note": "x" * 501},
+        {"resolution_note"},
+        {"resolution_note": 500},
+    )
+    assert len(sanitized["resolution_note"]) == 500
+
+
+def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() -> None:
+    decisions = (ROOT / "docs" / "decisions.md").read_text()
+    assert "## 1b. Payroll access and reporting" in decisions
+    for path in (
+        "POST /payroll/runs",
+        "GET /payroll/runs/{run_id}/expected.csv",
+        "POST /payroll/runs/{run_id}/dry-run",
+        "POST /payroll/runs/{run_id}/import",
+        "POST /payroll/runs/{run_id}/post",
+        "POST /payroll/profiles",
+        "POST /payroll/runs/{run_id}/sign-off",
+    ):
+        assert path in decisions
+    assert "read-only sign-off report for auditors" in decisions.lower()
+    assert "no application write path" in decisions.lower()
+    assert "500 characters" in decisions
+    assert "personal and bank data" in decisions.lower()
+
+
+@pytest.mark.parametrize(
+    ("role", "method", "path", "payload"),
+    [
+        (
+            "admin",
+            "POST",
+            "/payroll/runs",
+            {"profile_id": PROFILE_ID, "period_year": 2099, "period_month": 1},
+        ),
+        ("admin", "GET", f"/payroll/runs/{RUN_ID}/expected.csv", None),
+        (
+            "admin",
+            "POST",
+            f"/payroll/runs/{RUN_ID}/dry-run",
+            {"filename": "payroll.csv", "content_base64": "QQ=="},
+        ),
+        (
+            "admin",
+            "POST",
+            f"/payroll/runs/{RUN_ID}/import",
+            {"filename": "payroll.csv", "content_base64": "QQ=="},
+        ),
+        ("admin", "POST", f"/payroll/runs/{RUN_ID}/post", None),
+        *[
+            (role, method, path, payload)
+            for role in ("committee", "auditor")
+            for method, path, payload in (
+                (
+                    "POST",
+                    "/payroll/profiles",
+                    {"staff_no_column": "Staff", "amount_column": "Amount"},
+                ),
+                (
+                    "POST",
+                    "/payroll/runs",
+                    {"profile_id": PROFILE_ID, "period_year": 2099, "period_month": 1},
+                ),
+                ("GET", f"/payroll/runs/{RUN_ID}/expected.csv", None),
+                (
+                    "POST",
+                    f"/payroll/runs/{RUN_ID}/dry-run",
+                    {"filename": "payroll.csv", "content_base64": "QQ=="},
+                ),
+                (
+                    "POST",
+                    f"/payroll/runs/{RUN_ID}/import",
+                    {"filename": "payroll.csv", "content_base64": "QQ=="},
+                ),
+                ("POST", f"/payroll/runs/{RUN_ID}/post", None),
+                ("POST", f"/payroll/runs/{RUN_ID}/sign-off", {"bank_receipt_total_kobo": 0}),
+            )
+        ],
+    ],
+)
+async def test_roles_without_payroll_access_receive_403(
+    role: str,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(payroll_api.service, "transaction", _unexpected_transaction)
+    app = FastAPI()
+    install_error_handlers(app)
+    app.include_router(payroll_api.router, prefix="/api/v1")
+    app.dependency_overrides[payroll_api.current_session] = lambda: _session_for(role)
+    app.dependency_overrides[payroll_api.require_csrf] = lambda: None
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.request(method, f"/api/v1{path}", json=payload)
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(("result_status",), [("csv",), ("json",)])
+async def test_expected_csv_and_signoff_responses_set_cache_control_no_store(
+    monkeypatch: pytest.MonkeyPatch, result_status: str
+) -> None:
+    response = Response()
+    current = _session_for("officer" if result_status == "csv" else "admin")
+    if result_status == "csv":
+        monkeypatch.setattr(
+            payroll_api.service, "export_expected", _async_return(b"Staff,Amount\r\n")
+        )
+        result = await payroll_api.export_expected(run_id=uuid.UUID(RUN_ID), current=current)
+        assert isinstance(result, Response)
+        assert result.headers.get("cache-control") == "no-store"
+    else:
+        monkeypatch.setattr(payroll_api.service, "sign_off", _async_return((b"csv", b"{}")))
+        result = await payroll_api.sign_off(
+            run_id=uuid.UUID(RUN_ID),
+            body=payroll_api.SignOffBody(bank_receipt_total_kobo=0),
+            current=current,
+            response=response,
+        )
+        assert set(result) == {"csv_base64", "json_base64"}
+        assert response.headers.get("cache-control") == "no-store"
+
+
+def _async_return(value: Any) -> Any:
+    async def _return(*args: Any, **kwargs: Any) -> Any:
+        return value
+
+    return _return

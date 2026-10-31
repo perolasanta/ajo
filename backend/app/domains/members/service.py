@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hmac
 import io
 import json
 import uuid
@@ -11,7 +12,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.core.security import _fernet
 from app.domains.audit.service import append_audit
@@ -36,7 +37,40 @@ async def record_contribution(
         raise Forbidden("Officer, treasurer or admin role required")
     if kind not in {"savings", "shares", "dues"} or amount_kobo <= 0:
         raise ValueError("contribution is invalid")
+    if not idempotency_key.strip():
+        raise ValueError("idempotency key is required")
     async with transaction(current.cooperative_id) as session:
+        request_payload = {
+            "operation": "member_contribution",
+            "member_id": str(member_id),
+            "kind": kind,
+            "amount_kobo": amount_kobo,
+        }
+        payload_json = json.dumps(request_payload, separators=(",", ":"))
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 12001))"),
+            {"key": f"{current.cooperative_id}:contribution:{idempotency_key}"},
+        )
+        request_hash = await session.scalar(
+            text("SELECT canonical_request_hash(CAST(:payload AS jsonb))"),
+            {"payload": payload_json},
+        )
+        existing = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id,request_hash FROM journal_entries WHERE cooperative_id=:cid AND idempotency_key=:key"
+                    ),
+                    {"cid": current.cooperative_id, "key": idempotency_key},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["request_hash"]), bytes(request_hash)):
+                raise Conflict("Idempotency key was reused with a different payload")
+            return uuid.UUID(str(existing["id"]))
         accounts = await session.execute(
             text(
                 "SELECT code,id FROM accounts WHERE cooperative_id=:cid AND code IN ('bank', :target)"
@@ -55,8 +89,9 @@ async def record_contribution(
             raise Conflict("Default chart of accounts is incomplete")
         entry = (
             await session.execute(
-                text("""SELECT post_journal_entry(
-            :cid,:effective,'member_contribution',:member,:description,:actor,:key,CAST(:lines AS jsonb),NULL)"""),
+                text("""SELECT post_journal_entry_with_payload(
+            :cid,:effective,'member_contribution',:member,:description,:actor,:key,
+            CAST(:lines AS jsonb),CAST(:request_payload AS jsonb),NULL)"""),
                 {
                     "cid": current.cooperative_id,
                     "effective": date.today(),
@@ -64,6 +99,7 @@ async def record_contribution(
                     "description": f"Member {kind} contribution",
                     "actor": current.user_id,
                     "key": idempotency_key,
+                    "request_payload": payload_json,
                     "lines": json.dumps(
                         [
                             {
@@ -139,11 +175,42 @@ async def request_withdrawal(
         raise Forbidden("Officer, treasurer or admin role required")
     if amount_kobo <= 0:
         raise ValueError("amount must be positive")
+    if not idempotency_key.strip():
+        raise ValueError("idempotency key is required")
     async with transaction(current.cooperative_id) as session:
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 5))"),
-            {"key": f"{current.cooperative_id}:{member_id}"},
+        payload_json = json.dumps(
+            {
+                "operation": "withdrawal_request",
+                "member_id": str(member_id),
+                "amount_kobo": amount_kobo,
+            },
+            separators=(",", ":"),
         )
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 12002))"),
+            {"key": f"{current.cooperative_id}:withdrawal:{idempotency_key}"},
+        )
+        request_hash = await session.scalar(
+            text("SELECT canonical_request_hash(CAST(:payload AS jsonb))"),
+            {"payload": payload_json},
+        )
+        existing = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id,request_hash FROM withdrawal_requests WHERE cooperative_id=:cid AND idempotency_key=:key"
+                    ),
+                    {"cid": current.cooperative_id, "key": idempotency_key},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["request_hash"]), bytes(request_hash)):
+                raise Conflict("Idempotency key was reused with a different payload")
+            return uuid.UUID(str(existing["id"]))
+        await lock_cooperative_member(session, current.cooperative_id, member_id)
         balance = (
             await session.execute(
                 text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)
@@ -163,27 +230,19 @@ async def request_withdrawal(
             raise Conflict("Withdrawal exceeds available savings")
         result = await session.execute(
             text("""INSERT INTO withdrawal_requests
-          (cooperative_id,member_id,amount_kobo,idempotency_key,requested_by)
-          VALUES (:cid,:mid,:amount,:key,:actor)
-          ON CONFLICT (cooperative_id,idempotency_key) DO NOTHING RETURNING id"""),
+          (cooperative_id,member_id,amount_kobo,idempotency_key,request_hash,requested_by)
+          VALUES (:cid,:mid,:amount,:key,:request_hash,:actor) RETURNING id"""),
             {
                 "cid": current.cooperative_id,
                 "mid": member_id,
                 "amount": amount_kobo,
                 "key": idempotency_key,
+                "request_hash": request_hash,
                 "actor": current.user_id,
             },
         )
         request_id = result.scalar_one_or_none()
-        if request_id is None:
-            request_id = (
-                await session.execute(
-                    text(
-                        "SELECT id FROM withdrawal_requests WHERE cooperative_id=:cid AND idempotency_key=:key"
-                    ),
-                    {"cid": current.cooperative_id, "key": idempotency_key},
-                )
-            ).scalar_one()
+        assert request_id is not None
         await append_audit(
             session,
             cooperative_id=current.cooperative_id,
@@ -227,6 +286,7 @@ async def approve_withdrawal(current: CurrentSession, request_id: uuid.UUID) -> 
                     ).scalar_one()
                 )
             )
+        await lock_cooperative_member(session, current.cooperative_id, row.member_id)
         balance = (
             await session.execute(
                 text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)

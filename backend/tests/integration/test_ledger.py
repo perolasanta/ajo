@@ -61,6 +61,7 @@ async def post_entry(
     amount: int,
     *,
     idempotency_key: str | None = None,
+    source_id: uuid.UUID | None = None,
     reverses_entry_id: uuid.UUID | None = None,
     lines: list[dict[str, object]] | None = None,
 ) -> uuid.UUID:
@@ -77,7 +78,7 @@ async def post_entry(
         )
         """,
         cooperative_id,
-        uuid.uuid4(),
+        source_id or uuid.uuid4(),
         idempotency_key or str(uuid.uuid4()),
         json.dumps(lines),
         reverses_entry_id,
@@ -234,13 +235,45 @@ async def test_idempotent_replay_returns_existing_entry(db: asyncpg.Connection) 
     try:
         cooperative_id, debit_account, credit_account = await create_tenant(db)
         key = str(uuid.uuid4())
+        source_id = uuid.uuid4()
         original = await post_entry(
-            db, cooperative_id, debit_account, credit_account, 42, idempotency_key=key
+            db,
+            cooperative_id,
+            debit_account,
+            credit_account,
+            42,
+            idempotency_key=key,
+            source_id=source_id,
         )
         replay = await post_entry(
-            db, cooperative_id, debit_account, credit_account, 42, idempotency_key=key
+            db,
+            cooperative_id,
+            debit_account,
+            credit_account,
+            42,
+            idempotency_key=key,
+            source_id=source_id,
         )
         assert replay == original
+        with pytest.raises(asyncpg.UniqueViolationError, match="different payload"):
+            async with db.transaction():
+                await post_entry(
+                    db,
+                    cooperative_id,
+                    debit_account,
+                    credit_account,
+                    43,
+                    idempotency_key=key,
+                    source_id=source_id,
+                )
+        assert (
+            await db.fetchval(
+                "SELECT octet_length(request_hash) FROM journal_entries WHERE cooperative_id=$1 AND id=$2",
+                cooperative_id,
+                original,
+            )
+            == 32
+        )
         assert (
             await db.fetchval(
                 "SELECT count(*) FROM journal_lines WHERE cooperative_id = $1 AND entry_id = $2",

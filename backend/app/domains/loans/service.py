@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
-from app.core.db import transaction
+from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
@@ -39,7 +39,7 @@ async def _effective_policy(session: Any, cooperative_id: uuid.UUID, on_date: da
         (
             await session.execute(
                 text("""SELECT id,salary_basis,deduction_cap_bps,max_active_loans,
-              guarantors_required,min_savings_kobo,loan_to_savings_multiple_x100
+              guarantors_required,min_savings_kobo,loan_to_savings_multiple_x100,settings
               FROM cooperative_policy_versions WHERE cooperative_id=:cid AND status='approved'
               AND effective_from<=:day AND (effective_to IS NULL OR :day<effective_to)
               ORDER BY effective_from DESC LIMIT 1"""),
@@ -52,6 +52,18 @@ async def _effective_policy(session: Any, cooperative_id: uuid.UUID, on_date: da
     if row is None:
         raise Conflict("No approved policy is effective for this application")
     return row
+
+
+def _savings_backing_bps(settings: Any) -> int:
+    settings = settings or {}
+    if not isinstance(settings, dict):
+        raise Conflict("Cooperative policy settings must be an object")
+    if "savings_backing_bps" not in settings:
+        return 0
+    bps = settings["savings_backing_bps"]
+    if isinstance(bps, bool) or not isinstance(bps, int) or not 0 <= bps <= 10_000:
+        raise Conflict("Cooperative savings_backing_bps setting must be between 0 and 10000")
+    return bps
 
 
 async def _load_application(
@@ -219,6 +231,38 @@ async def _fraud_alert(
     )
 
 
+async def _validate_product_terms(
+    session: Any,
+    cooperative_id: uuid.UUID,
+    product_id: uuid.UUID,
+    principal_kobo: int,
+    tenor_months: int,
+    annual_rate_bps: int,
+) -> Any:
+    product = (
+        (
+            await session.execute(
+                text("""SELECT interest_method,annual_rate_bps,min_amount_kobo,max_amount_kobo,
+                  min_tenor_months,max_tenor_months FROM loan_products
+                  WHERE cooperative_id=:cid AND id=:id"""),
+                {"cid": cooperative_id, "id": product_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if product is None:
+        raise NotFound("Loan product not found")
+    if not product["min_amount_kobo"] <= principal_kobo <= product["max_amount_kobo"]:
+        raise Conflict("Loan amount is outside product limits")
+    if not product["min_tenor_months"] <= tenor_months <= product["max_tenor_months"]:
+        raise Conflict("Loan tenor is outside product limits")
+    # A product stores one fixed annual rate, not a rate band.
+    if annual_rate_bps != product["annual_rate_bps"]:
+        raise Conflict("Loan rate is outside product limits")
+    return product
+
+
 async def submit_application(
     current: CurrentSession,
     *,
@@ -236,6 +280,15 @@ async def submit_application(
         raise ValueError("loan amount and tenor must be positive")
     cid, today, application_id = current.cooperative_id, _today_wat(), uuid.uuid4()
     async with transaction(cid) as session:
+        await lock_cooperative_member(session, cid, member_id)
+        has_open_application = await session.scalar(
+            text("""SELECT EXISTS(SELECT 1 FROM loan_applications WHERE cooperative_id=:cid
+              AND member_id=:member AND status NOT IN
+              ('rejected','withdrawn','expired','disbursement_failed','closed','written_off'))"""),
+            {"cid": cid, "member": member_id},
+        )
+        if has_open_application:
+            raise Conflict("Member already has an active loan application")
         policy = await _effective_policy(session, cid, today)
         product = (
             (
@@ -377,10 +430,7 @@ async def decide_application(
         ).scalar_one_or_none()
         if member_id is None:
             raise NotFound("Loan application not found")
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(CAST(CAST(:member AS uuid) AS text)))"),
-            {"member": member_id},
-        )
+        await lock_cooperative_member(session, cid, member_id)
         application = await _load_application(session, cid, application_id)
         if application is None:
             raise NotFound("Loan application not found")
@@ -397,12 +447,32 @@ async def decide_application(
             )
         else:
             policy = await _effective_policy(session, cid, _today_wat())
+            product_terms = None
+            if decision == "approved":
+                product_terms = await _validate_product_terms(
+                    session,
+                    cid,
+                    application["product_id"],
+                    int(application["principal_kobo"]),
+                    int(application["tenor_months"]),
+                    int(application["annual_rate_bps"]),
+                )
             eligibility = await _eligibility(session, application, policy)
             if decision == "approved" and not eligibility["eligible"]:
                 raise Conflict("Application does not meet current eligibility rules")
+            backing_bps: int | None = None
+            backing_amount: int | None = None
+            if decision == "approved":
+                backing_bps = _savings_backing_bps(policy["settings"])
+                percentage_amount = (
+                    int(application["principal_kobo"]) * backing_bps + 9_999
+                ) // 10_000
+                backing_amount = max(int(policy["min_savings_kobo"]), percentage_amount)
             await session.execute(
                 text("""INSERT INTO approvals(cooperative_id,application_id,approver_id,
-              policy_version_id,product_id,decision,reason) VALUES(:cid,:app,:actor,:policy,:product,:decision,:reason)"""),
+              policy_version_id,product_id,decision,reason,savings_backing_bps,
+              savings_backing_amount_kobo)
+              VALUES(:cid,:app,:actor,:policy,:product,:decision,:reason,:backing_bps,:backing_amount)"""),
                 {
                     "cid": cid,
                     "app": application_id,
@@ -411,10 +481,14 @@ async def decide_application(
                     "product": application["product_id"],
                     "decision": decision,
                     "reason": reason,
+                    "backing_bps": backing_bps,
+                    "backing_amount": backing_amount,
                 },
             )
             loan_id: uuid.UUID | None = None
             if decision == "approved":
+                if product_terms is None:
+                    raise Conflict("Loan product terms are unavailable")
                 destination = (
                     (
                         await session.execute(
@@ -493,20 +567,12 @@ async def decide_application(
                         "snapshot": snapshot_id,
                     },
                 )
-                product = (
-                    await session.execute(
-                        text(
-                            "SELECT interest_method FROM loan_products WHERE cooperative_id=:cid AND id=:id"
-                        ),
-                        {"cid": cid, "id": application["product_id"]},
-                    )
-                ).one()
                 first_day = datetime.now(WAT).date() + timedelta(days=32)
                 schedule = build_schedule(
                     int(application["principal_kobo"]),
                     int(application["annual_rate_bps"]),
                     int(application["tenor_months"]),
-                    product.interest_method,
+                    product_terms["interest_method"],
                     first_day,
                 )
                 for number, installment in enumerate(schedule, start=1):
@@ -529,12 +595,24 @@ async def decide_application(
                     session,
                     cooperative_id=cid,
                     application_id=application_id,
-                    member_id=application["beneficiary_member_id"] or member_id,
+                    member_id=member_id,
                     kind="final_terms",
                     terms_hash=hashlib.sha256(canonical.encode()).digest(),
                     slug=current.slug,
                     delivery_observer=consent_delivery_observer,
                 )
+                beneficiary_id = application["beneficiary_member_id"]
+                if beneficiary_id is not None and beneficiary_id != member_id:
+                    await create_consent(
+                        session,
+                        cooperative_id=cid,
+                        application_id=application_id,
+                        member_id=beneficiary_id,
+                        kind="beneficiary",
+                        terms_hash=hashlib.sha256(canonical.encode()).digest(),
+                        slug=current.slug,
+                        delivery_observer=consent_delivery_observer,
+                    )
             else:
                 await session.execute(
                     text(
@@ -601,6 +679,14 @@ async def change_application_terms(
             raise ValueError("tenor must be positive")
         if "annual_rate_bps" in values and values["annual_rate_bps"] < 0:
             raise ValueError("rate cannot be negative")
+        await _validate_product_terms(
+            session,
+            current.cooperative_id,
+            old["product_id"],
+            int(values.get("principal_kobo", old["principal_kobo"])),
+            int(values.get("tenor_months", old["tenor_months"])),
+            int(values.get("annual_rate_bps", old["annual_rate_bps"])),
+        )
         await session.execute(
             text("""UPDATE loan_applications SET
               principal_kobo=coalesce(:principal,principal_kobo),
@@ -655,3 +741,79 @@ async def change_application_terms(
             ip=None,
             reason=reason,
         )
+
+
+async def reissue_consent(
+    current: CurrentSession,
+    application_id: uuid.UUID,
+    consent_id: uuid.UUID,
+    delivery_observer: Callable[[str], None] | None = None,
+) -> uuid.UUID:
+    role = _role(current, {"officer"})
+    cid = current.cooperative_id
+    async with transaction(cid) as session:
+        row = (
+            await session.execute(
+                text("""SELECT c.member_id,c.kind,c.status,c.otp_attempts,
+                  a.member_id AS borrower_id,a.beneficiary_member_id,a.status AS application_status,
+                  a.current_terms_snapshot_id,s.terms_sha256
+                  FROM member_consents c
+                  JOIN loan_applications a ON a.cooperative_id=c.cooperative_id AND a.id=c.application_id
+                  LEFT JOIN loan_terms_snapshots s ON s.cooperative_id=a.cooperative_id AND s.id=a.current_terms_snapshot_id
+                  WHERE c.cooperative_id=:cid AND c.application_id=:app AND c.id=:consent
+                  FOR UPDATE OF c,a"""),
+                {"cid": cid, "app": application_id, "consent": consent_id},
+            )
+        ).mappings().one_or_none()
+        if row is None:
+            raise NotFound("Consent not found")
+        if row["status"] != "invalidated" or row["otp_attempts"] < 5:
+            raise Conflict("Consent is not locked by exhausted OTP attempts")
+        if row["kind"] not in {"final_terms", "beneficiary"}:
+            raise Conflict("Only final-terms and beneficiary consents can be reissued")
+        if row["application_status"] not in {
+            "awaiting_borrower_final_confirmation",
+            "ready_for_disbursement",
+        } or row["current_terms_snapshot_id"] is None or row["terms_sha256"] is None:
+            raise Conflict("Current approved terms are unavailable for reissue")
+        expected_member_id = row["borrower_id"]
+        if row["kind"] == "beneficiary":
+            expected_member_id = row["beneficiary_member_id"]
+            if expected_member_id is None or expected_member_id == row["borrower_id"]:
+                raise Conflict("This application has no separate beneficiary consent")
+        if row["member_id"] != expected_member_id:
+            raise Conflict("Consent member no longer matches the approved loan terms")
+        await session.execute(
+            text("""UPDATE member_consents SET status='invalidated'
+              WHERE cooperative_id=:cid AND application_id=:app AND kind=:kind AND member_id=:member
+                AND status='pending'"""),
+            {
+                "cid": cid,
+                "app": application_id,
+                "kind": row["kind"],
+                "member": row["member_id"],
+            },
+        )
+        new_consent_id = await create_consent(
+            session,
+            cooperative_id=cid,
+            application_id=application_id,
+            member_id=row["member_id"],
+            kind=row["kind"],
+            terms_hash=bytes(row["terms_sha256"]),
+            slug=current.slug,
+            delivery_observer=delivery_observer,
+        )
+        await append_audit(
+            session,
+            cooperative_id=cid,
+            actor_user_id=current.user_id,
+            role=role,
+            action="member_consent_reissued",
+            entity_type="member_consent",
+            entity_id=str(new_consent_id),
+            summary={"application_id": str(application_id), "previous_consent_id": str(consent_id), "kind": row["kind"]},
+            channel="api",
+            ip=None,
+        )
+        return new_consent_id

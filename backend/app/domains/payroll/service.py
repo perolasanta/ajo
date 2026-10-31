@@ -31,6 +31,28 @@ class ImportReport:
     errors: list[dict[str, Any]]
 
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_csv_row(
+    values: dict[str, Any],
+    text_fields: set[str],
+    max_lengths: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    sanitized = dict(values)
+    limits = max_lengths or {}
+    for field in text_fields:
+        value = sanitized.get(field)
+        if not isinstance(value, str):
+            continue
+        if value.startswith(_CSV_FORMULA_PREFIXES):
+            value = "'" + value
+        if field in limits:
+            value = value[: limits[field]]
+        sanitized[field] = value
+    return sanitized
+
+
 def _role(current: CurrentSession, allowed: set[str]) -> str:
     role = next((item for item in current.roles if item in allowed), None)
     if role is None:
@@ -113,7 +135,7 @@ async def create_profile(current: CurrentSession, values: dict[str, Any]) -> uui
 async def create_run(
     current: CurrentSession, profile_id: uuid.UUID, year: int, month: int
 ) -> uuid.UUID:
-    _role(current, {"officer", "treasurer", "admin"})
+    _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run_id = uuid.uuid4()
@@ -133,7 +155,7 @@ async def create_run(
 
 
 async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
-    _role(current, {"officer", "treasurer", "admin"})
+    role = _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run = (
@@ -158,7 +180,9 @@ async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
                     text("""SELECT m.id,m.staff_no,m.full_name,coalesce(sum(s.principal_kobo+s.interest_kobo),0)::bigint loan_kobo,
           coalesce(sum(s.savings_kobo),0)::bigint savings_kobo,coalesce(sum(s.dues_kobo),0)::bigint dues_kobo
           FROM loan_schedule s JOIN loans l ON l.cooperative_id=s.cooperative_id AND l.id=s.loan_id JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id
-          WHERE s.cooperative_id=:cid AND l.status IN ('repaying','disputed') AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month
+          WHERE s.cooperative_id=:cid AND l.status='repaying' AND NOT l.deductions_paused
+            AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year
+            AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month
           GROUP BY m.id,m.staff_no,m.full_name ORDER BY m.staff_no"""),
                     {"cid": cid, "year": run["period_year"], "month": run["period_month"]},
                 )
@@ -179,12 +203,30 @@ async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
             value = {run["staff_no_column"]: row["staff_no"], run["amount_column"]: amount}
             if run["name_column"]:
                 value[run["name_column"]] = row["full_name"]
-            writer.writerow(value)
+            text_fields = {run["staff_no_column"]}
+            if run["name_column"]:
+                text_fields.add(run["name_column"])
+            writer.writerow(_sanitize_csv_row(value, text_fields))
         await session.execute(
             text(
                 "UPDATE payroll_runs SET expected_total_kobo=:total,status='exported' WHERE cooperative_id=:cid AND id=:id"
             ),
             {"cid": cid, "id": run_id, "total": total},
+        )
+        await append_audit(
+            session,
+            cooperative_id=cid,
+            actor_user_id=current.user_id,
+            role=role,
+            action="payroll_expected_exported",
+            entity_type="payroll_run",
+            entity_id=str(run_id),
+            summary={
+                "period_year": int(run["period_year"]),
+                "period_month": int(run["period_month"]),
+            },
+            channel="api",
+            ip=None,
         )
     return output.getvalue().encode()
 
@@ -192,7 +234,7 @@ async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
 async def dry_run(
     current: CurrentSession, run_id: uuid.UUID, content: bytes, filename: str
 ) -> ImportReport:
-    _role(current, {"officer", "treasurer", "admin"})
+    _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run = (
@@ -258,7 +300,7 @@ async def dry_run(
 async def import_file(
     current: CurrentSession, run_id: uuid.UUID, content: bytes, filename: str
 ) -> ImportReport:
-    role = _role(current, {"officer", "treasurer", "admin"})
+    role = _role(current, {"officer", "treasurer"})
     report = await dry_run(current, run_id, content, filename)
     if report.errors:
         return report
@@ -291,7 +333,7 @@ async def import_file(
             (
                 await session.execute(
                     text(
-                        """SELECT m.id,m.staff_no,coalesce(sum(s.principal_kobo+s.interest_kobo),0)::bigint loan_kobo,coalesce(sum(s.savings_kobo),0)::bigint savings_kobo,coalesce(sum(s.dues_kobo),0)::bigint dues_kobo FROM loan_schedule s JOIN loans l ON l.cooperative_id=s.cooperative_id AND l.id=s.loan_id JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id WHERE s.cooperative_id=:cid AND l.status IN ('repaying','disputed') AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month GROUP BY m.id,m.staff_no"""
+                        """SELECT m.id,m.staff_no,coalesce(sum(s.principal_kobo+s.interest_kobo),0)::bigint loan_kobo,coalesce(sum(s.savings_kobo),0)::bigint savings_kobo,coalesce(sum(s.dues_kobo),0)::bigint dues_kobo FROM loan_schedule s JOIN loans l ON l.cooperative_id=s.cooperative_id AND l.id=s.loan_id JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id WHERE s.cooperative_id=:cid AND l.status='repaying' AND NOT l.deductions_paused AND extract(year FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:year AND extract(month FROM s.due_at AT TIME ZONE 'Africa/Lagos')=:month GROUP BY m.id,m.staff_no"""
                     ),
                     {"cid": cid, "year": run["period_year"], "month": run["period_month"]},
                 )
@@ -353,13 +395,18 @@ async def import_file(
                         "dues": row["dues_kobo"],
                     },
                 )
+        expected_total_kobo = sum(
+            int(row["loan_kobo"]) + int(row["savings_kobo"]) + int(row["dues_kobo"])
+            for row in by_staff.values()
+        )
         await session.execute(
             text(
-                "UPDATE payroll_runs SET status='imported',file_total_kobo=:total,file_sha256=:hash,imported_by=:actor,imported_at=now() WHERE cooperative_id=:cid AND id=:id"
+                "UPDATE payroll_runs SET status='imported',expected_total_kobo=:expected,file_total_kobo=:total,file_sha256=:hash,imported_by=:actor,imported_at=now() WHERE cooperative_id=:cid AND id=:id"
             ),
             {
                 "cid": cid,
                 "id": run_id,
+                "expected": expected_total_kobo,
                 "total": report.file_total_kobo,
                 "hash": digest,
                 "actor": current.user_id,
@@ -381,7 +428,7 @@ async def import_file(
 
 
 async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
-    _role(current, {"treasurer", "admin"})
+    _role(current, {"treasurer"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         run = (
@@ -398,11 +445,31 @@ async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
         )
         if run is None or run["status"] not in {"imported", "posted"}:
             raise Conflict("Payroll run cannot be posted")
+        totals = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT coalesce(sum(expected_loan_kobo+expected_savings_kobo+
+                          expected_dues_kobo) FILTER (WHERE classification NOT IN
+                          ('duplicate','unknown_member')),0)::bigint AS components_kobo,
+                          coalesce(sum(actual_kobo),0)::bigint AS actual_kobo
+                          FROM payroll_items WHERE cooperative_id=:cid AND run_id=:run"""
+                    ),
+                    {"cid": cid, "run": run_id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        if int(totals["components_kobo"]) != int(run["expected_total_kobo"]):
+            raise Conflict("Payroll components do not reconcile to the expected run total")
+        if int(totals["actual_kobo"]) != int(run["file_total_kobo"]):
+            raise Conflict("Payroll item amounts do not reconcile to the imported run total")
         items = (
             (
                 await session.execute(
                     text(
-                        "SELECT * FROM payroll_items WHERE cooperative_id=:cid AND run_id=:run AND classification IN ('matched','short','over') AND posted_repayment_id IS NULL"
+                        "SELECT * FROM payroll_items WHERE cooperative_id=:cid AND run_id=:run AND classification IN ('matched','short','over') AND posted_repayment_id IS NULL ORDER BY id FOR UPDATE"
                     ),
                     {"cid": cid, "run": run_id},
                 )
@@ -410,46 +477,44 @@ async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
             .mappings()
             .all()
         )
-    posted = 0
-    for item in items:
-        async with transaction(cid) as session:
+        posted = 0
+        for item in items:
             loan = await session.scalar(
                 text(
-                    "SELECT id FROM loans WHERE cooperative_id=:cid AND member_id=:member AND status IN ('repaying','disputed') ORDER BY created_at LIMIT 1"
+                    "SELECT id FROM loans WHERE cooperative_id=:cid AND member_id=:member AND status='repaying' AND NOT deductions_paused ORDER BY created_at LIMIT 1 FOR UPDATE"
                 ),
                 {"cid": cid, "member": item["member_id"]},
             )
-        if loan is None:
-            continue
-        repayment_id = await post_repayment(
-            current,
-            loan_id=loan,
-            member_id=item["member_id"],
-            amount_kobo=int(item["actual_kobo"]),
-            source="payroll",
-            received_on=date(
-                int(run["period_year"]),
-                int(run["period_month"]),
-                monthrange(int(run["period_year"]), int(run["period_month"]))[1],
-            ),
-            reference=f"payroll:{run_id}:{item['id']}",
-            idempotency_key=f"payroll:{run_id}:{item['member_id']}",
-            ip=None,
-        )
-        async with transaction(cid) as session:
+            if loan is None:
+                continue
+            repayment_id = await post_repayment(
+                current,
+                loan_id=loan,
+                member_id=item["member_id"],
+                amount_kobo=int(item["actual_kobo"]),
+                source="payroll",
+                received_on=date(
+                    int(run["period_year"]),
+                    int(run["period_month"]),
+                    monthrange(int(run["period_year"]), int(run["period_month"]))[1],
+                ),
+                reference=f"payroll:{run_id}:{item['id']}",
+                idempotency_key=f"payroll:{run_id}:{item['member_id']}",
+                ip=None,
+                db_session=session,
+            )
             await session.execute(
                 text(
                     "UPDATE payroll_items SET posted_repayment_id=:repayment WHERE cooperative_id=:cid AND id=:id"
                 ),
                 {"cid": cid, "id": item["id"], "repayment": repayment_id},
             )
-        posted += 1
-    async with transaction(cid) as session:
+            posted += 1
         await session.execute(
             text(
-                "UPDATE payroll_runs SET status='posted',posted_at=now() WHERE cooperative_id=:cid AND id=:id AND status<>'signed_off'"
+                "UPDATE payroll_runs SET status='posted',posted_by=CASE WHEN status='imported' THEN :actor ELSE posted_by END,posted_at=now() WHERE cooperative_id=:cid AND id=:id AND status<>'signed_off'"
             ),
-            {"cid": cid, "id": run_id},
+            {"cid": cid, "id": run_id, "actor": current.user_id},
         )
     return posted
 
@@ -474,8 +539,11 @@ async def sign_off(
         )
         if run is None:
             raise NotFound("Payroll run not found")
-        if run["status"] == "signed_off" or run["imported_by"] == current.user_id:
+        poster_id = run["posted_by"] if run["posted_by"] is not None else run["imported_by"]
+        if run["status"] == "signed_off" or poster_id == current.user_id:
             raise Conflict("A different administrator must sign off the payroll run")
+        if run["status"] != "posted":
+            raise Conflict("Payroll run must be posted before sign-off")
         if run["file_total_kobo"] != bank_total_kobo:
             raise Conflict("File total does not match bank receipt total")
         unresolved = await session.scalar(
@@ -502,6 +570,12 @@ async def sign_off(
             key: sum(row["classification"] == key for row in items)
             for key in ("matched", "short", "over", "missing", "unknown_member", "duplicate")
         }
+        export_items = []
+        for row in items:
+            item = dict(row)
+            if item["resolution_note"] is not None:
+                item["resolution_note"] = str(item["resolution_note"])[:500]
+            export_items.append(item)
         report = {
             "run_id": str(run_id),
             "expected_total_kobo": run["expected_total_kobo"],
@@ -509,7 +583,7 @@ async def sign_off(
             "bank_receipt_total_kobo": bank_total_kobo,
             "variance_kobo": int(run["file_total_kobo"]) - bank_total_kobo,
             "counts": counts,
-            "exceptions": [dict(row) for row in items if row["classification"] != "matched"],
+            "exceptions": [row for row in export_items if row["classification"] != "matched"],
         }
         await session.execute(
             text(
@@ -534,5 +608,12 @@ async def sign_off(
         output, fieldnames=["staff_no_raw", "classification", "actual_kobo", "resolution_note"]
     )
     writer.writeheader()
-    writer.writerows(report["exceptions"])
+    writer.writerows(
+        _sanitize_csv_row(
+            row,
+            {"staff_no_raw", "classification", "resolution_note"},
+            {"resolution_note": 500},
+        )
+        for row in report["exceptions"]
+    )
     return output.getvalue().encode(), json.dumps(report, sort_keys=True, default=str).encode()

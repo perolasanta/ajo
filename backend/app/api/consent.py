@@ -11,8 +11,11 @@ router = APIRouter(tags=["member confirmation"])
 
 
 class DecisionBody(BaseModel):
-    otp: str = Field(pattern=r"^[0-9]{6}$")
     decision: str = Field(pattern="^(confirm|reject)$")
+
+
+class VerifyOtpBody(BaseModel):
+    otp: str = Field(pattern=r"^[0-9]{6}$")
 
 
 def _ip(request: Request) -> str:
@@ -26,8 +29,18 @@ async def get_confirmation(coop_slug: str, token: str) -> dict[str, object]:
 
 @router.post("/confirm/{coop_slug}/{token}/otp", status_code=202)
 async def request_otp(coop_slug: str, token: str, request: Request) -> dict[str, str]:
-    await service.send_otp(coop_slug, token, _ip(request), service.ConsoleOtpSender())
-    return {"status": "sent"}
+    await service.send_otp(coop_slug, token, _ip(request))
+    return {"status": "queued"}
+
+
+@router.post("/confirm/{coop_slug}/{token}/otp/verify")
+async def verify_otp(
+    coop_slug: str, token: str, body: VerifyOtpBody, request: Request
+) -> dict[str, object]:
+    details = await service.verify_otp(coop_slug, token, body.otp, _ip(request))
+    if details is None:
+        raise HTTPException(status_code=400, detail="Confirmation unavailable")
+    return details
 
 
 @router.post("/confirm/{coop_slug}/{token}/decision", status_code=202)
@@ -38,9 +51,7 @@ async def post_decision(
     request: Request,
     user_agent: Annotated[str, Header(alias="User-Agent")] = "",
 ) -> dict[str, str]:
-    result = await service.decide(
-        coop_slug, token, body.otp, body.decision, _ip(request), user_agent
-    )
+    result = await service.decide(coop_slug, token, body.decision, _ip(request), user_agent)
     if result == "terms_changed":
         raise HTTPException(status_code=409, detail="terms changed")
     if result != "recorded":

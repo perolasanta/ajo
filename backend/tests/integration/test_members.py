@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import date
 
@@ -97,13 +98,108 @@ async def test_same_user_withdrawal_approval_rejected(db: asyncpg.Connection) ->
         await service.approve_withdrawal(session(cid, uid, "admin"), request_id)
 
 
+async def test_concurrent_withdrawal_approvals_cannot_overdraw_member_savings(
+    db: asyncpg.Connection,
+) -> None:
+    cid, officer, treasurer, member, _ = await setup_tenant(db)
+    await service.record_contribution(
+        session(cid, officer), member, "savings", 10_000, "seed-savings"
+    )
+    requests = [
+        await service.request_withdrawal(session(cid, officer), member, 7_000, f"withdraw-{i}")
+        for i in range(2)
+    ]
+
+    results = await asyncio.gather(
+        *(
+            service.approve_withdrawal(session(cid, treasurer, "treasurer"), request_id)
+            for request_id in requests
+        ),
+        return_exceptions=True,
+    )
+
+    assert sum(not isinstance(result, BaseException) for result in results) == 1
+    assert sum(isinstance(result, Conflict) for result in results) == 1
+    assert (await service.member_balances(cid, member))["savings_kobo"] == 3_000
+    entries = await db.fetch(
+        """SELECT e.id,e.source_type,a.code,l.debit_kobo,l.credit_kobo
+           FROM journal_entries e JOIN journal_lines l
+             ON l.cooperative_id=e.cooperative_id AND l.entry_id=e.id
+           JOIN accounts a ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
+           WHERE e.cooperative_id=$1 AND e.source_type='withdrawal'
+           ORDER BY e.id,l.line_number""",
+        cid,
+    )
+    assert {(row["code"], row["debit_kobo"], row["credit_kobo"]) for row in entries} == {
+        ("member_savings", 7_000, 0),
+        ("bank", 0, 7_000),
+    }
+    assert len({row["id"] for row in entries}) == 1
+
+
 async def test_contribution_replay_posts_once(db: asyncpg.Connection) -> None:
     cid, uid, _, mid, _ = await setup_tenant(db)
     current = session(cid, uid)
     first = await service.record_contribution(current, mid, "savings", 500, "replay-key")
     second = await service.record_contribution(current, mid, "savings", 500, "replay-key")
     assert first == second
+    with pytest.raises(Conflict, match="different payload"):
+        await service.record_contribution(current, mid, "savings", 501, "replay-key")
+    assert (
+        await db.fetchval(
+            "SELECT octet_length(request_hash) FROM journal_entries WHERE cooperative_id=$1 AND idempotency_key='replay-key'",
+            cid,
+        )
+        == 32
+    )
     assert (await service.member_balances(cid, mid))["savings_kobo"] == 500
+
+
+async def test_withdrawal_request_key_rejects_a_changed_amount(db: asyncpg.Connection) -> None:
+    cid, uid, _, mid, _ = await setup_tenant(db)
+    current = session(cid, uid)
+    await service.record_contribution(current, mid, "savings", 1_000, "withdrawal-seed")
+    first = await service.request_withdrawal(current, mid, 300, "withdrawal-key")
+    replay = await service.request_withdrawal(current, mid, 300, "withdrawal-key")
+    assert replay == first
+    with pytest.raises(Conflict, match="different payload"):
+        await service.request_withdrawal(current, mid, 400, "withdrawal-key")
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM withdrawal_requests WHERE cooperative_id=$1 AND idempotency_key='withdrawal-key'",
+            cid,
+        )
+        == 1
+    )
+    assert (
+        await db.fetchval(
+            "SELECT octet_length(request_hash) FROM withdrawal_requests WHERE cooperative_id=$1 AND idempotency_key='withdrawal-key'",
+            cid,
+        )
+        == 32
+    )
+
+
+async def test_concurrent_contribution_key_cannot_post_different_amounts(
+    db: asyncpg.Connection,
+) -> None:
+    cid, uid, _, mid, _ = await setup_tenant(db)
+    current = session(cid, uid)
+    results = await asyncio.gather(
+        service.record_contribution(current, mid, "savings", 500, "concurrent-key"),
+        service.record_contribution(current, mid, "savings", 501, "concurrent-key"),
+        return_exceptions=True,
+    )
+    assert sum(not isinstance(result, BaseException) for result in results) == 1
+    assert sum(isinstance(result, Conflict) for result in results) == 1
+    assert (await service.member_balances(cid, mid))["savings_kobo"] in {500, 501}
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM journal_entries WHERE cooperative_id=$1 AND idempotency_key='concurrent-key'",
+            cid,
+        )
+        == 1
+    )
 
 
 async def test_rls_isolates_members(db: asyncpg.Connection) -> None:
