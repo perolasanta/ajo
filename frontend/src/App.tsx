@@ -15,6 +15,11 @@ type Session = { user_id: string; email: string; roles: string[] };
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const MembersPage = lazy(() => import("./pages/MembersPage"));
 const MemberDetailPage = lazy(() => import("./pages/MemberDetailPage"));
+const LoansPage = lazy(() => import("./pages/LoansPage"));
+const NewLoanApplicationPage = lazy(() =>
+  import("./pages/LoansPage").then((module) => ({ default: module.NewLoanApplicationPage })),
+);
+const LoanDetailPage = lazy(() => import("./pages/LoanDetailPage"));
 const DesignPage = lazy(() => import("./pages/DesignPage"));
 
 const fakeMembers: MemberListItem[] = [
@@ -307,6 +312,9 @@ export default function App() {
       <Route element={<ProtectedShell />}>
         <Route path="/members" element={<MembersPage />} />
         <Route path="/members/:memberId" element={<MemberDetailPage />} />
+        <Route path="/loans" element={<LoansPage />} />
+        <Route path="/loans/new" element={<NewLoanApplicationPage />} />
+        <Route path="/loans/:applicationId" element={<LoanDetailPage />} />
         <Route path="/:feature" element={<ComingSoon />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
