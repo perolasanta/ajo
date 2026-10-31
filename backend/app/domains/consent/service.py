@@ -149,7 +149,9 @@ async def decide(slug: str, token: str, code: str, decision: str, ip: str, user_
         if not hmac.compare_digest(row["otp_hash"], _otp_hash(row["id"], code)):
             await session.execute(text("UPDATE member_consents SET otp_attempts=otp_attempts+1 WHERE cooperative_id=:cid AND id=:id"), {"cid": cid, "id": row["id"]})
             return "unavailable"
-        if row["kind"] == "final_terms" and not hmac.compare_digest(row["terms_hash"] or b"", row["terms_sha256"] or b""):
+        if row["kind"] in {"final_terms", "beneficiary"} and not hmac.compare_digest(
+            row["terms_hash"] or b"", row["terms_sha256"] or b""
+        ):
             await session.execute(text("UPDATE member_consents SET status='invalidated' WHERE cooperative_id=:cid AND id=:id"), {"cid": cid, "id": row["id"]})
             return "terms_changed"
         status = "confirmed" if decision == "confirm" else "rejected"

@@ -27,7 +27,7 @@ async def _load(session: Any, cid: uuid.UUID, loan_id: uuid.UUID) -> Any:
             await session.execute(
                 text("""SELECT l.id,l.member_id,l.status AS loan_status,l.application_id,
       a.status AS application_status,a.submitted_by,a.policy_version_id,a.product_id,a.current_terms_snapshot_id,
-      a.destination_bank_account_id,a.principal_kobo,s.terms,s.terms_sha256,p.fee_bps,
+      a.destination_bank_account_id,a.beneficiary_member_id,a.principal_kobo,s.terms,s.terms_sha256,p.fee_bps,
       b.bank_code,b.last4,b.account_name,b.status AS bank_status,b.verified_at
       FROM loans l JOIN loan_applications a ON a.cooperative_id=l.cooperative_id AND a.id=l.application_id
       JOIN loan_terms_snapshots s ON s.cooperative_id=a.cooperative_id AND s.id=a.current_terms_snapshot_id
@@ -52,13 +52,27 @@ async def _validate(session: Any, cid: uuid.UUID, loan: Any) -> bool:
     consent = (
         await session.execute(
             text("""SELECT terms_hash FROM member_consents
-      WHERE cooperative_id=:cid AND application_id=:app AND kind='final_terms' AND status='confirmed'
+      WHERE cooperative_id=:cid AND application_id=:app AND member_id=:borrower
+        AND kind='final_terms' AND status='confirmed'
       ORDER BY decided_at DESC LIMIT 1"""),
-            {"cid": cid, "app": loan["application_id"]},
+            {"cid": cid, "app": loan["application_id"], "borrower": loan["member_id"]},
         )
     ).scalar_one_or_none()
     if consent is None or bytes(consent) != bytes(loan["terms_sha256"]):
-        raise Conflict("Confirmed terms are missing or no longer current")
+        raise Conflict("Borrower final-terms confirmation is missing or no longer current")
+    beneficiary_id = loan["beneficiary_member_id"]
+    if beneficiary_id is not None and beneficiary_id != loan["member_id"]:
+        beneficiary_consent = (
+            await session.execute(
+                text("""SELECT terms_hash FROM member_consents
+                  WHERE cooperative_id=:cid AND application_id=:app AND member_id=:beneficiary
+                    AND kind='beneficiary' AND status='confirmed'
+                  ORDER BY decided_at DESC LIMIT 1"""),
+                {"cid": cid, "app": loan["application_id"], "beneficiary": beneficiary_id},
+            )
+        ).scalar_one_or_none()
+        if beneficiary_consent is None or bytes(beneficiary_consent) != bytes(loan["terms_sha256"]):
+            raise Conflict("Beneficiary confirmation is missing or no longer current")
     open_dispute = await session.scalar(
         text("""SELECT EXISTS(SELECT 1 FROM disputes WHERE cooperative_id=:cid
       AND application_id=:app AND status IN ('open','under_investigation'))"""),

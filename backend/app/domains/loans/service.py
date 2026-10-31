@@ -595,12 +595,24 @@ async def decide_application(
                     session,
                     cooperative_id=cid,
                     application_id=application_id,
-                    member_id=application["beneficiary_member_id"] or member_id,
+                    member_id=member_id,
                     kind="final_terms",
                     terms_hash=hashlib.sha256(canonical.encode()).digest(),
                     slug=current.slug,
                     delivery_observer=consent_delivery_observer,
                 )
+                beneficiary_id = application["beneficiary_member_id"]
+                if beneficiary_id is not None and beneficiary_id != member_id:
+                    await create_consent(
+                        session,
+                        cooperative_id=cid,
+                        application_id=application_id,
+                        member_id=beneficiary_id,
+                        kind="beneficiary",
+                        terms_hash=hashlib.sha256(canonical.encode()).digest(),
+                        slug=current.slug,
+                        delivery_observer=consent_delivery_observer,
+                    )
             else:
                 await session.execute(
                     text(
