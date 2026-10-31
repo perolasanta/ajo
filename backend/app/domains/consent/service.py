@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import secrets
 import uuid
@@ -16,7 +17,7 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.db import transaction
-from app.core.errors import NotFound
+from app.core.errors import NotFound, TooManyRequests
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import resolve_tenant_slug
 
@@ -84,6 +85,72 @@ async def _lookup(slug: str, token: str) -> tuple[uuid.UUID, bytes] | None:
     return tenant[0], hashlib.sha256(raw).digest()
 
 
+async def _consume_otp_send_limits(
+    session: Any,
+    cid: uuid.UUID,
+    consent_id: uuid.UUID,
+    destination: str,
+    ip: str,
+) -> None:
+    secret = get_settings().secret_key.encode()
+    try:
+        normalized_ip = ipaddress.ip_address(ip).compressed
+    except ValueError:
+        normalized_ip = ip.strip()
+    values = (
+        ("consent", str(consent_id), 3),
+        ("destination", destination.strip(), 3),
+        ("ip", normalized_ip, 10),
+    )
+    checks = [
+        (dimension, hmac.digest(secret, f"{dimension}:{value}".encode(), "sha256"), limit)
+        for dimension, value, limit in values
+    ]
+    checks.sort(key=lambda check: (check[0], check[1]))
+    for dimension, key_hash, _ in checks:
+        lock_key = f"consent-otp:{cid}:{dimension}:{key_hash.hex()}"
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": lock_key},
+        )
+
+    counters: dict[str, tuple[bytes, int, Any]] = {}
+    for dimension, key_hash, limit in checks:
+        row = (
+            await session.execute(
+                text("""SELECT window_started_at,attempts FROM consent_rate_limits
+                  WHERE cooperative_id=:cid AND dimension=:dimension AND key_hash=:key_hash
+                    AND window_started_at >= clock_timestamp() - interval '1 hour'
+                  ORDER BY window_started_at DESC LIMIT 1 FOR UPDATE"""),
+                {"cid": cid, "dimension": dimension, "key_hash": key_hash},
+            )
+        ).mappings().one_or_none()
+        if row is not None and row["attempts"] >= limit:
+            raise TooManyRequests("OTP send limit exceeded")
+        counters[dimension] = (key_hash, limit, row)
+
+    for dimension, (key_hash, _, row) in counters.items():
+        if row is None:
+            await session.execute(
+                text("""INSERT INTO consent_rate_limits
+                  (cooperative_id,dimension,key_hash,window_started_at,attempts)
+                  VALUES(:cid,:dimension,:key_hash,clock_timestamp(),1)"""),
+                {"cid": cid, "dimension": dimension, "key_hash": key_hash},
+            )
+        else:
+            await session.execute(
+                text("""UPDATE consent_rate_limits SET attempts=attempts+1
+                  WHERE cooperative_id=:cid AND dimension=:dimension AND key_hash=:key_hash
+                    AND window_started_at=:window_started_at"""),
+                {
+                    "cid": cid,
+                    "dimension": dimension,
+                    "key_hash": key_hash,
+                    "window_started_at": row["window_started_at"],
+                },
+            )
+
+
 async def view(slug: str, token: str) -> dict[str, Any]:
     pair = await _lookup(slug, token)
     if pair is None:
@@ -112,17 +179,19 @@ async def send_otp(slug: str, token: str, ip: str, sender: OtpSender) -> None:
     cid, token_hash = pair
     async with transaction(cid) as session:
         row = (await session.execute(text("""SELECT c.id,c.member_id,c.status,c.expires_at,
-          p.otp_validity_seconds,m.phone_e164 FROM member_consents c
+          c.otp_attempts,p.otp_validity_seconds,m.phone_e164 FROM member_consents c
           JOIN loan_applications a ON a.cooperative_id=c.cooperative_id AND a.id=c.application_id
           JOIN cooperative_policy_versions p ON p.cooperative_id=a.cooperative_id AND p.id=a.policy_version_id
           JOIN members m ON m.cooperative_id=c.cooperative_id AND m.id=c.member_id
           WHERE c.cooperative_id=:cid AND c.token_hash=:token FOR UPDATE OF c"""),
           {"cid": cid, "token": token_hash})).mappings().one_or_none()
-        if row is None or row["status"] != "pending" or row["expires_at"] <= datetime.now(UTC):
+        if (row is None or row["status"] != "pending" or row["otp_attempts"] >= 5
+                or row["expires_at"] <= datetime.now(UTC)):
             raise NotFound("Confirmation unavailable")
+        await _consume_otp_send_limits(session, cid, row["id"], row["phone_e164"], ip)
         code = f"{secrets.randbelow(1_000_000):06d}"
         await session.execute(text("""UPDATE member_consents SET otp_hash=:hash,
-          otp_expires_at=now()+(:seconds * interval '1 second'),otp_attempts=0,channel='sms'
+          otp_expires_at=now()+(:seconds * interval '1 second'),channel='sms'
           WHERE cooperative_id=:cid AND id=:id"""),
           {"hash": _otp_hash(row["id"], code), "seconds": row["otp_validity_seconds"], "cid": cid, "id": row["id"]})
     # Delivery happens outside the database transaction; sender failures do not leak token data.
@@ -147,7 +216,10 @@ async def decide(slug: str, token: str, code: str, decision: str, ip: str, user_
         if row["otp_attempts"] >= 5 or row["otp_hash"] is None or row["otp_expires_at"] is None or row["otp_expires_at"] <= datetime.now(UTC):
             raise NotFound("Confirmation unavailable")
         if not hmac.compare_digest(row["otp_hash"], _otp_hash(row["id"], code)):
-            await session.execute(text("UPDATE member_consents SET otp_attempts=otp_attempts+1 WHERE cooperative_id=:cid AND id=:id"), {"cid": cid, "id": row["id"]})
+            await session.execute(text("""UPDATE member_consents SET otp_attempts=otp_attempts+1,
+              status=CASE WHEN otp_attempts+1 >= 5 THEN 'invalidated' ELSE status END,
+              otp_hash=CASE WHEN otp_attempts+1 >= 5 THEN NULL ELSE otp_hash END
+              WHERE cooperative_id=:cid AND id=:id"""), {"cid": cid, "id": row["id"]})
             return "unavailable"
         if row["kind"] in {"final_terms", "beneficiary"} and not hmac.compare_digest(
             row["terms_hash"] or b"", row["terms_sha256"] or b""

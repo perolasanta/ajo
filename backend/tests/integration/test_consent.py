@@ -10,10 +10,11 @@ import asyncpg
 import pytest
 
 from app.core.db import asyncpg_dsn, dispose_engine
-from app.core.errors import Conflict
+from app.core.errors import AppError, Conflict, Forbidden, NotFound
 from app.domains.consent.service import decide as decide_consent
 from app.domains.consent.service import send_otp
 from app.domains.disbursements.service import prepare
+from app.domains.loans import service as loan_service
 from app.domains.loans.service import decide_application, submit_application
 from tests.integration.test_loans import LoanBase, _create_loan_base, session, setup_loan_member
 
@@ -56,10 +57,17 @@ async def approved_loan(
     test_database,
     *,
     same_borrower_and_beneficiary: bool = False,
+    phone_pair: tuple[str, str] | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, list[str]]:
     cid = base.cooperative_id
     borrower = await setup_loan_member(db, base)
     beneficiary = borrower if same_borrower_and_beneficiary else await setup_loan_member(db, base)
+    borrower_phone, beneficiary_phone = phone_pair or (
+        "+2348030000001",
+        "+2348030000002",
+    )
+    if beneficiary == borrower:
+        beneficiary_phone = borrower_phone
     owner = await asyncpg.connect(asyncpg_dsn(test_database.owner_url))
     try:
         await owner.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
@@ -74,13 +82,13 @@ async def approved_loan(
             "UPDATE members SET phone_e164=$3 WHERE cooperative_id=$1 AND id=$2",
             cid,
             borrower,
-            "+2348030000001",
+            borrower_phone,
         )
         await owner.execute(
             "UPDATE members SET phone_e164=$3 WHERE cooperative_id=$1 AND id=$2",
             cid,
             beneficiary,
-            "+2348030000002" if beneficiary != borrower else "+2348030000001",
+            beneficiary_phone,
         )
     finally:
         await owner.close()
@@ -263,3 +271,218 @@ async def test_same_borrower_and_beneficiary_uses_one_confirmation(
         session(loan_base.cooperative_id, loan_base.user_ids[0], "treasurer"), loan_id, None
     )
     assert identifier is not None
+
+
+async def final_terms_token(
+    db: asyncpg.Connection,
+    cid: uuid.UUID,
+    application_id: uuid.UUID,
+    tokens: list[str],
+) -> str:
+    rows = await consent_rows_for_tokens(db, cid, application_id, tokens)
+    return next(token for token, row in rows.items() if row["kind"] == "final_terms")
+
+
+async def test_otp_send_limit_is_three_per_consent_per_hour(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    application, _, _, _, tokens = await approved_loan(
+        db,
+        loan_base,
+        test_database,
+        phone_pair=("+2348030100001", "+2348030100002"),
+    )
+    cid = loan_base.cooperative_id
+    token = await final_terms_token(db, cid, application, tokens)
+    slug = await db.fetchval("SELECT slug FROM cooperatives WHERE id=$1", cid)
+    sender = FakeOtpSender()
+    for _ in range(3):
+        await send_otp(slug, token, "198.51.100.11", sender)
+    with pytest.raises(AppError) as error:
+        await send_otp(slug, token, "198.51.100.11", sender)
+    assert error.value.status_code == 429
+    assert len(sender.sent) == 3
+    assert (
+        await db.fetchval(
+            "SELECT max(attempts) FROM consent_rate_limits WHERE cooperative_id=$1 AND dimension='consent'",
+            cid,
+        )
+        == 3
+    )
+
+
+async def test_otp_send_limit_is_three_per_destination_per_hour(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    cid = loan_base.cooperative_id
+    await db.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
+    slug = await db.fetchval("SELECT slug FROM cooperatives WHERE id=$1", cid)
+    sender = FakeOtpSender()
+    tokens: list[str] = []
+    for _ in range(4):
+        application, _, _, _, created_tokens = await approved_loan(
+            db,
+            loan_base,
+            test_database,
+            phone_pair=("+2348030200001", "+2348030200002"),
+        )
+        tokens.append(await final_terms_token(db, cid, application, created_tokens))
+    for token in tokens[:3]:
+        await send_otp(slug, token, "198.51.100.21", sender)
+    with pytest.raises(AppError) as error:
+        await send_otp(slug, tokens[3], "198.51.100.21", sender)
+    assert error.value.status_code == 429
+    assert len(sender.sent) == 3
+    assert (
+        await db.fetchval(
+            "SELECT max(attempts) FROM consent_rate_limits WHERE cooperative_id=$1 AND dimension='destination'",
+            cid,
+        )
+        == 3
+    )
+
+
+async def test_otp_send_limit_is_ten_per_ip_per_hour(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    cid = loan_base.cooperative_id
+    await db.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
+    slug = await db.fetchval("SELECT slug FROM cooperatives WHERE id=$1", cid)
+    sender = FakeOtpSender()
+    tokens: list[str] = []
+    for index in range(11):
+        application, _, _, _, created_tokens = await approved_loan(
+            db,
+            loan_base,
+            test_database,
+            phone_pair=(f"+23480303{index:05d}", f"+23480304{index:05d}"),
+        )
+        tokens.append(await final_terms_token(db, cid, application, created_tokens))
+    for token in tokens[:10]:
+        await send_otp(slug, token, "198.51.100.31", sender)
+    with pytest.raises(AppError) as error:
+        await send_otp(slug, tokens[10], "198.51.100.31", sender)
+    assert error.value.status_code == 429
+    assert len(sender.sent) == 10
+    assert (
+        await db.fetchval(
+            "SELECT max(attempts) FROM consent_rate_limits WHERE cooperative_id=$1 AND dimension='ip'",
+            cid,
+        )
+        == 10
+    )
+
+
+async def test_otp_attempts_accumulate_across_resends_and_lock_after_five(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    application, _, _, _, tokens = await approved_loan(
+        db,
+        loan_base,
+        test_database,
+        phone_pair=("+2348030400001", "+2348030400002"),
+    )
+    cid = loan_base.cooperative_id
+    token = await final_terms_token(db, cid, application, tokens)
+    token_hash = hashlib.sha256(bytes.fromhex(token)).digest()
+    slug = await db.fetchval("SELECT slug FROM cooperatives WHERE id=$1", cid)
+    ip = "198.51.100.41"
+    sender = FakeOtpSender()
+    await send_otp(slug, token, ip, sender)
+    for _ in range(2):
+        code = sender.sent[-1][1]
+        wrong_code = "000000" if code != "000000" else "000001"
+        assert await decide_consent(slug, token, wrong_code, "confirm", ip, "test") == "unavailable"
+    assert (
+        await db.fetchval(
+            "SELECT otp_attempts FROM member_consents WHERE cooperative_id=$1 AND token_hash=$2",
+            cid,
+            token_hash,
+        )
+        == 2
+    )
+
+    await send_otp(slug, token, ip, sender)
+    assert (
+        await db.fetchval(
+            "SELECT otp_attempts FROM member_consents WHERE cooperative_id=$1 AND token_hash=$2",
+            cid,
+            token_hash,
+        )
+        == 2
+    )
+    for _ in range(3):
+        code = sender.sent[-1][1]
+        wrong_code = "000000" if code != "000000" else "000001"
+        assert await decide_consent(slug, token, wrong_code, "confirm", ip, "test") == "unavailable"
+    locked = await db.fetchrow(
+        "SELECT status,otp_attempts FROM member_consents WHERE cooperative_id=$1 AND token_hash=$2",
+        cid,
+        token_hash,
+    )
+    assert (locked["status"], locked["otp_attempts"]) == ("invalidated", 5)
+    with pytest.raises(NotFound):
+        await send_otp(slug, token, ip, sender)
+
+
+async def test_locked_consent_can_be_reissued_by_an_officer(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    application, _, borrower, _, tokens = await approved_loan(
+        db,
+        loan_base,
+        test_database,
+        phone_pair=("+2348030500001", "+2348030500002"),
+    )
+    cid = loan_base.cooperative_id
+    token = await final_terms_token(db, cid, application, tokens)
+    token_hash = hashlib.sha256(bytes.fromhex(token)).digest()
+    old_id = await db.fetchval(
+        "SELECT id FROM member_consents WHERE cooperative_id=$1 AND token_hash=$2",
+        cid,
+        token_hash,
+    )
+    slug = await db.fetchval("SELECT slug FROM cooperatives WHERE id=$1", cid)
+    ip = "198.51.100.51"
+    sender = FakeOtpSender()
+    await send_otp(slug, token, ip, sender)
+    for _ in range(5):
+        code = sender.sent[-1][1]
+        wrong_code = "000000" if code != "000000" else "000001"
+        await decide_consent(slug, token, wrong_code, "confirm", ip, "test")
+    assert (
+        await db.fetchval(
+            "SELECT status FROM member_consents WHERE cooperative_id=$1 AND id=$2", cid, old_id
+        )
+        == "invalidated"
+    )
+
+    reissue = getattr(loan_service, "reissue_consent", None)
+    assert callable(reissue), "officer reissue service is required"
+    with pytest.raises(Forbidden):
+        await reissue(session(cid, loan_base.user_ids[1], "committee"), application, old_id)
+    new_tokens: list[str] = []
+    new_id = await reissue(
+        session(cid, loan_base.user_ids[0], "officer"),
+        application,
+        old_id,
+        delivery_observer=new_tokens.append,
+    )
+    assert new_id != old_id
+    assert len(new_tokens) == 1
+    new_hash = hashlib.sha256(bytes.fromhex(new_tokens[0])).digest()
+    new_consent = await db.fetchrow(
+        """SELECT id,kind,member_id,status,otp_attempts,token_hash FROM member_consents
+          WHERE cooperative_id=$1 AND token_hash=$2""",
+        cid,
+        new_hash,
+    )
+    assert (
+        new_consent["id"],
+        new_consent["kind"],
+        new_consent["member_id"],
+        new_consent["status"],
+        new_consent["otp_attempts"],
+    ) == (new_id, "final_terms", borrower, "pending", 0)
+    assert new_consent["token_hash"] != token_hash
+    await send_otp(slug, new_tokens[0], ip, sender)
