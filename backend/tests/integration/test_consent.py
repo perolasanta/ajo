@@ -8,15 +8,19 @@ import uuid
 
 import asyncpg
 import pytest
+from sqlalchemy import text
 
-from app.core.db import asyncpg_dsn, dispose_engine
+from app.core.config import Settings, get_settings
+from app.core.db import asyncpg_dsn, dispose_engine, transaction
 from app.core.errors import AppError, Conflict, Forbidden, NotFound
 from app.domains.consent import service as consent_service
 from app.domains.consent.service import decide as decide_consent
-from app.domains.consent.service import send_otp
+from app.domains.consent.service import send_otp as enqueue_otp
 from app.domains.disbursements.service import prepare
 from app.domains.loans import service as loan_service
 from app.domains.loans.service import decide_application, submit_application
+from app.domains.notifications.outbox import decrypt_payload
+from app.worker.outbox import process_next_notification
 from tests.integration.test_loans import LoanBase, _create_loan_base, session, setup_loan_member
 
 pytestmark = pytest.mark.db
@@ -30,6 +34,23 @@ class FakeOtpSender:
 
     async def send(self, destination: str, code: str) -> None:
         self.sent.append((destination, code))
+
+
+async def send_otp(slug: str, token: str, ip: str, sender: FakeOtpSender) -> None:
+    await enqueue_otp(
+        slug,
+        token,
+        ip,
+        delivery_observer=lambda destination, code: sender.sent.append((destination, code)),
+    )
+
+
+class FakeSmsGateway:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def send(self, destination: str, message: str) -> None:
+        self.sent.append((destination, message))
 
 
 @pytest.fixture(scope="module")
@@ -519,3 +540,69 @@ async def test_confirmation_metadata_is_minimal_until_otp_verification(
     assert details["applicant"]
     assert details["terms"]
     assert await decide_consent(slug, token, "confirm", ip, "test-agent") == "recorded"
+
+
+async def test_outbox_worker_delivers_encrypted_confirmation_otp(
+    db: asyncpg.Connection, loan_base: LoanBase, test_database
+) -> None:
+    application, _, _, _, tokens = await approved_loan(
+        db,
+        loan_base,
+        test_database,
+        phone_pair=("+2348030700001", "+2348030700002"),
+    )
+    cid = loan_base.cooperative_id
+    slug = await db.fetchval("SELECT slug FROM tenant_directory WHERE cooperative_id=$1", cid)
+    token = await final_terms_token(db, cid, application, tokens)
+    generated: list[tuple[str, str]] = []
+    await enqueue_otp(
+        slug,
+        token,
+        "198.51.100.71",
+        delivery_observer=lambda destination, code: generated.append((destination, code)),
+    )
+    assert generated
+
+    async with transaction(cid) as session_db:
+        queued = (
+            (
+                await session_db.execute(
+                    text("""SELECT payload_encrypted,kind,status FROM notifications
+                  WHERE cooperative_id=:cid AND member_id=(
+                    SELECT member_id FROM member_consents
+                    WHERE cooperative_id=:cid AND token_hash=:token)
+                    AND kind='confirmation_otp' ORDER BY created_at DESC LIMIT 1"""),
+                    {"cid": cid, "token": hashlib.sha256(bytes.fromhex(token)).digest()},
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert queued["status"] == "pending"
+    assert queued["kind"] == "confirmation_otp"
+    payload = decrypt_payload(queued["payload_encrypted"])
+    assert payload["code"] == generated[0][1]
+    assert payload["destination"] == generated[0][0]
+
+    runtime = get_settings()
+    worker_settings = Settings(
+        app_env=runtime.app_env,
+        secret_key=runtime.secret_key,
+        encryption_key=runtime.encryption_key,
+        public_base_url="https://ajo.example.test",
+    )
+    gateway = FakeSmsGateway()
+    expected_destination, expected_code = generated[0]
+    for _ in range(100):
+        processed = await process_next_notification(cid, gateway, worker_settings)
+        if any(
+            destination == expected_destination and expected_code in message
+            for destination, message in gateway.sent
+        ):
+            break
+        if not processed:
+            break
+    assert any(
+        destination == expected_destination and expected_code in message
+        for destination, message in gateway.sent
+    )

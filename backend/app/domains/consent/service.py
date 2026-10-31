@@ -5,44 +5,25 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
-import json
 import secrets
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 
-from cryptography.fernet import Fernet
 from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.core.db import transaction
-from app.core.errors import NotFound, TooManyRequests
+from app.core.errors import Conflict, NotFound, TooManyRequests
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import resolve_tenant_slug
-
-
-class OtpSender(Protocol):
-    async def send(self, destination: str, code: str) -> None: ...
-
-
-class ConsoleOtpSender:
-    async def send(self, destination: str, code: str) -> None:
-        if get_settings().app_env != "development":
-            raise RuntimeError("Console OTP delivery is development-only")
-        print(f"Ajo confirmation OTP for {destination}: {code}")
+from app.domains.notifications.outbox import enqueue_notification
 
 
 def _otp_hash(consent_id: uuid.UUID, code: str) -> bytes:
     key = get_settings().secret_key.encode()
     return hmac.digest(key, f"{consent_id}:{code}".encode(), "sha256")
-
-
-def _encrypt(payload: dict[str, Any]) -> str:
-    key = get_settings().encryption_key
-    if not key:
-        raise RuntimeError("ENCRYPTION_KEY is required for notification outbox")
-    return Fernet(key.encode()).encrypt(json.dumps(payload).encode()).decode("ascii")
 
 
 async def create_consent(
@@ -53,6 +34,11 @@ async def create_consent(
     row = (await session.execute(text("""SELECT confirmation_expiry_minutes FROM cooperative_policy_versions
         WHERE cooperative_id=:cid AND id=(SELECT policy_version_id FROM loan_applications
         WHERE cooperative_id=:cid AND id=:app)"""), {"cid": cooperative_id, "app": application_id})).one()
+    member = (await session.execute(text("""SELECT phone_e164 FROM members
+        WHERE cooperative_id=:cid AND id=:member"""),
+        {"cid": cooperative_id, "member": member_id})).mappings().one_or_none()
+    if member is None or not member["phone_e164"]:
+        raise Conflict("Member needs an SMS destination before confirmation")
     token = secrets.token_bytes(32)
     consent_id = uuid.uuid4()
     expires = datetime.now(UTC) + timedelta(minutes=row.confirmation_expiry_minutes)
@@ -61,10 +47,17 @@ async def create_consent(
         VALUES(:id,:cid,:app,:member,:kind,:terms,:token,:expires,'v1')"""),
         {"id": consent_id, "cid": cooperative_id, "app": application_id, "member": member_id,
          "kind": kind, "terms": terms_hash, "token": hashlib.sha256(token).digest(), "expires": expires})
-    await session.execute(text("""INSERT INTO notifications(cooperative_id,member_id,kind,payload_encrypted)
-        VALUES(:cid,:member,'confirmation_request',:payload)"""),
-        {"cid": cooperative_id, "member": member_id,
-         "payload": _encrypt({"url": f"/api/v1/confirm/{slug}/{token.hex()}", "consent_id": str(consent_id)})})
+    await enqueue_notification(
+        session,
+        cooperative_id=cooperative_id,
+        member_id=member_id,
+        kind="confirmation_request",
+        payload={
+            "destination": member["phone_e164"],
+            "url": f"/api/v1/confirm/{slug}/{token.hex()}",
+            "consent_id": str(consent_id),
+        },
+    )
     # The observer is only for trusted in-process delivery adapters (the demo seeder).
     # It is invoked before the transaction commits and must never persist or log the token.
     if delivery_observer is not None:
@@ -170,7 +163,12 @@ async def view(slug: str, token: str) -> dict[str, Any]:
         }
 
 
-async def send_otp(slug: str, token: str, ip: str, sender: OtpSender) -> None:
+async def send_otp(
+    slug: str,
+    token: str,
+    ip: str,
+    delivery_observer: Callable[[str, str], None] | None = None,
+) -> None:
     pair = await _lookup(slug, token)
     if pair is None:
         raise NotFound("Confirmation unavailable")
@@ -192,8 +190,21 @@ async def send_otp(slug: str, token: str, ip: str, sender: OtpSender) -> None:
           otp_expires_at=now()+(:seconds * interval '1 second'),channel='sms'
           WHERE cooperative_id=:cid AND id=:id"""),
           {"hash": _otp_hash(row["id"], code), "seconds": row["otp_validity_seconds"], "cid": cid, "id": row["id"]})
-    # Delivery happens outside the database transaction; sender failures do not leak token data.
-    await sender.send(row["phone_e164"], code)
+        await enqueue_notification(
+            session,
+            cooperative_id=cid,
+            member_id=row["member_id"],
+            kind="confirmation_otp",
+            payload={
+                "consent_id": str(row["id"]),
+                "destination": row["phone_e164"],
+                "code": code,
+                "otp_validity_seconds": row["otp_validity_seconds"],
+            },
+        )
+    # Tests may observe the generated code in memory; production routes never pass an observer.
+    if delivery_observer is not None:
+        delivery_observer(row["phone_e164"], code)
 
 
 async def verify_otp(slug: str, token: str, code: str, ip: str) -> dict[str, Any] | None:
