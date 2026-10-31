@@ -10,9 +10,11 @@ passwords; bank account numbers are never printed (only ``last4`` ever leaves th
 
 from __future__ import annotations
 
+import asyncio
 import random
 import secrets
 import uuid
+from contextlib import suppress
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -41,6 +43,7 @@ from app.domains.repayments.service import post_repayment
 WAT = ZoneInfo("Africa/Lagos")
 DEMO_SEED = 20240501
 MEMBER_COUNT = 25
+_SEED_DEMO_HEARTBEAT_SECONDS = 300
 ANNUAL_RATE_BPS = 2400
 SALARY_KOBO = 50_000_000
 SAVINGS_KOBO = 5_000_000
@@ -231,7 +234,27 @@ async def _disburse(
     await confirm_paid(admin, disbursement_id, "127.0.0.1")
 
 
+async def _seed_demo_heartbeat() -> None:
+    while True:
+        await asyncio.sleep(_SEED_DEMO_HEARTBEAT_SECONDS)
+        print(
+            "seed_demo heartbeat: still running; the last member/loan progress line is above.",
+            flush=True,
+        )
+
+
 async def seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
+    """Run demo seeding with periodic output even while one service call is slow."""
+    heartbeat = asyncio.create_task(_seed_demo_heartbeat())
+    try:
+        return await _seed_demo(slug, yes_fake_data)
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
+
+
+async def _seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
     """Seed one cooperative with a fixed policy, product, staff, members and 14 loans.
 
     Refuses in production, without the fake-data flag, for an unknown slug, or when the
