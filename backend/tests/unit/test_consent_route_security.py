@@ -22,7 +22,7 @@ def test_all_consent_token_routes_set_no_store_and_no_referrer(monkeypatch) -> N
             "expires_at": "2030-01-01T00:00:00+00:00",
         }
 
-    async def fake_send_otp(slug: str, token: str, ip: str, sender) -> None:
+    async def fake_send_otp(slug: str, token: str, ip: str) -> None:
         return None
 
     async def fake_verify_otp(slug: str, token: str, otp: str, ip: str) -> dict[str, object]:
@@ -44,6 +44,7 @@ def test_all_consent_token_routes_set_no_store_and_no_referrer(monkeypatch) -> N
         client.post(f"{base}/decision", json={"decision": "confirm"}),
     ]
     assert all(response.status_code < 400 for response in responses)
+    assert responses[1].json() == {"status": "queued"}
     for response in responses:
         assert response.headers["cache-control"] == "no-store"
         assert response.headers["referrer-policy"] == "no-referrer"

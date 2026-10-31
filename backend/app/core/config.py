@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Literal
 
 from cryptography.fernet import Fernet
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str = ""
     whatsapp_verify_token: str = ""
     sentry_dsn: str = ""
+
+    public_base_url: str = ""
+    sms_gateway_url: str = ""
+    sms_gateway_api_key: SecretStr = SecretStr("")
+    sms_sender_id: str = ""
+    sms_request_timeout_seconds: float = Field(default=10.0, gt=0)
+    outbox_poll_interval_seconds: float = Field(default=2.0, gt=0)
+    outbox_claim_lease_seconds: int = Field(default=120, gt=0)
+    outbox_max_attempts: int = Field(default=5, gt=0)
+    outbox_retry_base_seconds: int = Field(default=10, gt=0)
+    outbox_retry_max_seconds: int = Field(default=3600, gt=0)
+    outbox_batch_size_per_tenant: int = Field(default=25, gt=0)
 
     @model_validator(mode="after")
     def _production_guards(self) -> "Settings":

@@ -29,8 +29,8 @@ async def get_confirmation(coop_slug: str, token: str) -> dict[str, object]:
 
 @router.post("/confirm/{coop_slug}/{token}/otp", status_code=202)
 async def request_otp(coop_slug: str, token: str, request: Request) -> dict[str, str]:
-    await service.send_otp(coop_slug, token, _ip(request), service.ConsoleOtpSender())
-    return {"status": "sent"}
+    await service.send_otp(coop_slug, token, _ip(request))
+    return {"status": "queued"}
 
 
 @router.post("/confirm/{coop_slug}/{token}/otp/verify")
