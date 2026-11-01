@@ -26,6 +26,7 @@ const DisbursementDetailPage = lazy(() => import("./pages/DisbursementDetailPage
 const DesignPage = lazy(() => import("./pages/DesignPage"));
 const PayrollPage = lazy(() => import("./pages/PayrollPage"));
 const PayrollDetailPage = lazy(() => import("./pages/PayrollDetailPage"));
+const AuditPage = lazy(() => import("./pages/AuditPage"));
 
 const fakeMembers: MemberListItem[] = [
   {
@@ -338,6 +339,7 @@ export default function App() {
           <Route path="/payroll" element={<PayrollPage />} />
           <Route path="/payroll/runs/:runId" element={<PayrollDetailPage />} />
         </Route>
+        <Route path="/audit" element={<AuditPage />} />
         <Route path="/:feature" element={<ComingSoon />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

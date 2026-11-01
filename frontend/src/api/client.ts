@@ -16,6 +16,7 @@ import type {
   PayrollSignOffResponse,
   paths,
 } from "./schema";
+import type { AuditEventPage, AuditVerification } from "./audit";
 
 const API_BASE = "/api/v1";
 const STATE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -133,6 +134,32 @@ export function getLoanApplication(applicationId: string): Promise<LoanApplicati
 
 export function getLoanProducts(): Promise<LoanProduct[]> {
   return request<LoanProduct[]>("/loan-products");
+}
+
+export async function getAuditEvents(
+  params: {
+    from?: string;
+    to?: string;
+    actorId?: string;
+    action?: string;
+    entityType?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<AuditEventPage> {
+  const query = new URLSearchParams();
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.actorId) query.set("actor_id", params.actorId);
+  if (params.action) query.set("action", params.action);
+  if (params.entityType) query.set("entity_type", params.entityType);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<AuditEventPage>(`/audit-events?${query.toString()}`);
+}
+
+export function verifyAuditChain(): Promise<AuditVerification> {
+  return request<AuditVerification>("/audit-events/verify");
 }
 
 export function submitLoanApplication(body: {
