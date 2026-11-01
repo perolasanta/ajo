@@ -2,9 +2,10 @@
 
 import base64
 import uuid
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import current_session, require_csrf
@@ -83,6 +84,38 @@ class SignOffResponse(_PayrollResponse):
     json_base64: str
 
 
+class PayrollRunCountsResponse(_PayrollResponse):
+    matched: int
+    short: int
+    over: int
+    missing: int
+    unknown_member: int
+    duplicate: int
+
+
+class PayrollRunSummaryResponse(_PayrollResponse):
+    run_id: str
+    period_year: int
+    period_month: int
+    status: str
+    expected_total_kobo: int
+    file_total_kobo: int | None
+    counts: PayrollRunCountsResponse
+    created_by: str
+    posted_by: str | None
+    created_at: datetime
+    imported_at: datetime | None
+    posted_at: datetime | None
+    signed_off_at: datetime | None
+
+
+class PayrollRunListResponse(_PayrollResponse):
+    items: list[PayrollRunSummaryResponse]
+    page: int
+    page_size: int
+    total: int
+
+
 def _content(value: str) -> bytes:
     try:
         return base64.b64decode(value, validate=True)
@@ -104,6 +137,15 @@ async def create_run(
 ) -> dict[str, str]:
     run_id = await service.create_run(current, body.profile_id, body.period_year, body.period_month)
     return {"run_id": str(run_id)}
+
+
+@router.get("/payroll/runs", response_model=PayrollRunListResponse)
+async def list_runs(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+) -> dict[str, object]:
+    return await service.list_runs(current, page, page_size)
 
 
 @router.get("/payroll/runs/{run_id}/expected.csv", response_class=Response, response_model=None)

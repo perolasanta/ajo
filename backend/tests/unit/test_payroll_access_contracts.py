@@ -43,6 +43,41 @@ async def _unexpected_transaction(*args: Any, **kwargs: Any) -> Any:
 
 
 JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] = {
+    (
+        "GET",
+        "/payroll/runs",
+    ): (
+        {"items", "page", "page_size", "total"},
+        {
+            "items": [
+                {
+                    "run_id": RUN_ID,
+                    "period_year": 2026,
+                    "period_month": 10,
+                    "status": "imported",
+                    "expected_total_kobo": 1200,
+                    "file_total_kobo": 1190,
+                    "counts": {
+                        "matched": 1,
+                        "short": 0,
+                        "over": 0,
+                        "missing": 0,
+                        "unknown_member": 0,
+                        "duplicate": 0,
+                    },
+                    "created_by": PROFILE_ID,
+                    "posted_by": None,
+                    "created_at": "2026-10-01T10:00:00Z",
+                    "imported_at": "2026-10-02T10:00:00Z",
+                    "posted_at": None,
+                    "signed_off_at": None,
+                }
+            ],
+            "page": 1,
+            "page_size": 10,
+            "total": 1,
+        },
+    ),
     ("POST", "/payroll/profiles"): ({"profile_id"}, {"profile_id": PROFILE_ID}),
     ("POST", "/payroll/runs"): ({"run_id"}, {"run_id": RUN_ID}),
     (
@@ -118,6 +153,83 @@ def test_nested_dry_run_response_models_hide_new_row_and_error_fields() -> None:
         "classification",
     }
     assert set(response.errors[0].model_dump()) == {"row", "error"}
+
+
+def test_payroll_run_list_has_exact_safe_nested_keys() -> None:
+    model = _route("GET", "/payroll/runs").response_model
+    assert isinstance(model, type) and issubclass(model, BaseModel)
+    sample = JSON_RESPONSE_CONTRACTS[("GET", "/payroll/runs")][1]
+    response = model.model_validate({**sample, "future_field": "hidden"})
+    item = response.model_dump()["items"][0]
+    assert set(item) == {
+        "run_id",
+        "period_year",
+        "period_month",
+        "status",
+        "expected_total_kobo",
+        "file_total_kobo",
+        "counts",
+        "created_by",
+        "posted_by",
+        "created_at",
+        "imported_at",
+        "posted_at",
+        "signed_off_at",
+    }
+    assert set(item["counts"]) == {
+        "matched",
+        "short",
+        "over",
+        "missing",
+        "unknown_member",
+        "duplicate",
+    }
+    assert not {"salary", "phone", "email", "bank", "member_id"} & set(item)
+
+
+@pytest.mark.parametrize("role", ["officer", "treasurer", "admin"])
+async def test_payroll_run_list_response_contract_is_identical_for_read_roles(
+    role: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sample = JSON_RESPONSE_CONTRACTS[("GET", "/payroll/runs")][1]
+    item = sample["items"][0]
+    database_row = {**item, "id": item["run_id"], **item["counts"]}
+    database_row.pop("run_id")
+    database_row.pop("counts")
+    current = _session_for(role)
+
+    class _Rows:
+        def __init__(self, rows: list[dict[str, Any]]) -> None:
+            self.rows = rows
+
+        def mappings(self) -> _Rows:
+            return self
+
+        def all(self) -> list[dict[str, Any]]:
+            return self.rows
+
+    class _Session:
+        async def scalar(self, statement: Any, params: dict[str, Any]) -> int:
+            assert params["cid"] == current.cooperative_id
+            return 1
+
+        async def execute(self, statement: Any, params: dict[str, Any]) -> _Rows:
+            assert params["cid"] == current.cooperative_id
+            return _Rows([database_row])
+
+    @asynccontextmanager
+    async def _transaction(cooperative_id: uuid.UUID) -> Any:
+        assert cooperative_id == current.cooperative_id
+        yield _Session()
+
+    monkeypatch.setattr(payroll_api.service, "transaction", _transaction)
+    result = await payroll_api.list_runs(current=current, page=1, page_size=10)
+    model = _route("GET", "/payroll/runs").response_model
+    assert isinstance(model, type) and issubclass(model, BaseModel)
+    response = model.model_validate(result)
+    assert set(response.model_dump()) == {"items", "page", "page_size", "total"}
+    assert set(response.model_dump()["items"][0]) == set(sample["items"][0])
+    assert set(response.model_dump()["items"][0]["counts"]) == set(item["counts"])
 
 
 def test_expected_csv_route_is_explicitly_a_csv_not_a_json_object() -> None:
@@ -203,7 +315,7 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
         ("admin", "POST", f"/payroll/runs/{RUN_ID}/post", None),
         *[
             (role, method, path, payload)
-            for role in ("committee", "auditor")
+            for role in ("committee", "auditor", "member")
             for method, path, payload in (
                 (
                     "POST",
@@ -216,6 +328,7 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
                     {"profile_id": PROFILE_ID, "period_year": 2099, "period_month": 1},
                 ),
                 ("GET", f"/payroll/runs/{RUN_ID}/expected.csv", None),
+                ("GET", "/payroll/runs", None),
                 (
                     "POST",
                     f"/payroll/runs/{RUN_ID}/dry-run",
@@ -274,6 +387,44 @@ async def test_expected_csv_and_signoff_responses_set_cache_control_no_store(
         )
         assert set(result) == {"csv_base64", "json_base64"}
         assert response.headers.get("cache-control") == "no-store"
+
+
+async def test_payroll_run_list_is_scoped_to_the_current_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _session_for("officer")
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class _Rows:
+        def mappings(self) -> _Rows:
+            return self
+
+        def all(self) -> list[dict[str, Any]]:
+            return []
+
+    class _Session:
+        async def scalar(self, statement: Any, params: dict[str, Any]) -> int:
+            calls.append((str(statement), params))
+            return 0
+
+        async def execute(self, statement: Any, params: dict[str, Any]) -> _Rows:
+            calls.append((str(statement), params))
+            return _Rows()
+
+    @asynccontextmanager
+    async def _tenant_transaction(cooperative_id: uuid.UUID) -> Any:
+        assert cooperative_id == current.cooperative_id
+        yield _Session()
+
+    monkeypatch.setattr(service, "transaction", _tenant_transaction)
+    await service.list_runs(current, page=2, page_size=10)
+
+    assert len(calls) == 2
+    for statement, params in calls:
+        assert "cooperative_id=:cid" in statement
+        assert params["cid"] == current.cooperative_id
+    assert calls[1][1]["limit"] == 10
+    assert calls[1][1]["offset"] == 10
 
 
 def _async_return(value: Any) -> Any:

@@ -154,6 +154,85 @@ async def create_run(
     return run_id
 
 
+async def list_runs(current: CurrentSession, page: int, page_size: int) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer", "admin"})
+    cid = current.cooperative_id
+    offset = (page - 1) * page_size
+    async with transaction(cid) as session:
+        total = await session.scalar(
+            text("SELECT count(*) FROM payroll_runs WHERE cooperative_id=:cid"),
+            {"cid": cid},
+        )
+        rows = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT r.id,r.period_year,r.period_month,r.status,
+                          r.expected_total_kobo,r.file_total_kobo,r.created_by,r.posted_by,
+                          r.created_at,r.imported_at,r.posted_at,r.signed_off_at,
+                          coalesce(c.matched,0)::int AS matched,
+                          coalesce(c.short,0)::int AS short,
+                          coalesce(c.over,0)::int AS over,
+                          coalesce(c.missing,0)::int AS missing,
+                          coalesce(c.unknown_member,0)::int AS unknown_member,
+                          coalesce(c.duplicate,0)::int AS duplicate
+                          FROM payroll_runs r
+                          LEFT JOIN (
+                            SELECT cooperative_id,run_id,
+                              count(*) FILTER (WHERE classification='matched') AS matched,
+                              count(*) FILTER (WHERE classification='short') AS short,
+                              count(*) FILTER (WHERE classification='over') AS over,
+                              count(*) FILTER (WHERE classification='missing') AS missing,
+                              count(*) FILTER (WHERE classification='unknown_member') AS unknown_member,
+                              count(*) FILTER (WHERE classification='duplicate') AS duplicate
+                            FROM payroll_items
+                            WHERE cooperative_id=:cid
+                            GROUP BY cooperative_id,run_id
+                          ) c ON c.cooperative_id=r.cooperative_id AND c.run_id=r.id
+                          WHERE r.cooperative_id=:cid
+                          ORDER BY r.period_year DESC,r.period_month DESC,r.created_at DESC
+                          LIMIT :limit OFFSET :offset"""
+                    ),
+                    {"cid": cid, "limit": page_size, "offset": offset},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "run_id": str(row["id"]),
+                "period_year": int(row["period_year"]),
+                "period_month": int(row["period_month"]),
+                "status": str(row["status"]),
+                "expected_total_kobo": int(row["expected_total_kobo"]),
+                "file_total_kobo": (
+                    int(row["file_total_kobo"]) if row["file_total_kobo"] is not None else None
+                ),
+                "counts": {
+                    key: int(row[key])
+                    for key in (
+                        "matched",
+                        "short",
+                        "over",
+                        "missing",
+                        "unknown_member",
+                        "duplicate",
+                    )
+                },
+                "created_by": str(row["created_by"]),
+                "posted_by": str(row["posted_by"]) if row["posted_by"] is not None else None,
+                "created_at": row["created_at"],
+                "imported_at": row["imported_at"],
+                "posted_at": row["posted_at"],
+                "signed_off_at": row["signed_off_at"],
+            }
+        )
+    return {"items": items, "page": page, "page_size": page_size, "total": int(total or 0)}
+
+
 async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
     role = _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
