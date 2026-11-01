@@ -4,7 +4,11 @@ import uuid
 
 import pytest
 
-from app.api.disbursements import _disbursement_projection
+from app.api.disbursements import (
+    DisbursementAdminTreasurerResponse,
+    DisbursementAuditorResponse,
+    _disbursement_projection,
+)
 from app.core.errors import Forbidden
 from app.domains.auth.service import CurrentSession
 from app.domains.disbursements.reads import read_role
@@ -45,7 +49,7 @@ def test_role_projections_are_exact_and_never_include_sensitive_columns() -> Non
         "confirmed_by": "c",
         "failure_reason": None,
         "reversal_reason": None,
-        "created_at": None,
+        "created_at": "2026-01-01T00:00:00Z",
         "authorized_at": None,
         "transfer_recorded_at": None,
         "paid_at": None,
@@ -72,3 +76,8 @@ def test_role_projections_are_exact_and_never_include_sensitive_columns() -> Non
         for data in (admin, treasurer, auditor)
         for key in data
     )
+
+
+def test_role_response_models_forbid_unallowlisted_fields() -> None:
+    assert DisbursementAuditorResponse.model_config["extra"] == "forbid"
+    assert DisbursementAdminTreasurerResponse.model_config["extra"] == "forbid"
