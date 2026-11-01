@@ -127,3 +127,9 @@ Enforce this matrix in the disbursement service layer; API/UI visibility is not 
 | Committee, officer, auditor, member, and all other roles | HTTP 403 on every disbursement write |
 
 Enforce separation of duties against persisted actor ids while holding the existing disbursement row lock: the preparer (`prepared_by`) cannot authorize; the authorizer (`authorized_by`) cannot confirm paid. Existing checks also keep the authorizer and paid confirmer independent of the application submitter and loan approvers. A user holding multiple roles does not bypass actor-id separation. These write operations record a manually performed transfer; Ajo itself does not move money.
+
+## 1f. Audit log read access
+
+`GET /audit-events` is read-only, paginated, filterable by timestamp range, actor, action, and entity type, and tenant-scoped through the existing transaction and RLS context. Admins and auditors may read it; members and every other role receive HTTP 403. No audit write or delete path is added. The optional `GET /audit-events/verify` endpoint is also restricted to admins and auditors and reports whether the existing hash chain is valid or the first broken position.
+
+The response allowlist is exact: `event_id`, `timestamp`, `actor_id`, `actor_role`, `action`, `entity_type`, `entity_id`, and `safe_summary`. `safe_summary` is a structured object limited to `status`, `decision`, `old_role`, `new_role`, and `count`; free text and all other summary keys are omitted. Phone, email, salary, full account numbers, tokens, OTP data, passwords, MFA material, IP/device data, channel, reason, hash-chain fields, and arbitrary before/after summaries are intentionally left out because audit rows may contain sensitive or unbounded values. The existing append-only audit table and hash-chain writer are unchanged.
