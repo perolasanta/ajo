@@ -70,3 +70,22 @@ export async function payrollFileSha256(file) {
   const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
+export function nairaInputToKobo(value) {
+  const match = /^([0-9]+)(?:\.([0-9]{1,2}))?$/.exec(value.trim());
+  if (!match) return null;
+  const digits = `${match[1]}${(match[2] ?? "").padEnd(2, "0")}`;
+  const kobo = Number(digits);
+  return Number.isSafeInteger(kobo) ? kobo : null;
+}
+
+export function payrollSignOffReady(fileTotalKobo, bankTotalKobo, exceptions = []) {
+  return (
+    fileTotalKobo !== null &&
+    bankTotalKobo !== null &&
+    fileTotalKobo === bankTotalKobo &&
+    exceptions.every(
+      (exception) => exception.classification === "matched" || exception.resolution_note !== null,
+    )
+  );
+}

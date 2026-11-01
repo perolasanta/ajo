@@ -1,3 +1,4 @@
+import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -7,12 +8,16 @@ import {
   dryRunPayrollFile,
   getPayrollRun,
   importPayrollFile,
+  postPayrollRun,
   request,
+  signOffPayrollRun,
 } from "../api/client";
 import type { PayrollDryRunResponse } from "../api/schema";
 import {
   payrollFileSha256,
+  nairaInputToKobo,
   payrollRunActions,
+  payrollSignOffReady,
   payrollStepIndex,
   payrollSteps,
   uploadPayrollFile,
@@ -41,6 +46,19 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function downloadBase64Report(encoded: string, filename: string, mediaType: string) {
+  const binary = window.atob(encoded);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function PayrollDetailPage() {
   const { runId } = useParams();
   const queryClient = useQueryClient();
@@ -53,6 +71,11 @@ export default function PayrollDetailPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadPending, setDownloadPending] = useState(false);
+  const [postDialogOpen, setPostDialogOpen] = useState(false);
+  const [signOffDialogOpen, setSignOffDialogOpen] = useState(false);
+  const [bankReceiptInput, setBankReceiptInput] = useState("");
+  const [postSuccess, setPostSuccess] = useState<string | null>(null);
+  const [signOffSuccess, setSignOffSuccess] = useState<string | null>(null);
   const session = useQuery({
     queryKey: ["session"],
     queryFn: () => request<Session>("/auth/me"),
@@ -104,6 +127,27 @@ export default function PayrollDetailPage() {
         return;
       }
       setUploadError(null);
+      await queryClient.invalidateQueries({ queryKey: ["payroll-run", runId] });
+      await queryClient.invalidateQueries({ queryKey: ["payroll-runs"] });
+    },
+  });
+  const postMutation = useMutation({
+    mutationFn: () => postPayrollRun(runId ?? ""),
+    onSuccess: async ({ posted }) => {
+      setPostSuccess(`Payroll posted. ${posted} repayment${posted === 1 ? "" : "s"} processed.`);
+      setPostDialogOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["payroll-run", runId] });
+      await queryClient.invalidateQueries({ queryKey: ["payroll-runs"] });
+    },
+  });
+  const signOffMutation = useMutation({
+    mutationFn: (bankTotalKobo: number) => signOffPayrollRun(runId ?? "", bankTotalKobo),
+    onSuccess: async (reports) => {
+      const period = `${run.data?.period_year ?? "payroll"}-${String(run.data?.period_month ?? "").padStart(2, "0")}`;
+      downloadBase64Report(reports.csv_base64, `${period}-sign-off.csv`, "text/csv;charset=utf-8");
+      downloadBase64Report(reports.json_base64, `${period}-sign-off.json`, "application/json");
+      setSignOffSuccess("Payroll signed off. The CSV and JSON sign-off reports were downloaded.");
+      setSignOffDialogOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["payroll-run", runId] });
       await queryClient.invalidateQueries({ queryKey: ["payroll-runs"] });
     },
@@ -190,6 +234,15 @@ export default function PayrollDetailPage() {
     counts[row.classification] = (counts[row.classification] ?? 0) + 1;
     return counts;
   }, {});
+  const bankReceiptKobo = nairaInputToKobo(bankReceiptInput);
+  const signOffVarianceKobo =
+    data.file_total_kobo !== null && bankReceiptKobo !== null
+      ? data.file_total_kobo - bankReceiptKobo
+      : null;
+  const unresolvedExceptions = data.exceptions.filter(
+    (exception) => exception.classification !== "matched" && exception.resolution_note === null,
+  );
+  const signOffReady = payrollSignOffReady(data.file_total_kobo, bankReceiptKobo, data.exceptions);
 
   return (
     <>
@@ -541,6 +594,290 @@ export default function PayrollDetailPage() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="mt-6 rounded-card border border-border bg-surface p-4 sm:p-5">
+        <h2 className="font-serif text-xl font-semibold">Available actions</h2>
+        {actions.canPost && (
+          <div className="mt-3">
+            <p className="text-sm text-muted">
+              Posting applies eligible payroll repayments. Confirm the totals and component split
+              first.
+            </p>
+            <Button
+              className="mt-3"
+              type="button"
+              onClick={() => {
+                postMutation.reset();
+                setPostSuccess(null);
+                setPostDialogOpen(true);
+              }}
+            >
+              Post run
+            </Button>
+          </div>
+        )}
+        {session.data.roles.includes("admin") && data.status === "imported" && (
+          <p className="mt-2 text-sm text-muted">
+            Posting is reserved for treasurers; administrators cannot post runs.
+          </p>
+        )}
+        {actions.canSignOff && (
+          <div className="mt-3">
+            <p className="text-sm text-muted">
+              Review the bank receipt total, variance, and persisted exceptions before sign-off.
+            </p>
+            <Button
+              className="mt-3"
+              type="button"
+              onClick={() => {
+                signOffMutation.reset();
+                setBankReceiptInput("");
+                setSignOffSuccess(null);
+                setSignOffDialogOpen(true);
+              }}
+            >
+              Sign off run
+            </Button>
+          </div>
+        )}
+        {actions.signOffBlockedBySelf && (
+          <p className="mt-2 text-sm text-muted">
+            A different administrator must sign off because you imported or posted this run.
+          </p>
+        )}
+        {actions.signOffBlockedMissingPoster && (
+          <p className="mt-2 text-sm text-muted">
+            Sign-off is unavailable because the original importer or poster is not recorded.
+          </p>
+        )}
+        {!actions.canExportExpected &&
+          !actions.canPost &&
+          !actions.canSignOff &&
+          !actions.signOffBlockedBySelf &&
+          !actions.signOffBlockedMissingPoster &&
+          !(session.data.roles.includes("admin") && data.status === "imported") && (
+            <p className="mt-2 text-sm text-muted">
+              No actions are available for your role in this run state.
+            </p>
+          )}
+        {postSuccess && (
+          <p className="mt-3 text-sm text-success" role="status">
+            {postSuccess}
+          </p>
+        )}
+        {signOffSuccess && (
+          <p className="mt-3 text-sm text-success" role="status">
+            {signOffSuccess}
+          </p>
+        )}
+
+        <Dialog.Root open={postDialogOpen} onOpenChange={setPostDialogOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/50" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(92vw,38rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-card border border-border bg-surface p-4 shadow-xl sm:p-6">
+              <Dialog.Title className="font-serif text-xl font-semibold">
+                Confirm payroll posting
+              </Dialog.Title>
+              <Dialog.Description className="mt-1 text-sm text-muted">
+                Posting is a treasurer action. Review these totals before confirming.
+              </Dialog.Description>
+              <dl className="mt-5 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted">Expected total</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={data.expected_total_kobo} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Imported file total</dt>
+                  <dd className="mt-1 font-medium">
+                    {data.file_total_kobo === null ? (
+                      "Not imported"
+                    ) : (
+                      <Money kobo={data.file_total_kobo} />
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Loan component</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={data.component_totals_kobo.loan} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Savings component</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={data.component_totals_kobo.savings} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Dues component</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={data.component_totals_kobo.dues} />
+                  </dd>
+                </div>
+              </dl>
+              {postMutation.isError && (
+                <p className="mt-4 text-sm text-danger" role="alert">
+                  {errorMessage(postMutation.error, "Unable to post this payroll run.")}
+                </p>
+              )}
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={() => setPostDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  loading={postMutation.isPending}
+                  onClick={() => postMutation.mutate()}
+                >
+                  Confirm post
+                </Button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        <Dialog.Root open={signOffDialogOpen} onOpenChange={setSignOffDialogOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/50" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(92vw,38rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-card border border-border bg-surface p-4 shadow-xl sm:p-6">
+              <Dialog.Title className="font-serif text-xl font-semibold">
+                Confirm admin sign-off
+              </Dialog.Title>
+              <Dialog.Description className="mt-1 text-sm text-muted">
+                Sign-off requires a bank receipt that matches the imported file and resolved payroll
+                exceptions.
+              </Dialog.Description>
+              <dl className="mt-5 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted">Expected total</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={data.expected_total_kobo} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Imported file total</dt>
+                  <dd className="mt-1 font-medium">
+                    {data.file_total_kobo === null ? (
+                      "Not imported"
+                    ) : (
+                      <Money kobo={data.file_total_kobo} />
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Bank receipt total</dt>
+                  <dd className="mt-1 font-medium">
+                    {bankReceiptKobo === null ? "Enter below" : <Money kobo={bankReceiptKobo} />}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Variance (file − receipt)</dt>
+                  <dd className="mt-1 font-medium">
+                    {signOffVarianceKobo === null ? (
+                      "Enter receipt total"
+                    ) : (
+                      <Money kobo={signOffVarianceKobo} />
+                    )}
+                  </dd>
+                </div>
+              </dl>
+              <label className="mt-4 block text-sm font-medium">
+                Bank receipt total (₦)
+                <input
+                  className="mt-1 min-h-11 w-full rounded-control border border-border bg-surface px-3 text-sm"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={bankReceiptInput}
+                  onChange={(event) => setBankReceiptInput(event.target.value)}
+                  aria-describedby="payroll-bank-receipt-help"
+                />
+              </label>
+              <p id="payroll-bank-receipt-help" className="mt-1 text-xs text-muted">
+                Enter naira with up to two decimal places; the amount is sent to the API as whole
+                kobo.
+              </p>
+              {bankReceiptInput && bankReceiptKobo === null && (
+                <p className="mt-2 text-sm text-danger" role="alert">
+                  Enter a non-negative amount with no more than two decimal places.
+                </p>
+              )}
+              {signOffVarianceKobo !== null && signOffVarianceKobo !== 0 && (
+                <p className="mt-2 text-sm text-danger" role="alert">
+                  The bank receipt total must match the imported file total before sign-off.
+                </p>
+              )}
+              <div className="mt-5">
+                <h3 className="text-sm font-semibold">
+                  Persisted exceptions ({data.exceptions.length})
+                </h3>
+                {data.exceptions.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted">No exceptions recorded.</p>
+                ) : (
+                  <div className="mt-2 max-h-48 space-y-2 overflow-y-auto pr-1">
+                    {data.exceptions.map((exception, index) => (
+                      <article
+                        key={`${exception.staff_no_raw}-${index}`}
+                        className="rounded-control border border-border p-3 text-sm"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="break-all font-medium">{exception.staff_no_raw}</span>
+                          <Badge status={exception.classification} />
+                        </div>
+                        <p className="mt-1 text-muted">
+                          Actual amount:{" "}
+                          {exception.actual_kobo === null ? (
+                            "—"
+                          ) : (
+                            <Money kobo={exception.actual_kobo} />
+                          )}
+                        </p>
+                        {exception.resolution_note && (
+                          <p className="mt-1 break-words text-muted">
+                            Resolution: {exception.resolution_note}
+                          </p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {unresolvedExceptions.length > 0 && (
+                <p className="mt-3 text-sm text-danger" role="alert">
+                  Add resolution notes for all {unresolvedExceptions.length} unresolved exception(s)
+                  before sign-off.
+                </p>
+              )}
+              {signOffMutation.isError && (
+                <p className="mt-3 text-sm text-danger" role="alert">
+                  {errorMessage(signOffMutation.error, "Unable to sign off this payroll run.")}
+                </p>
+              )}
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setSignOffDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  disabled={!signOffReady || signOffMutation.isPending}
+                  loading={signOffMutation.isPending}
+                  onClick={() => {
+                    if (bankReceiptKobo !== null) signOffMutation.mutate(bankReceiptKobo);
+                  }}
+                >
+                  Confirm sign-off
+                </Button>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
       </section>
 
       <section className="mt-6 rounded-card border border-border bg-surface p-4 text-sm text-muted sm:p-5">

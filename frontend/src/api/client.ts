@@ -10,8 +10,10 @@ import type {
   MemberListItem,
   PayrollDryRunResponse,
   PayrollImportResponse,
+  PayrollPostResponse,
   PayrollRunDetail,
   PayrollRunPage,
+  PayrollSignOffResponse,
   paths,
 } from "./schema";
 
@@ -245,6 +247,23 @@ export async function downloadExpectedPayrollCSV(runId: string): Promise<Blob> {
     );
   }
   return response.blob();
+}
+
+export function postPayrollRun(runId: string): Promise<PayrollPostResponse> {
+  return request<PayrollPostResponse>(`/payroll/runs/${encodeURIComponent(runId)}/post`, {
+    method: "POST",
+  });
+}
+
+export function signOffPayrollRun(
+  runId: string,
+  bankReceiptTotalKobo: number,
+): Promise<PayrollSignOffResponse> {
+  return request<PayrollSignOffResponse>(`/payroll/runs/${encodeURIComponent(runId)}/sign-off`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bank_receipt_total_kobo: bankReceiptTotalKobo }),
+  });
 }
 
 export async function getReadyDisbursementLoans(

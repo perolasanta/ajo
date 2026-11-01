@@ -35,3 +35,9 @@ export function uploadPayrollFile<TFile extends PayrollFileMetadata, TResult>(
   send: (file: TFile) => Promise<TResult>,
 ): Promise<TResult>;
 export function payrollFileSha256(file: Blob): Promise<string>;
+export function nairaInputToKobo(value: string): number | null;
+export function payrollSignOffReady(
+  fileTotalKobo: number | null,
+  bankTotalKobo: number | null,
+  exceptions?: Array<{ classification: string; resolution_note: string | null }>,
+): boolean;

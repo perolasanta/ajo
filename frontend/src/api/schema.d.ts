@@ -225,6 +225,9 @@ export type PayrollImportResponse = {
   errors: PayrollImportError[];
 };
 
+export type PayrollPostResponse = { posted: number };
+export type PayrollSignOffResponse = { csv_base64: string; json_base64: string };
+
 export interface paths {
   "/auth/csrf": Record<string, never>;
   "/auth/login": Record<string, never>;
@@ -256,6 +259,21 @@ export interface paths {
       parameters: { path: { run_id: string } };
       requestBody: { content: { "text/csv": Blob } };
       responses: { 200: { content: { "application/json": PayrollImportResponse } } };
+    };
+  };
+  "/payroll/runs/{run_id}/post": {
+    post: {
+      parameters: { path: { run_id: string } };
+      responses: { 200: { content: { "application/json": PayrollPostResponse } } };
+    };
+  };
+  "/payroll/runs/{run_id}/sign-off": {
+    post: {
+      parameters: { path: { run_id: string } };
+      requestBody: {
+        content: { "application/json": { bank_receipt_total_kobo: number } };
+      };
+      responses: { 200: { content: { "application/json": PayrollSignOffResponse } } };
     };
   };
   "/members": {

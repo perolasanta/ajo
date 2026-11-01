@@ -7,6 +7,8 @@ import {
   payrollReadRoles,
   payrollRunActions,
   payrollStepIndex,
+  nairaInputToKobo,
+  payrollSignOffReady,
   maxPayrollUploadBytes,
   uploadPayrollFile,
   validatePayrollFile,
@@ -120,4 +122,26 @@ test("payroll upload sends a valid CSV and surfaces a server API error", async (
     }),
     /5 MiB/,
   );
+});
+
+test("sign-off amount conversion preserves exact kobo precision", () => {
+  assert.equal(nairaInputToKobo("1"), 100);
+  assert.equal(nairaInputToKobo("1.2"), 120);
+  assert.equal(nairaInputToKobo("100.05"), 10005);
+  assert.equal(nairaInputToKobo("1.234"), null);
+  assert.equal(nairaInputToKobo("-1"), null);
+});
+
+test("sign-off confirmation requires a matching receipt total and resolved exceptions", () => {
+  assert.equal(payrollSignOffReady(10000, 10000, []), true);
+  assert.equal(payrollSignOffReady(10000, 9999, []), false);
+  assert.equal(
+    payrollSignOffReady(10000, 10000, [{ classification: "short", resolution_note: null }]),
+    false,
+  );
+  assert.equal(
+    payrollSignOffReady(10000, 10000, [{ classification: "short", resolution_note: "reviewed" }]),
+    true,
+  );
+  assert.equal(payrollSignOffReady(null, 0, []), false);
 });
