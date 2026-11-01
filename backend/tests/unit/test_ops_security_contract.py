@@ -28,10 +28,14 @@ def test_restore_acl_script_has_idempotent_acl_repair_steps():
 
     assert "REVOKE ALL PRIVILEGES ON ALL TABLES" in script
 <<<<<<< HEAD
+<<<<<<< HEAD
     assert "GRANT SELECT ON ALL TABLES IN SCHEMA public TO ajo_app" in script
 =======
     assert "GRANT SELECT ON ALL TABLES" in script
 >>>>>>> origin/main
+=======
+    assert "GRANT SELECT ON ALL TABLES IN SCHEMA public TO ajo_app" in script
+>>>>>>> refs/remotes/origin/feat/payroll-ui
     assert "GRANT INSERT ON TABLE public.%I TO ajo_app" in script
     assert "GRANT UPDATE ON TABLE" in script
     assert "GRANT USAGE, SELECT ON ALL SEQUENCES" in script
