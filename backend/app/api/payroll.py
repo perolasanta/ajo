@@ -141,6 +141,7 @@ class PayrollRunDetailResponse(_PayrollResponse):
     counts: PayrollRunCountsResponse
     component_totals_kobo: PayrollComponentTotalsResponse
     created_by: str
+    imported_by: str | None
     posted_by: str | None
     created_at: datetime
     imported_at: datetime | None

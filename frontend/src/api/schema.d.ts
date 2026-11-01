@@ -193,6 +193,7 @@ export type PayrollRunDetail = {
   counts: PayrollRunCounts;
   component_totals_kobo: { loan: number; savings: number; dues: number };
   created_by: string;
+  imported_by: string | null;
   posted_by: string | null;
   created_at: string;
   imported_at: string | null;

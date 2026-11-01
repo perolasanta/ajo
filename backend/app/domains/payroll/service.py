@@ -242,8 +242,8 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
                 await session.execute(
                     text(
                         """SELECT id,period_year,period_month,status,expected_total_kobo,
-                          file_total_kobo,bank_receipt_total_kobo,created_by,posted_by,
-                          created_at,imported_at,posted_at,signed_off_at
+                          file_total_kobo,bank_receipt_total_kobo,created_by,imported_by,
+                          posted_by,created_at,imported_at,posted_at,signed_off_at
                           FROM payroll_runs WHERE cooperative_id=:cid AND id=:id"""
                     ),
                     {"cid": cid, "id": run_id},
@@ -333,6 +333,7 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
             "dues": int(totals["dues_kobo"]),
         },
         "created_by": str(run["created_by"]),
+        "imported_by": str(run["imported_by"]) if run["imported_by"] is not None else None,
         "posted_by": str(run["posted_by"]) if run["posted_by"] is not None else None,
         "created_at": run["created_at"],
         "imported_at": run["imported_at"],
