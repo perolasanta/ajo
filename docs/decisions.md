@@ -23,6 +23,8 @@ Enforce these permissions server-side; hiding fields or navigation in the user i
 | Payroll operation | Allowed role(s) |
 |---|---|
 | `POST /payroll/runs` | Officer and treasurer |
+| `GET /payroll/runs` | Officer, treasurer, and admin; read-only, limited to run totals, counts, actor IDs, and timestamps |
+| `GET /payroll/runs/{run_id}` | Officer, treasurer, and admin; read-only, limited to persisted run totals, counts, actor IDs, timestamps, and persisted exception fields |
 | `GET /payroll/runs/{run_id}/expected.csv` | Officer and treasurer |
 | `POST /payroll/runs/{run_id}/dry-run` | Officer and treasurer |
 | `POST /payroll/runs/{run_id}/import` | Officer and treasurer |
@@ -31,6 +33,10 @@ Enforce these permissions server-side; hiding fields or navigation in the user i
 | `POST /payroll/runs/{run_id}/sign-off` | Admin only; the signer must differ from the poster, or the importer for a run posted before poster tracking |
 
 Committee and auditor roles have no payroll access. **TODO:** read-only sign-off report for auditors.
+
+Dry-run results are not persisted. They remain in the current page session only; users must re-run the dry-run after a reload. This avoids retaining raw uploaded rows that were never imported. Run detail reads persisted `payroll_items` exceptions only and does not include original row numbers, which are not stored.
+
+Payroll uploads must be CSV (`.csv`, `text/csv`) and are limited to 5 MiB (5 × 1024 × 1024 bytes) and 50,000 data rows. The server enforces the byte limit while streaming the request, independent of `Content-Length`; oversized requests return 413, non-CSV media types return 415, and files exceeding the row limit return 422.
 
 `payroll_items.resolution_note` currently has no application write path. Any future writer must validate its length and keep personal and bank data out. Exported resolution notes are capped at 500 characters.
 

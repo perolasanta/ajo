@@ -38,6 +38,21 @@ class TooManyRequests(AppError):
     code = "rate_limited"
 
 
+class PayloadTooLarge(AppError):
+    status_code = 413
+    code = "payload_too_large"
+
+
+class UnsupportedMediaType(AppError):
+    status_code = 415
+    code = "unsupported_media_type"
+
+
+class UnprocessableEntity(AppError):
+    status_code = 422
+    code = "unprocessable_entity"
+
+
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _handle(_: Request, exc: AppError) -> JSONResponse:

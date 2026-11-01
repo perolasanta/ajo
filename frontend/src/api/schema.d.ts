@@ -142,6 +142,92 @@ export type ReadyDisbursementLoanPage = {
 };
 export type DisbursementActionBody = { reason: string };
 
+export type PayrollRunCounts = {
+  matched: number;
+  short: number;
+  over: number;
+  missing: number;
+  unknown_member: number;
+  duplicate: number;
+};
+
+export type PayrollRunSummary = {
+  run_id: string;
+  period_year: number;
+  period_month: number;
+  status: string;
+  expected_total_kobo: number;
+  file_total_kobo: number | null;
+  counts: PayrollRunCounts;
+  created_by: string;
+  posted_by: string | null;
+  created_at: string;
+  imported_at: string | null;
+  posted_at: string | null;
+  signed_off_at: string | null;
+};
+
+export type PayrollRunPage = {
+  items: PayrollRunSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
+export type PayrollRunException = {
+  staff_no_raw: string;
+  classification: string;
+  actual_kobo: number | null;
+  resolution_note: string | null;
+};
+
+export type PayrollRunDetail = {
+  run_id: string;
+  period_year: number;
+  period_month: number;
+  status: string;
+  expected_total_kobo: number;
+  file_total_kobo: number | null;
+  bank_receipt_total_kobo: number | null;
+  variance_kobo: number | null;
+  counts: PayrollRunCounts;
+  component_totals_kobo: { loan: number; savings: number; dues: number };
+  created_by: string;
+  imported_by: string | null;
+  posted_by: string | null;
+  created_at: string;
+  imported_at: string | null;
+  posted_at: string | null;
+  signed_off_at: string | null;
+  exceptions: PayrollRunException[];
+};
+
+export type PayrollDryRunRow = {
+  row: number;
+  staff_no_raw: string;
+  member_id: string | null;
+  actual_kobo: number;
+  classification: string;
+};
+
+export type PayrollImportError = { row: number; error: string };
+
+export type PayrollDryRunResponse = {
+  file_sha256: string;
+  file_total_kobo: number;
+  rows: PayrollDryRunRow[];
+  errors: PayrollImportError[];
+};
+
+export type PayrollImportResponse = {
+  file_sha256: string;
+  file_total_kobo: number;
+  errors: PayrollImportError[];
+};
+
+export type PayrollPostResponse = { posted: number };
+export type PayrollSignOffResponse = { csv_base64: string; json_base64: string };
+
 export interface paths {
   "/auth/csrf": Record<string, never>;
   "/auth/login": Record<string, never>;
@@ -149,6 +235,47 @@ export interface paths {
   "/auth/mfa/verify": Record<string, never>;
   "/auth/me": Record<string, never>;
   "/auth/logout": Record<string, never>;
+  "/payroll/runs": {
+    get: {
+      parameters?: { query?: { page?: number; page_size?: number } };
+      responses: { 200: { content: { "application/json": PayrollRunPage } } };
+    };
+  };
+  "/payroll/runs/{run_id}": {
+    get: {
+      parameters: { path: { run_id: string } };
+      responses: { 200: { content: { "application/json": PayrollRunDetail } } };
+    };
+  };
+  "/payroll/runs/{run_id}/dry-run": {
+    post: {
+      parameters: { path: { run_id: string } };
+      requestBody: { content: { "text/csv": Blob } };
+      responses: { 200: { content: { "application/json": PayrollDryRunResponse } } };
+    };
+  };
+  "/payroll/runs/{run_id}/import": {
+    post: {
+      parameters: { path: { run_id: string } };
+      requestBody: { content: { "text/csv": Blob } };
+      responses: { 200: { content: { "application/json": PayrollImportResponse } } };
+    };
+  };
+  "/payroll/runs/{run_id}/post": {
+    post: {
+      parameters: { path: { run_id: string } };
+      responses: { 200: { content: { "application/json": PayrollPostResponse } } };
+    };
+  };
+  "/payroll/runs/{run_id}/sign-off": {
+    post: {
+      parameters: { path: { run_id: string } };
+      requestBody: {
+        content: { "application/json": { bank_receipt_total_kobo: number } };
+      };
+      responses: { 200: { content: { "application/json": PayrollSignOffResponse } } };
+    };
+  };
   "/members": {
     get: {
       parameters?: { query?: { search?: string } };
@@ -182,7 +309,9 @@ export interface paths {
   "/loan-applications/{application_id}/decision": { post: Record<string, never> };
   "/disbursements": {
     get: {
-      parameters?: { query?: { status?: string; search?: string; page?: number; page_size?: number } };
+      parameters?: {
+        query?: { status?: string; search?: string; page?: number; page_size?: number };
+      };
       responses: { 200: { content: { "application/json": DisbursementPage } } };
     };
   };
@@ -206,7 +335,9 @@ export interface paths {
   };
   "/disbursements/{disbursement_id}/transfer": {
     post: {
-      requestBody: { content: { "application/json": { reference: string; transfer_date: string } } };
+      requestBody: {
+        content: { "application/json": { reference: string; transfer_date: string } };
+      };
       responses: { 200: { content: { "application/json": { recorded: boolean } } } };
     };
   };

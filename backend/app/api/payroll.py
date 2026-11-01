@@ -2,12 +2,14 @@
 
 import base64
 import uuid
+from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.api.auth import current_session, require_csrf
+from app.core.errors import PayloadTooLarge, UnprocessableEntity, UnsupportedMediaType
 from app.domains.auth.service import CurrentSession
 from app.domains.payroll import service
 
@@ -30,6 +32,7 @@ class RunBody(BaseModel):
 class FileBody(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_base64: str = Field(min_length=1)
+    file_content_type: str | None = Field(default=None, max_length=100)
 
 
 class SignOffBody(BaseModel):
@@ -83,11 +86,134 @@ class SignOffResponse(_PayrollResponse):
     json_base64: str
 
 
+class PayrollRunCountsResponse(_PayrollResponse):
+    matched: int
+    short: int
+    over: int
+    missing: int
+    unknown_member: int
+    duplicate: int
+
+
+class PayrollRunSummaryResponse(_PayrollResponse):
+    run_id: str
+    period_year: int
+    period_month: int
+    status: str
+    expected_total_kobo: int
+    file_total_kobo: int | None
+    counts: PayrollRunCountsResponse
+    created_by: str
+    posted_by: str | None
+    created_at: datetime
+    imported_at: datetime | None
+    posted_at: datetime | None
+    signed_off_at: datetime | None
+
+
+class PayrollRunListResponse(_PayrollResponse):
+    items: list[PayrollRunSummaryResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class PayrollRunExceptionResponse(_PayrollResponse):
+    staff_no_raw: str
+    classification: str
+    actual_kobo: int | None
+    resolution_note: str | None
+
+
+class PayrollComponentTotalsResponse(_PayrollResponse):
+    loan: int
+    savings: int
+    dues: int
+
+
+class PayrollRunDetailResponse(_PayrollResponse):
+    run_id: str
+    period_year: int
+    period_month: int
+    status: str
+    expected_total_kobo: int
+    file_total_kobo: int | None
+    bank_receipt_total_kobo: int | None
+    variance_kobo: int | None
+    counts: PayrollRunCountsResponse
+    component_totals_kobo: PayrollComponentTotalsResponse
+    created_by: str
+    imported_by: str | None
+    posted_by: str | None
+    created_at: datetime
+    imported_at: datetime | None
+    posted_at: datetime | None
+    signed_off_at: datetime | None
+    exceptions: list[PayrollRunExceptionResponse]
+
+
 def _content(value: str) -> bytes:
     try:
         return base64.b64decode(value, validate=True)
     except ValueError as exc:
         raise ValueError("Invalid file encoding") from exc
+
+
+def _is_csv_filename(filename: str) -> bool:
+    return filename.lower().endswith(".csv")
+
+
+async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > max_bytes:
+                raise PayloadTooLarge("Payroll upload exceeds the 5 MiB limit.")
+        except ValueError:
+            pass
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > max_bytes:
+            raise PayloadTooLarge("Payroll upload exceeds the 5 MiB limit.")
+        body.extend(chunk)
+    return bytes(body)
+
+
+async def _read_payroll_upload(request: Request) -> tuple[bytes, str]:
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media_type == "text/csv":
+        filename = request.query_params.get("filename", "payroll.csv")
+        if not _is_csv_filename(filename):
+            raise UnsupportedMediaType(
+                "Only .csv payroll files with Content-Type text/csv are supported."
+            )
+        return await _read_limited_body(request, service.MAX_PAYROLL_UPLOAD_BYTES), filename
+
+    # Keep existing JSON/base64 callers compatible, while bounding the encoded request too.
+    if media_type == "application/json":
+        max_encoded = 4 * ((service.MAX_PAYROLL_UPLOAD_BYTES + 2) // 3) + 1024
+        encoded_body = await _read_limited_body(request, max_encoded)
+        try:
+            body = FileBody.model_validate_json(encoded_body)
+        except ValidationError as exc:
+            raise UnprocessableEntity(
+                "Payroll upload must include a filename and file data."
+            ) from exc
+        if not _is_csv_filename(body.filename) or (
+            body.file_content_type is not None
+            and body.file_content_type.split(";", 1)[0].strip().lower() != "text/csv"
+        ):
+            raise UnsupportedMediaType("Only CSV payroll files with a text/csv type are supported.")
+        try:
+            content = _content(body.content_base64)
+        except ValueError as exc:
+            raise UnprocessableEntity("Payroll upload contains invalid base64 data.") from exc
+        if len(content) > service.MAX_PAYROLL_UPLOAD_BYTES:
+            raise PayloadTooLarge("Payroll upload exceeds the 5 MiB limit.")
+        return content, body.filename
+
+    raise UnsupportedMediaType("Payroll uploads must use Content-Type text/csv.")
 
 
 @router.post("/payroll/profiles", response_model=ProfileResponse)
@@ -106,6 +232,22 @@ async def create_run(
     return {"run_id": str(run_id)}
 
 
+@router.get("/payroll/runs", response_model=PayrollRunListResponse)
+async def list_runs(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+) -> dict[str, object]:
+    return await service.list_runs(current, page, page_size)
+
+
+@router.get("/payroll/runs/{run_id}", response_model=PayrollRunDetailResponse)
+async def get_run(
+    run_id: uuid.UUID, current: Annotated[CurrentSession, Depends(current_session)]
+) -> dict[str, object]:
+    return await service.get_run(current, run_id)
+
+
 @router.get("/payroll/runs/{run_id}/expected.csv", response_class=Response, response_model=None)
 async def export_expected(
     run_id: uuid.UUID, current: Annotated[CurrentSession, Depends(current_session)]
@@ -119,9 +261,12 @@ async def export_expected(
 
 @router.post("/payroll/runs/{run_id}/dry-run", response_model=DryRunResponse)
 async def dry_run(
-    run_id: uuid.UUID, body: FileBody, current: Annotated[CurrentSession, Depends(current_session)]
+    run_id: uuid.UUID,
+    request: Request,
+    current: Annotated[CurrentSession, Depends(current_session)],
 ) -> dict[str, object]:
-    report = await service.dry_run(current, run_id, _content(body.content_base64), body.filename)
+    content, filename = await _read_payroll_upload(request)
+    report = await service.dry_run(current, run_id, content, filename)
     return {
         "file_sha256": report.file_sha256,
         "file_total_kobo": report.file_total_kobo,
@@ -132,11 +277,12 @@ async def dry_run(
 
 @router.post("/payroll/runs/{run_id}/import", response_model=ImportResponse)
 async def import_file(
-    run_id: uuid.UUID, body: FileBody, current: Annotated[CurrentSession, Depends(current_session)]
+    run_id: uuid.UUID,
+    request: Request,
+    current: Annotated[CurrentSession, Depends(current_session)],
 ) -> dict[str, object]:
-    report = await service.import_file(
-        current, run_id, _content(body.content_base64), body.filename
-    )
+    content, filename = await _read_payroll_upload(request)
+    report = await service.import_file(current, run_id, content, filename)
     return {
         "file_sha256": report.file_sha256,
         "file_total_kobo": report.file_total_kobo,
