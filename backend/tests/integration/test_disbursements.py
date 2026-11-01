@@ -120,14 +120,27 @@ async def prepared_disbursement(
 
 async def authorized_transfer(
     db: asyncpg.Connection, base: LoanBase
-) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
     identifier, loan_id, preparer = await prepared_disbursement(db, base)
     cid, authorizer = base.cooperative_id, base.user_ids[2]
-    await authorize(staff(cid, authorizer, "committee"), identifier, "127.0.0.1")
+    await authorize(staff(cid, authorizer, "admin", "committee"), identifier, "127.0.0.1")
     await record_transfer(
         staff(cid, preparer, "treasurer"), identifier, "BANK-REF-1", date.today(), "127.0.0.1"
     )
-    return identifier, loan_id, authorizer
+    confirmer = uuid.uuid4()
+    await db.execute("SELECT set_config('app.cooperative_id',$1,false)", str(cid))
+    await db.execute(
+        "INSERT INTO users(id,cooperative_id,email,password_hash) VALUES($1,$2,$3,'unused')",
+        confirmer,
+        cid,
+        f"independent-admin-{confirmer.hex}@example.test",
+    )
+    await db.execute(
+        "INSERT INTO user_roles(cooperative_id,user_id,role) VALUES($1,$2,'admin')",
+        cid,
+        confirmer,
+    )
+    return identifier, loan_id, authorizer, confirmer
 
 
 async def test_same_user_cannot_prepare_and_authorize(
@@ -144,7 +157,7 @@ async def test_loan_approver_cannot_authorize(db: asyncpg.Connection, loan_base:
     identifier, _, _ = await prepared_disbursement(db, loan_base)
     with pytest.raises(Conflict, match="independent"):
         await authorize(
-            staff(loan_base.cooperative_id, loan_base.user_ids[1], "committee"), identifier, None
+            staff(loan_base.cooperative_id, loan_base.user_ids[1], "admin"), identifier, None
         )
 
 
@@ -204,12 +217,12 @@ async def test_destination_change_blocks_and_raises_alert(
 
 
 async def test_double_confirm_paid_posts_once(db: asyncpg.Connection, loan_base: LoanBase) -> None:
-    identifier, loan_id, authorizer = await authorized_transfer(db, loan_base)
+    identifier, loan_id, _authorizer, confirmer = await authorized_transfer(db, loan_base)
     cid = loan_base.cooperative_id
-    first = await confirm_paid(staff(cid, authorizer, "committee"), identifier, None)
+    first = await confirm_paid(staff(cid, confirmer, "admin"), identifier, None)
     assert first is not None
     with pytest.raises(Conflict):
-        await confirm_paid(staff(cid, authorizer, "committee"), identifier, None)
+        await confirm_paid(staff(cid, confirmer, "admin"), identifier, None)
     assert (
         await db.fetchval(
             "SELECT count(*) FROM journal_entries WHERE cooperative_id=$1 AND source_id=$2",
@@ -220,12 +233,22 @@ async def test_double_confirm_paid_posts_once(db: asyncpg.Connection, loan_base:
     )
 
 
+async def test_authorizer_cannot_confirm_paid_even_with_multiple_roles(
+    db: asyncpg.Connection, loan_base: LoanBase
+) -> None:
+    identifier, _loan_id, authorizer, _confirmer = await authorized_transfer(db, loan_base)
+    with pytest.raises(Conflict, match="different admin"):
+        await confirm_paid(
+            staff(loan_base.cooperative_id, authorizer, "admin", "committee"), identifier, None
+        )
+
+
 async def test_posted_entry_balances_with_expected_accounts_and_fee(
     db: asyncpg.Connection, loan_base: LoanBase
 ) -> None:
-    identifier, loan_id, authorizer = await authorized_transfer(db, loan_base)
+    identifier, loan_id, _authorizer, confirmer = await authorized_transfer(db, loan_base)
     cid = loan_base.cooperative_id
-    entry = await confirm_paid(staff(cid, authorizer, "committee"), identifier, None)
+    entry = await confirm_paid(staff(cid, confirmer, "admin"), identifier, None)
     assert entry is not None
     totals = await db.fetchrow(
         """SELECT sum(j.debit_kobo) AS debits,sum(j.credit_kobo) AS credits,
@@ -252,11 +275,11 @@ async def test_posted_entry_balances_with_expected_accounts_and_fee(
 async def test_concurrent_confirmations_cannot_both_succeed(
     db: asyncpg.Connection, loan_base: LoanBase
 ) -> None:
-    identifier, loan_id, authorizer = await authorized_transfer(db, loan_base)
+    identifier, loan_id, _authorizer, confirmer = await authorized_transfer(db, loan_base)
     cid = loan_base.cooperative_id
     results = await asyncio.gather(
-        confirm_paid(staff(cid, authorizer, "committee"), identifier, None),
-        confirm_paid(staff(cid, authorizer, "committee"), identifier, None),
+        confirm_paid(staff(cid, confirmer, "admin"), identifier, None),
+        confirm_paid(staff(cid, confirmer, "admin"), identifier, None),
         return_exceptions=True,
     )
     assert sum(not isinstance(result, BaseException) for result in results) == 1, results
@@ -279,14 +302,15 @@ async def test_concurrent_confirmations_cannot_both_succeed(
     )
 
 
+@pytest.mark.parametrize("failure_role", ["treasurer", "admin"])
 async def test_failed_transfer_posts_nothing_and_restores_ready_state(
-    db: asyncpg.Connection, loan_base: LoanBase
+    db: asyncpg.Connection, loan_base: LoanBase, failure_role: str
 ) -> None:
     identifier, loan_id, preparer = await prepared_disbursement(db, loan_base)
     cid = loan_base.cooperative_id
-    await authorize(staff(cid, loan_base.user_ids[2], "committee"), identifier, None)
+    await authorize(staff(cid, loan_base.user_ids[2], "admin"), identifier, None)
     await fail_transfer(
-        staff(cid, preparer, "treasurer"), identifier, "Bank rejected transfer", None
+        staff(cid, preparer, failure_role), identifier, "Bank rejected transfer", None
     )
     assert (
         await db.fetchval(

@@ -105,3 +105,19 @@ Bank-account ids are returned by admin/officer/treasurer member detail responses
 | **officer, committee, members, all other roles** | HTTP 403. |
 
 Read projections include disbursement, loan and application ids; member number and name; amount in kobo; status; preparer, authorizer and paid confirmer user ids; transfer reference/date; failure and reversal reasons; and available workflow timestamps (`created_at`, `authorized_at`, `transfer_recorded_at`, `paid_at`, `failed_at`, `reversed_at`). Failure reason is read from the tenant-scoped audit record because it is not a disbursement-table column. No phone, email, salary, staff number, full bank-account number, token or hash is returned. These reads do not initiate or represent a bank transfer; money is transferred manually outside the application.
+
+## 1e. Disbursement write access
+
+Enforce this matrix in the disbursement service layer; API/UI visibility is not authorization. Every operation remains tenant-scoped and uses the existing transaction and row-lock behavior. Roles not listed as allowed receive HTTP 403.
+
+| Disbursement write action | Allowed roles |
+|---|---|
+| Prepare disbursement | **treasurer** only |
+| Authorize disbursement | **admin** only |
+| Record manual bank transfer | **treasurer** only |
+| Confirm paid and post ledger entry | **admin** only |
+| Mark transfer failed | **treasurer**, **admin** |
+| Reverse paid disbursement | **admin** only |
+| Committee, officer, auditor, member, and all other roles | HTTP 403 on every disbursement write |
+
+Enforce separation of duties against persisted actor ids while holding the existing disbursement row lock: the preparer (`prepared_by`) cannot authorize; the authorizer (`authorized_by`) cannot confirm paid. Existing checks also keep the authorizer and paid confirmer independent of the application submitter and loan approvers. A user holding multiple roles does not bypass actor-id separation. These write operations record a manually performed transfer; Ajo itself does not move money.
