@@ -210,7 +210,7 @@ async def prepare(current: CurrentSession, loan_id: uuid.UUID, ip: str | None) -
 
 
 async def authorize(current: CurrentSession, disbursement_id: uuid.UUID, ip: str | None) -> bool:
-    _role(current, {"admin", "committee"})
+    _role(current, {"admin"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         row = (
@@ -331,7 +331,7 @@ async def record_transfer(
 async def confirm_paid(
     current: CurrentSession, disbursement_id: uuid.UUID, ip: str | None
 ) -> uuid.UUID | None:
-    _role(current, {"admin", "committee"})
+    _role(current, {"admin"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         row = (
@@ -352,8 +352,8 @@ async def confirm_paid(
         loan = await _load(session, cid, row["loan_id"])
         if not await _validate(session, cid, loan):
             return None
-        if row["status"] != "transfer_recorded" or current.user_id != row["authorized_by"]:
-            raise Conflict("Only the authorizer can confirm a recorded transfer")
+        if row["status"] != "transfer_recorded" or current.user_id == row["authorized_by"]:
+            raise Conflict("A different admin must confirm a recorded transfer")
         approvers = (
             (
                 await session.execute(
@@ -466,7 +466,7 @@ async def reverse_paid(
     current: CurrentSession, disbursement_id: uuid.UUID, reason: str, ip: str | None
 ) -> uuid.UUID:
     """Record a separately approved, append-only reversal of a paid disbursement."""
-    _role(current, {"admin", "committee"})
+    _role(current, {"admin"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         row = (
@@ -568,7 +568,7 @@ async def reverse_paid(
 async def fail_transfer(
     current: CurrentSession, disbursement_id: uuid.UUID, reason: str, ip: str | None
 ) -> None:
-    _role(current, {"treasurer"})
+    _role(current, {"treasurer", "admin"})
     cid = current.cooperative_id
     async with transaction(cid) as session:
         row = (
