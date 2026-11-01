@@ -3,6 +3,9 @@ import type {
   LoanApplicationDetail,
   LoanApplicationPage,
   LoanProduct,
+  DisbursementPage,
+  DisbursementRecord,
+  ReadyDisbursementLoanPage,
   MemberDetail,
   MemberListItem,
   paths,
@@ -152,4 +155,29 @@ export function decideLoanApplication(
       body: JSON.stringify(body),
     },
   );
+}
+
+export async function getDisbursements(
+  params: { status?: string; search?: string; page?: number; pageSize?: number } = {},
+): Promise<DisbursementPage> {
+  const query = new URLSearchParams();
+  if (params.status && params.status !== "all") query.set("status", params.status);
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 10));
+  return request<DisbursementPage>(`/disbursements?${query.toString()}`);
+}
+
+export function getDisbursement(disbursementId: string): Promise<DisbursementRecord> {
+  return request<DisbursementRecord>(`/disbursements/${disbursementId}`);
+}
+
+export async function getReadyDisbursementLoans(
+  params: { search?: string; page?: number; pageSize?: number } = {},
+): Promise<ReadyDisbursementLoanPage> {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 10));
+  return request<ReadyDisbursementLoanPage>(`/disbursements/ready-loans?${query.toString()}`);
 }

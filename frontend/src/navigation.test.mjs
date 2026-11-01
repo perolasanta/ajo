@@ -27,6 +27,20 @@ const loanCases = [
   ["member", false],
 ];
 
+for (const [role, expected] of [
+  ["admin", true],
+  ["treasurer", true],
+  ["auditor", true],
+  ["officer", false],
+  ["committee", false],
+  ["member", false],
+]) {
+  test(`${role} ${expected ? "sees" : "does not see"} Disbursements navigation`, () => {
+    const names = visibleNavigation([role]).map((item) => item.name);
+    assert.equal(names.includes("Disbursements"), expected);
+  });
+}
+
 for (const [role, expected] of loanCases) {
   test(`${role} ${expected ? "sees" : "does not see"} Loans navigation`, () => {
     const names = visibleNavigation([role]).map((item) => item.name);
