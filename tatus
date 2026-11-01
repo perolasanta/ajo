@@ -1,0 +1,86 @@
+[33mc237a2a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeat/payroll-ui[m[33m)[m merge ops_security
+[33mc9da42a[m Merge pull request #18 from perolasanta/fix/test-helpers-and-seed
+[33m2510459[m[33m ([m[1;31morigin/fix/test-helpers-and-seed[m[33m, [m[1;32mfix/test-helpers-and-seed[m[33m)[m fix: align test helpers and seed maker-checker flow
+[33mca4bc4e[m test: align ACL contract with least privilege
+[33m01ec057[m fix(payroll): enforce CSV-only uploads
+[33m6a36654[m Merge pull request #16 from perolasanta/feat/payroll-ui
+[33m71102be[m feat(payroll): add post and sign-off confirmations
+[33m3f0f6c2[m feat(payroll): add CSV upload and dry-run UI
+[33mee26592[m feat(payroll): add run detail and action stepper
+[33m9d90a49[m feat(payroll): add role-gated run list screen
+[33m55702a7[m docs(payroll): record read matrix and ephemeral dry runs
+[33m5c03402[m feat(payroll): add scoped run detail read API
+[33m053a918[m feat(payroll): add scoped run list read API
+[33m7f10c6d[m Merge pull request #15 from perolasanta/fix/disbursement-write-gates
+[33m3a4481c[m[33m ([m[1;31morigin/fix/disbursement-write-gates[m[33m)[m fix: enforce disbursement write role gates
+[33m17f303d[m Merge pull request #14 from perolasanta/feat/disbursements-ui
+[33m8e66f9e[m[33m ([m[1;31morigin/feat/disbursements-ui[m[33m)[m fix: enforce strict disbursement response schemas
+[33ma099174[m test: enforce disbursement navigation and list states
+[33ma8ac374[m feat: add gated disbursement workflow actions
+[33m7c3d9c8[m feat: add disbursement detail timeline
+[33md0e94b6[m feat: add disbursement list screen
+[33mf412fc5[m docs: define disbursement read access contract
+[33m27b3872[m feat: expose loans ready for disbursement
+[33m772a889[m feat: add role-scoped disbursement detail read
+[33m6001f31[m feat: add role-scoped disbursement list reads
+[33m10db1c9[m Merge pull request #13 from perolasanta/feat/frontend-loans
+[33me47a115[m[33m ([m[1;31morigin/feat/frontend-loans[m[33m)[m test: cover loan role visibility rules
+[33madd8936[m feat: add loans frontend screens
+[33m463db5d[m Merge pull request #12 from perolasanta/feat/loan-read-endpoints
+[33mc0f2460[m[33m ([m[1;31morigin/feat/loan-read-endpoints[m[33m)[m docs: record loan read access matrix
+[33m20b276b[m feat: expose masked bank account ids for loan forms
+[33m9e4da6b[m feat: add tenant-scoped loan read endpoints
+[33mff56eb3[m[33m ([m[1;32mmain[m[33m)[m Merge pull request #11 from perolasanta/test/batch-5-neon-validation
+[33m30efd99[m[33m ([m[1;31morigin/test/batch-5-neon-validation[m[33m)[m test(neon): validate schema, RLS, grants, and restore
+[33m106905e[m Merge pull request #10 from perolasanta/feat/sidebar-auth-performance-local-dev
+[33mec90770[m[33m ([m[1;31morigin/feat/sidebar-auth-performance-local-dev[m[33m)[m feat: align role navigation and optimize auth reads
+[33md79daab[m Merge pull request #9 from perolasanta/fix/seed-demo-heartbeat
+[33mca8d529[m[33m ([m[1;31morigin/fix/seed-demo-heartbeat[m[33m)[m fix(seed-demo): emit heartbeat during slow runs
+[33m1b145d6[m fix/seed demo current services
+[33m45dc38c[m fix joined_at parameter to datetime
+[33mca4fcf0[m Merge branch 'main' of https://github.com/perolasanta/ajo
+[33me212819[m Merge pull request #8 from perolasanta/fix/batch-4c-role-changes
+[33m4e48f3a[m[33m ([m[1;31morigin/fix/batch-4c-role-changes[m[33m)[m feat(auth): add maker-checker role changes
+[33md221ca8[m Merge branch 'main' of https://github.com/perolasanta/ajo
+[33mf5d31a9[m Merge pull request #7 from perolasanta/fix/batch-4b2-consent-outbox
+[33m01e265b[m[33m ([m[1;31morigin/fix/batch-4b2-consent-outbox[m[33m)[m feat: deliver consent OTPs via outbox
+[33mfc506e1[m Merge pull request #6 from perolasanta/fix/batch-4b1-consent-limits
+[33m5aa2e9b[m[33m ([m[1;31morigin/fix/batch-4b1-consent-limits[m[33m)[m fix: protect consent confirmation tokens
+[33m78a9ab6[m fix: enforce consent OTP limits and reissue
+[33mb1fc19a[m fix: require borrower and beneficiary confirmations
+[33m9410f8c[m Merge pull request #5 from perolasanta/fix/batch-4a-access-control
+[33m07c441a[m[33m ([m[1;31morigin/fix/batch-4a-access-control[m[33m)[m fix: enforce batch 4a access controls
+[33m23b2ee3[m Merge pull request #4 from perolasanta/fix/batch-3-money-correctness
+[33md76e1d8[m[33m ([m[1;31morigin/fix/batch-3-money-correctness[m[33m)[m fix: snapshot savings backing at loan approval
+[33m5c616c1[m fix: enforce cooperative savings backing at disbursement
+[33m7cb0208[m fix: guard validated loan product terms
+[33m709b8df[m fix: type optional member search parameter
+[33m41e6c03[m fix: restore required column update grants
+[33m1a4c367[m fix: bind idempotency keys to request payloads
+[33m613d767[m fix: enforce one open loan application per member
+[33m3859e61[m fix: revalidate loan terms against products
+[33m328164f[m fix: require posted payroll before signoff
+[33m3b861ac[m fix: reconcile payroll component postings atomically
+[33m8016d06[m fix: exclude paused loans from payroll
+[33m4696cb1[m fix: serialize member savings mutations
+[33md1456a7[m Merge pull request #3 from perolasanta/fix/batch-2-credential-isolation
+[33ma04bd92[m[33m ([m[1;31morigin/fix/batch-2-credential-isolation[m[33m)[m Merge branch 'main' into fix/batch-2-credential-isolation
+[33m288efee[m Isolate production database credentials
+[33ma074a6e[m Merge pull request #2 from perolasanta/fix/batch-1-quick-fixes
+[33mb0293a7[m Merge pull request #1 from perolasanta/chore/decisions
+[33m73e214a[m[33m ([m[1;31morigin/fix/batch-1-quick-fixes[m[33m)[m fix: address batch 1 audit findings
+[33m85adc7a[m[33m ([m[1;31morigin/chore/decisions[m[33m)[m docs: record approved product decisions
+[33m42d38f1[m[33m ([m[1;31morigin/manus-work[m[33m, [m[1;32mmanus-work[m[33m)[m ongoing seed demo
+[33m39329d0[m Seed demo refix
+[33m8577fcd[m seed demo retry
+[33m0e2b253[m apply the new design and make everything mobile-friendly (frontend)
+[33m63e712e[m demo data command (backend)
+[33m23c55e1[m Frontend corrections, Prettier, Members list and Member 360
+[33m176781f[m officer portal, screen 1 (login, shell, members)
+[33m6c91df4[m payroll reconciliation
+[33m39f21b2[m repayment posting and allocation
+[33m32cd482[m disbursement with an independent authorizer
+[33m4ba4627[m member confirmation and disputes
+[33m8879417[m eligibility engine, schedules, application to approval
+[33m24c0376[m tests: fast local DB suite; members module
+[33mae6e61b[m First Commit

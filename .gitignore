@@ -22,3 +22,5 @@ frontend/dist/
 *.dump
 *.sql.gz
 .hypothesis/
+.env validate
+create_roles.sql
