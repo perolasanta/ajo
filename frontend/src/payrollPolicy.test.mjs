@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canViewPayroll,
+  canCreatePayrollRun,
   payrollListState,
   payrollReadRoles,
   payrollRunActions,
   payrollStepIndex,
+  maxPayrollUploadBytes,
+  uploadPayrollFile,
+  validatePayrollFile,
 } from "./payrollPolicy.mjs";
 
 for (const role of ["officer", "treasurer", "admin"]) {
@@ -22,6 +26,13 @@ for (const role of ["committee", "auditor", "member"]) {
 
 test("payroll list access is limited to the decision 1b read roles", () => {
   assert.deepEqual(payrollReadRoles, ["officer", "treasurer", "admin"]);
+});
+
+test("only officers and treasurers can create payroll runs", () => {
+  assert.equal(canCreatePayrollRun(["officer"]), true);
+  assert.equal(canCreatePayrollRun(["treasurer"]), true);
+  assert.equal(canCreatePayrollRun(["admin"]), false);
+  assert.equal(canCreatePayrollRun(["committee"]), false);
 });
 
 test("payroll list exposes loading and error states", () => {
@@ -74,4 +85,39 @@ test("payroll actions respect role, run state, dry-run match, and sign-off separ
   });
   assert.equal(legacyImporter.canSignOff, false);
   assert.equal(legacyImporter.signOffBlockedBySelf, true);
+});
+
+test("payroll file validation accepts just under 5 MiB and rejects just over or non-CSV files", () => {
+  const valid = { name: "payroll.csv", type: "text/csv", size: maxPayrollUploadBytes - 1 };
+  assert.equal(validatePayrollFile(valid), null);
+  assert.equal(
+    validatePayrollFile({ ...valid, size: maxPayrollUploadBytes + 1 }),
+    "Payroll files must be 5 MiB (5 × 1024 × 1024 bytes) or smaller.",
+  );
+  assert.match(validatePayrollFile({ ...valid, name: "payroll.xlsx" }), /\.csv/);
+  assert.match(validatePayrollFile({ ...valid, type: "application/vnd.ms-excel" }), /text\/csv/);
+});
+
+test("payroll upload sends a valid CSV and surfaces a server API error", async () => {
+  const file = { name: "payroll.csv", type: "text/csv", size: 1024 };
+  let sent = false;
+  const result = await uploadPayrollFile(file, async (candidate) => {
+    sent = candidate === file;
+    return { file_sha256: "a".repeat(64) };
+  });
+  assert.equal(sent, true);
+  assert.equal(result.file_sha256, "a".repeat(64));
+
+  await assert.rejects(
+    uploadPayrollFile({ ...file, type: "text/plain" }, async () => {
+      throw new Error("should not send an invalid file");
+    }),
+    /text\/csv/,
+  );
+  await assert.rejects(
+    uploadPayrollFile(file, async () => {
+      throw new Error("Payroll upload exceeds the 5 MiB limit.");
+    }),
+    /5 MiB/,
+  );
 });

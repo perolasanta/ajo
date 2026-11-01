@@ -1,5 +1,6 @@
 export const payrollReadRoles: string[];
 export function canViewPayroll(roles?: string[]): boolean;
+export function canCreatePayrollRun(roles?: string[]): boolean;
 export function payrollListState(query: {
   isPending: boolean;
   isError: boolean;
@@ -26,3 +27,11 @@ export function payrollRunActions(
   signOffBlockedBySelf: boolean;
   signOffBlockedMissingPoster: boolean;
 };
+export const maxPayrollUploadBytes: number;
+export type PayrollFileMetadata = { name: string; type: string; size: number };
+export function validatePayrollFile(file?: PayrollFileMetadata | null): string | null;
+export function uploadPayrollFile<TFile extends PayrollFileMetadata, TResult>(
+  file: TFile,
+  send: (file: TFile) => Promise<TResult>,
+): Promise<TResult>;
+export function payrollFileSha256(file: Blob): Promise<string>;

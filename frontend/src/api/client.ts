@@ -8,6 +8,8 @@ import type {
   ReadyDisbursementLoanPage,
   MemberDetail,
   MemberListItem,
+  PayrollDryRunResponse,
+  PayrollImportResponse,
   PayrollRunDetail,
   PayrollRunPage,
   paths,
@@ -73,9 +75,9 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
       response.status,
       response.status === 403
         ? "You do not have permission to view this information."
-        : (errorBody?.error ??
+        : (errorBody?.message ??
             errorBody?.detail ??
-            errorBody?.message ??
+            errorBody?.error ??
             "Request failed. Please try again."),
       response.headers.get("X-Request-ID") ?? undefined,
       errorBody?.error,
@@ -188,6 +190,61 @@ export async function getPayrollRuns(
 
 export async function getPayrollRun(runId: string): Promise<PayrollRunDetail> {
   return unwrap(await api.GET("/payroll/runs/{run_id}", { params: { path: { run_id: runId } } }));
+}
+
+export function createPayrollRun(body: {
+  profile_id: string;
+  period_year: number;
+  period_month: number;
+}): Promise<{ run_id: string }> {
+  return request<{ run_id: string }>("/payroll/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function payrollFilePath(runId: string, action: "dry-run" | "import", file: File): string {
+  const query = new URLSearchParams({ filename: file.name });
+  return `/payroll/runs/${encodeURIComponent(runId)}/${action}?${query.toString()}`;
+}
+
+export function dryRunPayrollFile(runId: string, file: File): Promise<PayrollDryRunResponse> {
+  return request<PayrollDryRunResponse>(payrollFilePath(runId, "dry-run", file), {
+    method: "POST",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+}
+
+export function importPayrollFile(runId: string, file: File): Promise<PayrollImportResponse> {
+  return request<PayrollImportResponse>(payrollFilePath(runId, "import", file), {
+    method: "POST",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+}
+
+export async function downloadExpectedPayrollCSV(runId: string): Promise<Blob> {
+  const response = await fetch(
+    `${API_BASE}/payroll/runs/${encodeURIComponent(runId)}/expected.csv`,
+    { credentials: "include" },
+  );
+  if (response.status === 401) window.dispatchEvent(new Event("ajo:unauthenticated"));
+  if (!response.ok) {
+    const errorBody = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { message?: string; detail?: string } | null;
+    throw new ApiError(
+      response.status,
+      response.status === 403
+        ? "You do not have permission to download this file."
+        : (errorBody?.message ?? errorBody?.detail ?? "Unable to download the expected CSV."),
+      response.headers.get("X-Request-ID") ?? undefined,
+    );
+  }
+  return response.blob();
 }
 
 export async function getReadyDisbursementLoans(

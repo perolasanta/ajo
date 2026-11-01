@@ -1,7 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getPayrollRun, ApiError, request } from "../api/client";
-import { payrollRunActions, payrollStepIndex, payrollSteps } from "../payrollPolicy.mjs";
+import {
+  ApiError,
+  downloadExpectedPayrollCSV,
+  dryRunPayrollFile,
+  getPayrollRun,
+  importPayrollFile,
+  request,
+} from "../api/client";
+import type { PayrollDryRunResponse } from "../api/schema";
+import {
+  payrollFileSha256,
+  payrollRunActions,
+  payrollStepIndex,
+  payrollSteps,
+  uploadPayrollFile,
+  validatePayrollFile,
+} from "../payrollPolicy.mjs";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState, Skeleton, Stepper } from "../ui/Feedback";
@@ -21,8 +37,22 @@ function DetailError({ error, retry }: { error: unknown; retry: () => void }) {
   );
 }
 
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export default function PayrollDetailPage() {
   const { runId } = useParams();
+  const queryClient = useQueryClient();
+  const selectionVersion = useRef(0);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFileSha256, setSelectedFileSha256] = useState<string | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<PayrollDryRunResponse | null>(null);
+  const [dryRunSha256, setDryRunSha256] = useState<string | null>(null);
+  const [fileValidationError, setFileValidationError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadPending, setDownloadPending] = useState(false);
   const session = useQuery({
     queryKey: ["session"],
     queryFn: () => request<Session>("/auth/me"),
@@ -33,6 +63,100 @@ export default function PayrollDetailPage() {
     queryFn: () => getPayrollRun(runId ?? ""),
     enabled: Boolean(runId),
   });
+  const dryRunMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const localHash = await payrollFileSha256(file);
+      const result = await uploadPayrollFile(file, (validFile) =>
+        dryRunPayrollFile(runId ?? "", validFile),
+      );
+      if (result.file_sha256 !== localHash) {
+        throw new Error(
+          "The server file hash did not match the selected CSV. Select the file again.",
+        );
+      }
+      return { result, localHash };
+    },
+    onSuccess: ({ result, localHash }) => {
+      setDryRunResult(result);
+      setDryRunSha256(result.file_sha256);
+      setSelectedFileSha256(localHash);
+      setUploadError(null);
+    },
+  });
+  const importMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!dryRunResult || !dryRunSha256 || dryRunSha256 !== selectedFileSha256) {
+        throw new Error("Run and review a dry-run of this exact CSV before importing.");
+      }
+      const localHash = await payrollFileSha256(file);
+      if (localHash !== dryRunResult.file_sha256) {
+        throw new Error(
+          "This file differs from the dry-run. Run the dry-run again before importing.",
+        );
+      }
+      return uploadPayrollFile(file, (validFile) => importPayrollFile(runId ?? "", validFile));
+    },
+    onSuccess: async (result) => {
+      if (result.errors.length > 0) {
+        setUploadError(
+          "Import was not completed. Review the returned row errors and run a new dry-run.",
+        );
+        return;
+      }
+      setUploadError(null);
+      await queryClient.invalidateQueries({ queryKey: ["payroll-run", runId] });
+      await queryClient.invalidateQueries({ queryKey: ["payroll-runs"] });
+    },
+  });
+
+  const selectFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    selectionVersion.current += 1;
+    const thisSelection = selectionVersion.current;
+    setSelectedFile(file);
+    setSelectedFileSha256(null);
+    setDryRunResult(null);
+    setDryRunSha256(null);
+    setFileValidationError(null);
+    setUploadError(null);
+    dryRunMutation.reset();
+    importMutation.reset();
+    if (!file) return;
+    const error = validatePayrollFile(file);
+    if (error) {
+      setFileValidationError(error);
+      return;
+    }
+    void payrollFileSha256(file)
+      .then((hash) => {
+        if (selectionVersion.current === thisSelection) setSelectedFileSha256(hash);
+      })
+      .catch((error: unknown) => {
+        if (selectionVersion.current === thisSelection) {
+          setFileValidationError(errorMessage(error, "Unable to verify the selected file."));
+        }
+      });
+  };
+
+  const downloadExpected = async () => {
+    setDownloadError(null);
+    setDownloadPending(true);
+    try {
+      const blob = await downloadExpectedPayrollCSV(runId ?? "");
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `payroll-${run.data?.period_year}-${String(run.data?.period_month).padStart(2, "0")}-expected.csv`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setDownloadError(errorMessage(error, "Unable to download the expected CSV."));
+    } finally {
+      setDownloadPending(false);
+    }
+  };
 
   if (run.isPending || session.isPending) {
     return (
@@ -48,7 +172,24 @@ export default function PayrollDetailPage() {
     return <EmptyState title="Session unavailable" detail="Sign in again to continue." />;
   }
   const data = run.data;
-  const actions = payrollRunActions(session.data.roles, session.data.user_id, data);
+  const dryRunMatches = Boolean(
+    dryRunResult &&
+    selectedFile &&
+    selectedFileSha256 &&
+    dryRunSha256 === dryRunResult.file_sha256 &&
+    selectedFileSha256 === dryRunResult.file_sha256,
+  );
+  const dryRunHasErrors = Boolean(dryRunResult && dryRunResult.errors.length > 0);
+  const actions = payrollRunActions(
+    session.data.roles,
+    session.data.user_id,
+    data,
+    dryRunMatches && !dryRunHasErrors,
+  );
+  const classificationCounts = dryRunResult?.rows.reduce<Record<string, number>>((counts, row) => {
+    counts[row.classification] = (counts[row.classification] ?? 0) + 1;
+    return counts;
+  }, {});
 
   return (
     <>
@@ -65,7 +206,7 @@ export default function PayrollDetailPage() {
           <Badge status={data.status} />
         </div>
         <div className="mt-5 overflow-hidden">
-          <Stepper steps={payrollSteps} current={payrollStepIndex(data.status)} />
+          <Stepper steps={payrollSteps} current={payrollStepIndex(data.status, dryRunMatches)} />
         </div>
       </div>
 
@@ -136,6 +277,229 @@ export default function PayrollDetailPage() {
         </div>
       </section>
 
+      {actions.canExportExpected && (
+        <section className="mt-6 rounded-card border border-border bg-surface p-4 sm:p-5">
+          <h2 className="font-serif text-xl font-semibold">Payroll file</h2>
+          <p className="mt-1 text-sm text-muted">
+            Upload a CSV up to 5 MiB. The dry-run result is held in this page only; after a reload,
+            run it again before importing.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              loading={downloadPending}
+              onClick={() => void downloadExpected()}
+            >
+              Download expected CSV
+            </Button>
+          </div>
+          {downloadError && (
+            <p className="mt-2 text-sm text-danger" role="alert">
+              {downloadError}
+            </p>
+          )}
+          <label className="mt-4 block text-sm font-medium">
+            Payroll CSV file
+            <input
+              className="mt-1 block min-h-11 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm file:mr-3 file:rounded-control file:border-0 file:bg-primary-soft file:px-3 file:py-1 file:font-medium"
+              type="file"
+              accept=".csv,text/csv"
+              onClick={(event) => {
+                event.currentTarget.value = "";
+              }}
+              onChange={selectFile}
+              disabled={dryRunMutation.isPending || importMutation.isPending}
+              aria-describedby="payroll-upload-help"
+            />
+          </label>
+          <p id="payroll-upload-help" className="mt-1 text-xs text-muted">
+            Only .csv files with a text/csv content type are accepted. Maximum size: 5 MiB (5 × 1024
+            × 1024 bytes).
+          </p>
+          {selectedFile && !fileValidationError && (
+            <p className="mt-2 break-all text-xs text-muted">
+              Selected: {selectedFile.name}
+              {selectedFileSha256 ? ` · SHA-256 ${selectedFileSha256}` : " · Verifying file…"}
+            </p>
+          )}
+          {fileValidationError && (
+            <p className="mt-2 text-sm text-danger" role="alert">
+              {fileValidationError}
+            </p>
+          )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              loading={dryRunMutation.isPending}
+              disabled={
+                !selectedFile ||
+                !selectedFileSha256 ||
+                Boolean(fileValidationError) ||
+                importMutation.isPending
+              }
+              onClick={() => {
+                if (selectedFile) {
+                  setUploadError(null);
+                  setDryRunResult(null);
+                  setDryRunSha256(null);
+                  dryRunMutation.mutate(selectedFile);
+                }
+              }}
+            >
+              Run dry-run
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                !actions.canImport ||
+                !selectedFile ||
+                dryRunMutation.isPending ||
+                importMutation.isPending
+              }
+              loading={importMutation.isPending}
+              onClick={() => {
+                if (selectedFile) {
+                  setUploadError(null);
+                  importMutation.mutate(selectedFile);
+                }
+              }}
+            >
+              Import this file
+            </Button>
+          </div>
+          {uploadError && (
+            <p className="mt-3 text-sm text-danger" role="alert">
+              {uploadError}
+            </p>
+          )}
+          {dryRunMutation.isError && (
+            <p className="mt-3 text-sm text-danger" role="alert">
+              {errorMessage(dryRunMutation.error, "The dry-run failed. Try again.")}
+            </p>
+          )}
+          {importMutation.isError && (
+            <p className="mt-3 text-sm text-danger" role="alert">
+              {errorMessage(importMutation.error, "The import failed. Try again.")}
+            </p>
+          )}
+          {importMutation.data?.errors.length ? (
+            <div
+              className="mt-3 rounded-control border border-danger/30 bg-danger-soft p-3"
+              role="alert"
+            >
+              <p className="font-medium">Import did not complete; review these row errors.</p>
+              <ul className="mt-2 space-y-1 text-sm">
+                {importMutation.data.errors.map((item, index) => (
+                  <li key={`${item.row}-${index}`}>
+                    Row {item.row}: {item.error}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {dryRunResult && dryRunMatches && (
+            <div
+              className="mt-5 rounded-card border border-border bg-bg p-4"
+              aria-label="Dry-run result"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Dry-run result</h3>
+                  <p className="mt-1 text-xs text-muted">
+                    Not saved. This result is shown only in this page session and must be re-run
+                    after reload.
+                  </p>
+                </div>
+                <Badge status={dryRunHasErrors ? "disputed" : "ready"}>
+                  {dryRunHasErrors ? "Errors found" : "Ready to review"}
+                </Badge>
+              </div>
+              <dl className="mt-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
+                <div>
+                  <dt className="text-muted">Expected total</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={data.expected_total_kobo} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">File total</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={dryRunResult.file_total_kobo} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Variance (file − expected)</dt>
+                  <dd className="mt-1 font-medium">
+                    <Money kobo={dryRunResult.file_total_kobo - data.expected_total_kobo} />
+                  </dd>
+                </div>
+              </dl>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                {Object.entries(classificationCounts ?? {}).map(([classification, count]) => (
+                  <span
+                    key={classification}
+                    className="rounded-full border border-border bg-surface px-2 py-1"
+                  >
+                    {classification.replaceAll("_", " ")}: {count}
+                  </span>
+                ))}
+                <span className="rounded-full border border-border bg-surface px-2 py-1">
+                  Errors: {dryRunResult.errors.length}
+                </span>
+              </div>
+              <h4 className="mt-5 text-sm font-semibold">Row classifications</h4>
+              {dryRunResult.rows.length === 0 ? (
+                <p className="mt-2 text-sm text-muted">No parsed data rows.</p>
+              ) : (
+                <div className="mt-2 max-h-[28rem] space-y-2 overflow-y-auto pr-1">
+                  {dryRunResult.rows.map((row, index) => (
+                    <article
+                      key={`${row.row}-${index}`}
+                      className="rounded-control border border-border bg-surface p-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-medium">
+                          Row {row.row} ·{" "}
+                          <span className="break-all">
+                            {row.staff_no_raw || "(blank staff number)"}
+                          </span>
+                        </p>
+                        <Badge status={row.classification} />
+                      </div>
+                      <p className="mt-2 text-sm text-muted">
+                        Actual amount: <Money kobo={row.actual_kobo} />
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {dryRunResult.errors.length > 0 && (
+                <div className="mt-4 rounded-control border border-danger/30 bg-danger-soft p-3">
+                  <h4 className="font-semibold">Errors by row</h4>
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {dryRunResult.errors.map((item, index) => (
+                      <li key={`${item.row}-${index}`}>
+                        Row {item.row}: {item.error}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-3 text-sm font-medium">
+                    Import stays disabled until the dry-run has no errors.
+                  </p>
+                </div>
+              )}
+              {dryRunHasErrors && !dryRunMutation.isPending && (
+                <p className="mt-3 text-sm text-danger">
+                  Correct the source CSV and select it again to run a fresh dry-run.
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="mt-6 rounded-card border border-border bg-surface p-4 sm:p-5">
         <h2 className="font-serif text-xl font-semibold">Persisted exceptions</h2>
         <p className="mt-1 text-sm text-muted">
@@ -177,42 +541,6 @@ export default function PayrollDetailPage() {
             ))}
           </div>
         )}
-      </section>
-
-      <section className="mt-6 rounded-card border border-border bg-surface p-4 sm:p-5">
-        <h2 className="font-serif text-xl font-semibold">Available actions</h2>
-        {actions.canExportExpected || actions.canDryRun ? (
-          <p className="mt-1 text-sm text-muted">
-            Officer and treasurer file actions are available while this run is unimported.
-          </p>
-        ) : null}
-        {actions.canPost ? (
-          <p className="mt-1 text-sm text-muted">A treasurer may post this imported run.</p>
-        ) : null}
-        {actions.canSignOff ? (
-          <p className="mt-1 text-sm text-muted">
-            An administrator who did not import or post this run may sign it off.
-          </p>
-        ) : null}
-        {actions.signOffBlockedBySelf && (
-          <p className="mt-1 text-sm text-muted">
-            A different administrator must sign off because you imported or posted this run.
-          </p>
-        )}
-        {actions.signOffBlockedMissingPoster && (
-          <p className="mt-1 text-sm text-muted">
-            Sign-off is unavailable because the original importer or poster is not recorded.
-          </p>
-        )}
-        {!actions.canExportExpected &&
-          !actions.canPost &&
-          !actions.canSignOff &&
-          !actions.signOffBlockedBySelf &&
-          !actions.signOffBlockedMissingPoster && (
-            <p className="mt-1 text-sm text-muted">
-              No actions are available for your role in this run state.
-            </p>
-          )}
       </section>
 
       <section className="mt-6 rounded-card border border-border bg-surface p-4 text-sm text-muted sm:p-5">

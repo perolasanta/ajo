@@ -436,6 +436,11 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
     assert "Dry-run results are not persisted" in decisions
     assert "raw uploaded rows that were never imported" in decisions
     assert "does not include original row numbers" in decisions
+    assert "5 MiB" in decisions
+    assert "50,000 data rows" in decisions
+    assert "return 413" in decisions
+    assert "return 415" in decisions
+    assert "return 422" in decisions
 
 
 @pytest.mark.parametrize(

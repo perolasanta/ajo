@@ -16,11 +16,14 @@ from openpyxl import load_workbook
 from sqlalchemy import text
 
 from app.core.db import transaction
-from app.core.errors import Conflict, Forbidden, NotFound
+from app.core.errors import Conflict, Forbidden, NotFound, UnprocessableEntity
 from app.core.time import payroll_period
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
 from app.domains.repayments.service import post_repayment
+
+MAX_PAYROLL_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_PAYROLL_ROWS = 50_000
 
 
 @dataclass(frozen=True)
@@ -75,21 +78,42 @@ def _read_rows(
     content: bytes, filename: str, profile: dict[str, Any]
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     try:
+        header_row = int(profile["header_row"])
+        header: list[str] | None = None
+        records: list[dict[str, str]] = []
         if filename.lower().endswith(".xlsx"):
-            sheet = load_workbook(io.BytesIO(content), read_only=True, data_only=True).active
-            values = list(sheet.iter_rows(values_only=True))
-            header = [str(value or "").strip() for value in values[int(profile["header_row"]) - 1]]
-            records = [
-                dict(zip(header, [str(value or "").strip() for value in row], strict=False))
-                for row in values[int(profile["header_row"]) :]
-            ]
+            workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            sheet = workbook.active
+            for row_number, values in enumerate(sheet.iter_rows(values_only=True), start=1):
+                values_as_text = [str(value or "").strip() for value in values]
+                if row_number == header_row:
+                    header = values_as_text
+                elif row_number > header_row:
+                    if len(records) >= MAX_PAYROLL_ROWS:
+                        raise UnprocessableEntity(
+                            f"Payroll files may contain at most {MAX_PAYROLL_ROWS:,} data rows."
+                        )
+                    if header is None:
+                        raise ValueError("header row not found")
+                    records.append(dict(zip(header, values_as_text, strict=False)))
+            workbook.close()
         else:
             decoded = content.decode("utf-8-sig")
-            rows = list(csv.reader(io.StringIO(decoded)))
-            header = rows[int(profile["header_row"]) - 1]
-            records = [
-                dict(zip(header, row, strict=False)) for row in rows[int(profile["header_row"]) :]
-            ]
+            for row_number, row in enumerate(csv.reader(io.StringIO(decoded)), start=1):
+                if row_number == header_row:
+                    header = row
+                elif row_number > header_row:
+                    if len(records) >= MAX_PAYROLL_ROWS:
+                        raise UnprocessableEntity(
+                            f"Payroll files may contain at most {MAX_PAYROLL_ROWS:,} data rows."
+                        )
+                    if header is None:
+                        raise ValueError("header row not found")
+                    records.append(dict(zip(header, row, strict=False)))
+        if header is None:
+            raise ValueError("header row not found")
+    except UnprocessableEntity:
+        raise
     except Exception as exc:
         return [], [{"row": 0, "error": f"Unreadable payroll file: {exc}"}]
     needed = {profile["staff_no_column"], profile["amount_column"]}

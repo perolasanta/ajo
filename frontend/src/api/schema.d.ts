@@ -202,6 +202,29 @@ export type PayrollRunDetail = {
   exceptions: PayrollRunException[];
 };
 
+export type PayrollDryRunRow = {
+  row: number;
+  staff_no_raw: string;
+  member_id: string | null;
+  actual_kobo: number;
+  classification: string;
+};
+
+export type PayrollImportError = { row: number; error: string };
+
+export type PayrollDryRunResponse = {
+  file_sha256: string;
+  file_total_kobo: number;
+  rows: PayrollDryRunRow[];
+  errors: PayrollImportError[];
+};
+
+export type PayrollImportResponse = {
+  file_sha256: string;
+  file_total_kobo: number;
+  errors: PayrollImportError[];
+};
+
 export interface paths {
   "/auth/csrf": Record<string, never>;
   "/auth/login": Record<string, never>;
@@ -219,6 +242,20 @@ export interface paths {
     get: {
       parameters: { path: { run_id: string } };
       responses: { 200: { content: { "application/json": PayrollRunDetail } } };
+    };
+  };
+  "/payroll/runs/{run_id}/dry-run": {
+    post: {
+      parameters: { path: { run_id: string } };
+      requestBody: { content: { "text/csv": Blob } };
+      responses: { 200: { content: { "application/json": PayrollDryRunResponse } } };
+    };
+  };
+  "/payroll/runs/{run_id}/import": {
+    post: {
+      parameters: { path: { run_id: string } };
+      requestBody: { content: { "text/csv": Blob } };
+      responses: { 200: { content: { "application/json": PayrollImportResponse } } };
     };
   };
   "/members": {
