@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { visibleNavigation } from "./navigation.js";
+import { disbursementRoles, visibleNavigation } from "./navigation.js";
 import { canDecideLoans, canSeeDestinationAccount, canSubmitLoans } from "./loanPolicy.mjs";
 import {
   canAuthorizeDisbursement,
@@ -49,6 +49,10 @@ for (const [role, expected] of [
     assert.equal(names.includes("Disbursements"), expected);
   });
 }
+
+test("disbursement navigation allowlist contains only admin, treasurer and auditor", () => {
+  assert.deepEqual(disbursementRoles, ["admin", "treasurer", "auditor"]);
+});
 
 for (const [role, expected] of loanCases) {
   test(`${role} ${expected ? "sees" : "does not see"} Loans navigation`, () => {

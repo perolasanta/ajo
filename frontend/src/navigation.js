@@ -1,3 +1,5 @@
+export const disbursementRoles = ["admin", "treasurer", "auditor"];
+
 export const navigation = [
   {
     name: "Dashboard",
@@ -10,7 +12,7 @@ export const navigation = [
     path: "/loans",
     roles: ["officer", "committee", "treasurer", "admin", "auditor"],
   },
-  { name: "Disbursements", path: "/disbursements", roles: ["treasurer", "admin", "auditor"] },
+  { name: "Disbursements", path: "/disbursements", roles: disbursementRoles },
   {
     name: "Payroll",
     path: "/payroll",

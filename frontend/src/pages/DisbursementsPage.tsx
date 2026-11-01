@@ -19,6 +19,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
 import { ResponsiveTable, type ResponsiveColumn } from "../ui/Table";
 import { canPrepareDisbursement } from "../disbursementPolicy.mjs";
+import { disbursementListState } from "../disbursementListState.mjs";
 
 const pageSize = 10;
 function useDebouncedValue(value: string, delay = 300) {
@@ -110,6 +111,7 @@ export default function DisbursementsPage() {
     queryFn: () =>
       getDisbursements({ search: debouncedSearch || undefined, status, page, pageSize }),
   });
+  const listState = disbursementListState(disbursements);
   const statuses = useMemo(
     () => [...new Set((disbursements.data?.items ?? []).map((item) => item.status))],
     [disbursements.data],
@@ -184,11 +186,11 @@ export default function DisbursementsPage() {
           ))}
         </Select>
       </div>
-      {disbursements.isPending && <ListSkeleton />}
-      {disbursements.isError && (
+      {listState === "loading" && <ListSkeleton />}
+      {listState === "error" && (
         <ListError error={disbursements.error} retry={() => void disbursements.refetch()} />
       )}
-      {disbursements.data && disbursements.data.items.length === 0 && (
+      {listState === "empty" && (
         <EmptyState
           title="No disbursements found"
           detail="Try another search or status filter."
@@ -205,7 +207,7 @@ export default function DisbursementsPage() {
           }
         />
       )}
-      {disbursements.data && disbursements.data.items.length > 0 && (
+      {listState === "results" && disbursements.data && (
         <>
           <ResponsiveTable
             data={disbursements.data.items}
