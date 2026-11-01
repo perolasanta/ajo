@@ -95,3 +95,46 @@ async def get_disbursement(current: CurrentSession, disbursement_id: uuid.UUID) 
     if row is None:
         raise NotFound("Disbursement not found")
     return _row(row)
+
+
+async def list_ready_loans(
+    current: CurrentSession, *, search: str | None, page: int, page_size: int
+) -> dict[str, Any]:
+    read_role(current)
+    params = {
+        "cid": current.cooperative_id,
+        "search": search.strip() if search else None,
+        "limit": page_size,
+        "offset": (page - 1) * page_size,
+    }
+    common = """FROM loans l
+      JOIN loan_applications a ON a.cooperative_id=l.cooperative_id AND a.id=l.application_id
+      JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id
+     WHERE a.cooperative_id=:cid AND a.status='ready_for_disbursement'
+       AND NOT EXISTS (SELECT 1 FROM disbursements d WHERE d.cooperative_id=l.cooperative_id
+         AND d.loan_id=l.id AND d.status NOT IN ('failed','cancelled'))
+       AND (CAST(:search AS text) IS NULL OR m.full_name ILIKE ('%'||CAST(:search AS text)||'%')
+         OR m.member_no ILIKE ('%'||CAST(:search AS text)||'%'))"""
+    async with transaction(current.cooperative_id) as session:
+        total = int(
+            (
+                await session.execute(
+                    text("SELECT count(*) " + common),
+                    {"cid": params["cid"], "search": params["search"]},
+                )
+            ).scalar_one()
+        )
+        result = await session.execute(
+            text(
+                """SELECT l.id AS loan_id,a.id AS application_id,m.member_no,m.full_name,
+              a.principal_kobo AS amount_kobo,a.status """
+                + common
+                + " ORDER BY a.updated_at DESC,a.id DESC LIMIT :limit OFFSET :offset"
+            ),
+            params,
+        )
+        items = [dict(item) for item in result.mappings()]
+    for item in items:
+        item["loan_id"] = str(item["loan_id"])
+        item["application_id"] = str(item["application_id"])
+    return {"items": items, "page": page, "page_size": page_size, "total": total}

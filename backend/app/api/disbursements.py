@@ -82,6 +82,17 @@ async def list_disbursements(
     return _list_projection(result, role)
 
 
+@router.get("/disbursements/ready-loans")
+async def ready_loans(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    search: str | None = Query(default=None, max_length=200),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+) -> dict[str, object]:
+    reads.read_role(current)
+    return await reads.list_ready_loans(current, search=search, page=page, page_size=page_size)
+
+
 @router.get("/disbursements/{disbursement_id}")
 async def disbursement_detail(
     disbursement_id: uuid.UUID,

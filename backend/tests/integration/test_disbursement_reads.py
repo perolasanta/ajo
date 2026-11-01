@@ -10,7 +10,7 @@ import pytest
 
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import NotFound
-from app.domains.disbursements.reads import get_disbursement, list_disbursements
+from app.domains.disbursements.reads import get_disbursement, list_disbursements, list_ready_loans
 from app.domains.disbursements.service import prepare
 from tests.integration.test_loans import LoanBase, _create_loan_base, session, setup_loan_member
 
@@ -76,8 +76,16 @@ async def _make_disbursement(db: asyncpg.Connection, base: LoanBase) -> str:
         cid,
         loan,
     )
+    ready = await list_ready_loans(
+        session(cid, preparer, "treasurer"), search="Loan test member", page=1, page_size=10
+    )
+    assert any(item["loan_id"] == str(loan) for item in ready["items"])
     identifier = await prepare(session(cid, preparer, "treasurer"), loan, None)
     assert identifier is not None
+    no_longer_ready = await list_ready_loans(
+        session(cid, preparer, "treasurer"), search="Loan test member", page=1, page_size=10
+    )
+    assert all(item["loan_id"] != str(loan) for item in no_longer_ready["items"])
     return str(identifier)
 
 
