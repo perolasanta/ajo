@@ -21,6 +21,7 @@ const NewLoanApplicationPage = lazy(() =>
 );
 const LoanDetailPage = lazy(() => import("./pages/LoanDetailPage"));
 const DisbursementsPage = lazy(() => import("./pages/DisbursementsPage"));
+const DisbursementDetailPage = lazy(() => import("./pages/DisbursementDetailPage"));
 const DesignPage = lazy(() => import("./pages/DesignPage"));
 
 const fakeMembers: MemberListItem[] = [
@@ -317,6 +318,7 @@ export default function App() {
         <Route path="/loans/new" element={<NewLoanApplicationPage />} />
         <Route path="/loans/:applicationId" element={<LoanDetailPage />} />
         <Route path="/disbursements" element={<DisbursementsPage />} />
+        <Route path="/disbursements/:disbursementId" element={<DisbursementDetailPage />} />
         <Route path="/:feature" element={<ComingSoon />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

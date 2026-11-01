@@ -10,7 +10,7 @@
     "format:check": "prettier --check .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:roles": "node --test src/navigation.test.mjs",
+    "test:roles": "node --test src/navigation.test.mjs src/disbursementTimeline.test.mjs",
     "gen:api": "openapi-typescript http://localhost:8000/api/openapi.json -o src/api/schema.d.ts"
   },
   "dependencies": {
