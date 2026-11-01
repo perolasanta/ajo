@@ -6,6 +6,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { request } from "./api/client";
 import { visibleNavigation } from "./navigation";
+import { canViewPayroll } from "./payrollPolicy.mjs";
 import type { MemberListItem } from "./api/schema";
 import { Avatar } from "./ui/Avatar";
 import { Skeleton } from "./ui/Feedback";
@@ -23,6 +24,7 @@ const LoanDetailPage = lazy(() => import("./pages/LoanDetailPage"));
 const DisbursementsPage = lazy(() => import("./pages/DisbursementsPage"));
 const DisbursementDetailPage = lazy(() => import("./pages/DisbursementDetailPage"));
 const DesignPage = lazy(() => import("./pages/DesignPage"));
+const PayrollPage = lazy(() => import("./pages/PayrollPage"));
 
 const fakeMembers: MemberListItem[] = [
   {
@@ -233,6 +235,18 @@ function ProtectedShell() {
   );
 }
 
+function PayrollGate() {
+  const session = useQuery({
+    queryKey: ["session"],
+    queryFn: () => request<Session>("/auth/me"),
+    retry: false,
+  });
+  if (session.isPending) return <LoadingPage />;
+  if (session.isError || !session.data) return <Navigate to="/login" replace />;
+  if (!canViewPayroll(session.data.roles)) return <Navigate to="/dashboard" replace />;
+  return <Outlet />;
+}
+
 function ComingSoon() {
   return (
     <section className="max-w-lg">
@@ -319,6 +333,9 @@ export default function App() {
         <Route path="/loans/:applicationId" element={<LoanDetailPage />} />
         <Route path="/disbursements" element={<DisbursementsPage />} />
         <Route path="/disbursements/:disbursementId" element={<DisbursementDetailPage />} />
+        <Route element={<PayrollGate />}>
+          <Route path="/payroll" element={<PayrollPage />} />
+        </Route>
         <Route path="/:feature" element={<ComingSoon />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
