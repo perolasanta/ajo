@@ -42,15 +42,15 @@ async def test_seed_demo_end_to_end(db: asyncpg.Connection, capsys) -> None:
         "members": 25,
         "loan_applications": 14,
         "loans": 9,
-        "staff_users": 5,
+        "staff_users": 6,
         "disputed_loan_reachable": True,
     }
 
     output = capsys.readouterr().out
     passwords = dict(
-        re.findall(rf"^\s+([a-z]+)@{re.escape(slug)}\.demo: (\S+)$", output, re.MULTILINE)
+        re.findall(rf"^\s+([a-z0-9]+)@{re.escape(slug)}\.demo: (\S+)$", output, re.MULTILINE)
     )
-    assert set(passwords) == {"officer", "committee", "treasurer", "auditor"}
+    assert set(passwords) == {"admin2", "officer", "committee", "treasurer", "auditor"}
 
     cooperative_id = await db.fetchval(
         "SELECT cooperative_id FROM tenant_directory WHERE slug = $1", slug
@@ -146,10 +146,17 @@ async def test_seed_demo_end_to_end(db: asyncpg.Connection, capsys) -> None:
         assert totals["debits"] == totals["credits"]
 
     credentials = {
-        "admin": (admin_email, admin_password),
-        **{role: (f"{role}@{slug}.demo", password) for role, password in passwords.items()},
+        "admin": (admin_email, admin_password, "admin"),
+        "admin2": (f"admin2@{slug}.demo", passwords["admin2"], "admin"),
+        **{
+            role: (f"{role}@{slug}.demo", password, role)
+            for role, password in passwords.items()
+            if role != "admin2"
+        },
     }
-    for index, (role, (email, password)) in enumerate(credentials.items(), start=1):
+    for index, (_label, (email, password, expected_role)) in enumerate(
+        credentials.items(), start=1
+    ):
         ip = f"127.0.2.{index}"
         login = await auth_service.login(
             slug=slug,
@@ -167,7 +174,7 @@ async def test_seed_demo_end_to_end(db: asyncpg.Connection, capsys) -> None:
             login.session_cookie, pyotp.TOTP(secret).now(), ip
         )
         assert current is not None
-        assert current.roles == (role,)
+        assert current.roles == (expected_role,)
 
     with pytest.raises(RuntimeError, match="use a new slug"):
         await seed_demo(slug, yes_fake_data=True)

@@ -11,7 +11,7 @@ from app.api.disbursements import (
 )
 from app.core.errors import Forbidden
 from app.domains.auth.service import CurrentSession
-from app.domains.disbursements.reads import read_role
+from app.domains.disbursements.reads import _row, read_role
 
 
 def _session(*roles: str) -> CurrentSession:
@@ -75,6 +75,13 @@ def test_role_projections_are_exact_and_never_include_sensitive_columns() -> Non
         )
         for data in (admin, treasurer, auditor)
         for key in data
+    )
+    domain_admin = _row(values, "admin")
+    domain_auditor = _row(values, "auditor")
+    assert "bank_code" in domain_admin and "last4" in domain_admin
+    assert "bank_code" not in domain_auditor and "last4" not in domain_auditor
+    assert not (
+        {"email", "phone", "account_number", "salary", "staff_no", "token"} & set(domain_auditor)
     )
 
 

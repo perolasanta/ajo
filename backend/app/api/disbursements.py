@@ -69,9 +69,6 @@ class DisbursementAuditorPageResponse(BaseModel):
     page: int
     page_size: int
     total: int
-    page: int
-    page_size: int
-    total: int
 
 
 class ReadyLoanResponse(BaseModel):
