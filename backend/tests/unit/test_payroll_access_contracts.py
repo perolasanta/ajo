@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 
 from app.api import payroll as payroll_api
-from app.core.errors import install_error_handlers
+from app.core.errors import NotFound, install_error_handlers
 from app.domains.auth.service import CurrentSession
 from app.domains.payroll import service
 
@@ -76,6 +76,63 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             "page": 1,
             "page_size": 10,
             "total": 1,
+        },
+    ),
+    (
+        "GET",
+        "/payroll/runs/{run_id}",
+    ): (
+        {
+            "run_id",
+            "period_year",
+            "period_month",
+            "status",
+            "expected_total_kobo",
+            "file_total_kobo",
+            "bank_receipt_total_kobo",
+            "variance_kobo",
+            "counts",
+            "component_totals_kobo",
+            "created_by",
+            "posted_by",
+            "created_at",
+            "imported_at",
+            "posted_at",
+            "signed_off_at",
+            "exceptions",
+        },
+        {
+            "run_id": RUN_ID,
+            "period_year": 2026,
+            "period_month": 10,
+            "status": "posted",
+            "expected_total_kobo": 1200,
+            "file_total_kobo": 1190,
+            "bank_receipt_total_kobo": 1190,
+            "variance_kobo": 0,
+            "counts": {
+                "matched": 1,
+                "short": 1,
+                "over": 0,
+                "missing": 0,
+                "unknown_member": 0,
+                "duplicate": 0,
+            },
+            "component_totals_kobo": {"loan": 1000, "savings": 100, "dues": 100},
+            "created_by": PROFILE_ID,
+            "posted_by": PROFILE_ID,
+            "created_at": "2026-10-01T10:00:00Z",
+            "imported_at": "2026-10-02T10:00:00Z",
+            "posted_at": "2026-10-03T10:00:00Z",
+            "signed_off_at": None,
+            "exceptions": [
+                {
+                    "staff_no_raw": "S-2",
+                    "classification": "short",
+                    "actual_kobo": 90,
+                    "resolution_note": "Review deduction",
+                }
+            ],
         },
     ),
     ("POST", "/payroll/profiles"): ({"profile_id"}, {"profile_id": PROFILE_ID}),
@@ -187,6 +244,25 @@ def test_payroll_run_list_has_exact_safe_nested_keys() -> None:
     assert not {"salary", "phone", "email", "bank", "member_id"} & set(item)
 
 
+def test_payroll_run_detail_has_exact_safe_persisted_fields() -> None:
+    model = _route("GET", "/payroll/runs/{run_id}").response_model
+    assert isinstance(model, type) and issubclass(model, BaseModel)
+    sample = JSON_RESPONSE_CONTRACTS[("GET", "/payroll/runs/{run_id}")][1]
+    response = model.model_validate({**sample, "future_field": "hidden"})
+    payload = response.model_dump()
+    assert set(payload) == JSON_RESPONSE_CONTRACTS[("GET", "/payroll/runs/{run_id}")][0]
+    assert set(payload["counts"]) == set(sample["counts"])
+    assert set(payload["component_totals_kobo"]) == {"loan", "savings", "dues"}
+    assert set(payload["exceptions"][0]) == {
+        "staff_no_raw",
+        "classification",
+        "actual_kobo",
+        "resolution_note",
+    }
+    assert "row" not in payload["exceptions"][0]
+    assert not {"salary", "phone", "email", "bank", "member_id"} & set(payload)
+
+
 @pytest.mark.parametrize("role", ["officer", "treasurer", "admin"])
 async def test_payroll_run_list_response_contract_is_identical_for_read_roles(
     role: str, monkeypatch: pytest.MonkeyPatch
@@ -230,6 +306,71 @@ async def test_payroll_run_list_response_contract_is_identical_for_read_roles(
     assert set(response.model_dump()) == {"items", "page", "page_size", "total"}
     assert set(response.model_dump()["items"][0]) == set(sample["items"][0])
     assert set(response.model_dump()["items"][0]["counts"]) == set(item["counts"])
+
+
+@pytest.mark.parametrize("role", ["officer", "treasurer", "admin"])
+async def test_payroll_run_detail_response_contract_is_identical_for_read_roles(
+    role: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sample = JSON_RESPONSE_CONTRACTS[("GET", "/payroll/runs/{run_id}")][1]
+    run = {
+        key: value
+        for key, value in sample.items()
+        if key not in {"counts", "component_totals_kobo", "exceptions"}
+    }
+    run["id"] = run.pop("run_id")
+    totals = {
+        **sample["counts"],
+        "loan_kobo": sample["component_totals_kobo"]["loan"],
+        "savings_kobo": sample["component_totals_kobo"]["savings"],
+        "dues_kobo": sample["component_totals_kobo"]["dues"],
+    }
+    current = _session_for(role)
+
+    class _Result:
+        def __init__(
+            self, row: dict[str, Any] | None = None, rows: list[dict[str, Any]] | None = None
+        ):
+            self.row = row
+            self.rows = rows or []
+
+        def mappings(self) -> _Result:
+            return self
+
+        def one_or_none(self) -> dict[str, Any] | None:
+            return self.row
+
+        def one(self) -> dict[str, Any]:
+            assert self.row is not None
+            return self.row
+
+        def all(self) -> list[dict[str, Any]]:
+            return self.rows
+
+    class _Session:
+        async def execute(self, statement: Any, params: dict[str, Any]) -> _Result:
+            assert params["cid"] == current.cooperative_id
+            query = str(statement)
+            if "FROM payroll_runs" in query:
+                return _Result(row=run)
+            if "count(*) FILTER" in query:
+                return _Result(row=totals)
+            return _Result(rows=sample["exceptions"])
+
+    @asynccontextmanager
+    async def _transaction(cooperative_id: uuid.UUID) -> Any:
+        assert cooperative_id == current.cooperative_id
+        yield _Session()
+
+    monkeypatch.setattr(payroll_api.service, "transaction", _transaction)
+    result = await payroll_api.get_run(run_id=uuid.UUID(RUN_ID), current=current)
+    model = _route("GET", "/payroll/runs/{run_id}").response_model
+    assert isinstance(model, type) and issubclass(model, BaseModel)
+    response = model.model_validate(result).model_dump()
+    assert set(response) == set(sample)
+    assert set(response["counts"]) == set(sample["counts"])
+    assert set(response["component_totals_kobo"]) == set(sample["component_totals_kobo"])
+    assert set(response["exceptions"][0]) == set(sample["exceptions"][0])
 
 
 def test_expected_csv_route_is_explicitly_a_csv_not_a_json_object() -> None:
@@ -329,6 +470,7 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
                 ),
                 ("GET", f"/payroll/runs/{RUN_ID}/expected.csv", None),
                 ("GET", "/payroll/runs", None),
+                ("GET", f"/payroll/runs/{RUN_ID}", None),
                 (
                     "POST",
                     f"/payroll/runs/{RUN_ID}/dry-run",
@@ -425,6 +567,39 @@ async def test_payroll_run_list_is_scoped_to_the_current_tenant(
         assert params["cid"] == current.cooperative_id
     assert calls[1][1]["limit"] == 10
     assert calls[1][1]["offset"] == 10
+
+
+async def test_payroll_run_detail_is_scoped_to_the_current_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _session_for("officer")
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class _Result:
+        def mappings(self) -> _Result:
+            return self
+
+        def one_or_none(self) -> None:
+            return None
+
+    class _Session:
+        async def execute(self, statement: Any, params: dict[str, Any]) -> _Result:
+            calls.append((str(statement), params))
+            return _Result()
+
+    @asynccontextmanager
+    async def _tenant_transaction(cooperative_id: uuid.UUID) -> Any:
+        assert cooperative_id == current.cooperative_id
+        yield _Session()
+
+    monkeypatch.setattr(service, "transaction", _tenant_transaction)
+    with pytest.raises(NotFound, match="Payroll run not found"):
+        await service.get_run(current, uuid.UUID(RUN_ID))
+
+    assert len(calls) == 1
+    statement, params = calls[0]
+    assert "cooperative_id=:cid" in statement
+    assert params["cid"] == current.cooperative_id
 
 
 def _async_return(value: Any) -> Any:

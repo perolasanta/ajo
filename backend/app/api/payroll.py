@@ -116,6 +116,39 @@ class PayrollRunListResponse(_PayrollResponse):
     total: int
 
 
+class PayrollRunExceptionResponse(_PayrollResponse):
+    staff_no_raw: str
+    classification: str
+    actual_kobo: int | None
+    resolution_note: str | None
+
+
+class PayrollComponentTotalsResponse(_PayrollResponse):
+    loan: int
+    savings: int
+    dues: int
+
+
+class PayrollRunDetailResponse(_PayrollResponse):
+    run_id: str
+    period_year: int
+    period_month: int
+    status: str
+    expected_total_kobo: int
+    file_total_kobo: int | None
+    bank_receipt_total_kobo: int | None
+    variance_kobo: int | None
+    counts: PayrollRunCountsResponse
+    component_totals_kobo: PayrollComponentTotalsResponse
+    created_by: str
+    posted_by: str | None
+    created_at: datetime
+    imported_at: datetime | None
+    posted_at: datetime | None
+    signed_off_at: datetime | None
+    exceptions: list[PayrollRunExceptionResponse]
+
+
 def _content(value: str) -> bytes:
     try:
         return base64.b64decode(value, validate=True)
@@ -146,6 +179,13 @@ async def list_runs(
     page_size: int = Query(default=10, ge=1, le=100),
 ) -> dict[str, object]:
     return await service.list_runs(current, page, page_size)
+
+
+@router.get("/payroll/runs/{run_id}", response_model=PayrollRunDetailResponse)
+async def get_run(
+    run_id: uuid.UUID, current: Annotated[CurrentSession, Depends(current_session)]
+) -> dict[str, object]:
+    return await service.get_run(current, run_id)
 
 
 @router.get("/payroll/runs/{run_id}/expected.csv", response_class=Response, response_model=None)

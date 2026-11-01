@@ -233,6 +233,115 @@ async def list_runs(current: CurrentSession, page: int, page_size: int) -> dict[
     return {"items": items, "page": page, "page_size": page_size, "total": int(total or 0)}
 
 
+async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer", "admin"})
+    cid = current.cooperative_id
+    async with transaction(cid) as session:
+        run = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT id,period_year,period_month,status,expected_total_kobo,
+                          file_total_kobo,bank_receipt_total_kobo,created_by,posted_by,
+                          created_at,imported_at,posted_at,signed_off_at
+                          FROM payroll_runs WHERE cooperative_id=:cid AND id=:id"""
+                    ),
+                    {"cid": cid, "id": run_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if run is None:
+            raise NotFound("Payroll run not found")
+        totals = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT count(*) FILTER (WHERE classification='matched') AS matched,
+                          count(*) FILTER (WHERE classification='short') AS short,
+                          count(*) FILTER (WHERE classification='over') AS over,
+                          count(*) FILTER (WHERE classification='missing') AS missing,
+                          count(*) FILTER (WHERE classification='unknown_member') AS unknown_member,
+                          count(*) FILTER (WHERE classification='duplicate') AS duplicate,
+                          coalesce(sum(expected_loan_kobo),0)::bigint AS loan_kobo,
+                          coalesce(sum(expected_savings_kobo),0)::bigint AS savings_kobo,
+                          coalesce(sum(expected_dues_kobo),0)::bigint AS dues_kobo
+                          FROM payroll_items WHERE cooperative_id=:cid AND run_id=:id"""
+                    ),
+                    {"cid": cid, "id": run_id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        exception_rows = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT staff_no_raw,classification,actual_kobo,resolution_note
+                          FROM payroll_items WHERE cooperative_id=:cid AND run_id=:id
+                            AND classification<>'matched'
+                          ORDER BY created_at,id"""
+                    ),
+                    {"cid": cid, "id": run_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    bank_total = run["bank_receipt_total_kobo"]
+    file_total = run["file_total_kobo"]
+    exceptions = []
+    for exception in exception_rows:
+        safe = _sanitize_csv_row(
+            dict(exception),
+            {"staff_no_raw", "classification", "resolution_note"},
+            {"resolution_note": 500},
+        )
+        exceptions.append(
+            {
+                "staff_no_raw": safe["staff_no_raw"],
+                "classification": safe["classification"],
+                "actual_kobo": (
+                    int(exception["actual_kobo"]) if exception["actual_kobo"] is not None else None
+                ),
+                "resolution_note": safe["resolution_note"],
+            }
+        )
+    return {
+        "run_id": str(run["id"]),
+        "period_year": int(run["period_year"]),
+        "period_month": int(run["period_month"]),
+        "status": str(run["status"]),
+        "expected_total_kobo": int(run["expected_total_kobo"]),
+        "file_total_kobo": int(file_total) if file_total is not None else None,
+        "bank_receipt_total_kobo": int(bank_total) if bank_total is not None else None,
+        "variance_kobo": (
+            int(file_total) - int(bank_total)
+            if file_total is not None and bank_total is not None
+            else None
+        ),
+        "counts": {
+            key: int(totals[key])
+            for key in ("matched", "short", "over", "missing", "unknown_member", "duplicate")
+        },
+        "component_totals_kobo": {
+            "loan": int(totals["loan_kobo"]),
+            "savings": int(totals["savings_kobo"]),
+            "dues": int(totals["dues_kobo"]),
+        },
+        "created_by": str(run["created_by"]),
+        "posted_by": str(run["posted_by"]) if run["posted_by"] is not None else None,
+        "created_at": run["created_at"],
+        "imported_at": run["imported_at"],
+        "posted_at": run["posted_at"],
+        "signed_off_at": run["signed_off_at"],
+        "exceptions": exceptions,
+    }
+
+
 async def export_expected(current: CurrentSession, run_id: uuid.UUID) -> bytes:
     role = _role(current, {"officer", "treasurer"})
     cid = current.cooperative_id
