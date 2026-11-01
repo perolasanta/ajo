@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import current_session, require_csrf
-from app.core.errors import PayloadTooLarge, UnprocessableEntity, UnsupportedMediaType
+from app.core.errors import PayloadTooLarge, UnsupportedMediaType
 from app.domains.auth.service import CurrentSession
 from app.domains.payroll import service
 
@@ -27,12 +27,6 @@ class RunBody(BaseModel):
     profile_id: uuid.UUID
     period_year: int = Field(ge=2000, le=9999)
     period_month: int = Field(ge=1, le=12)
-
-
-class FileBody(BaseModel):
-    filename: str = Field(min_length=1, max_length=255)
-    content_base64: str = Field(min_length=1)
-    file_content_type: str | None = Field(default=None, max_length=100)
 
 
 class SignOffBody(BaseModel):
@@ -152,13 +146,6 @@ class PayrollRunDetailResponse(_PayrollResponse):
     exceptions: list[PayrollRunExceptionResponse]
 
 
-def _content(value: str) -> bytes:
-    try:
-        return base64.b64decode(value, validate=True)
-    except ValueError as exc:
-        raise ValueError("Invalid file encoding") from exc
-
-
 def _is_csv_filename(filename: str) -> bool:
     return filename.lower().endswith(".csv")
 
@@ -182,38 +169,14 @@ async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
 
 async def _read_payroll_upload(request: Request) -> tuple[bytes, str]:
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    if media_type == "text/csv":
-        filename = request.query_params.get("filename", "payroll.csv")
-        if not _is_csv_filename(filename):
-            raise UnsupportedMediaType(
-                "Only .csv payroll files with Content-Type text/csv are supported."
-            )
-        return await _read_limited_body(request, service.MAX_PAYROLL_UPLOAD_BYTES), filename
-
-    # Keep existing JSON/base64 callers compatible, while bounding the encoded request too.
-    if media_type == "application/json":
-        max_encoded = 4 * ((service.MAX_PAYROLL_UPLOAD_BYTES + 2) // 3) + 1024
-        encoded_body = await _read_limited_body(request, max_encoded)
-        try:
-            body = FileBody.model_validate_json(encoded_body)
-        except ValidationError as exc:
-            raise UnprocessableEntity(
-                "Payroll upload must include a filename and file data."
-            ) from exc
-        if not _is_csv_filename(body.filename) or (
-            body.file_content_type is not None
-            and body.file_content_type.split(";", 1)[0].strip().lower() != "text/csv"
-        ):
-            raise UnsupportedMediaType("Only CSV payroll files with a text/csv type are supported.")
-        try:
-            content = _content(body.content_base64)
-        except ValueError as exc:
-            raise UnprocessableEntity("Payroll upload contains invalid base64 data.") from exc
-        if len(content) > service.MAX_PAYROLL_UPLOAD_BYTES:
-            raise PayloadTooLarge("Payroll upload exceeds the 5 MiB limit.")
-        return content, body.filename
-
-    raise UnsupportedMediaType("Payroll uploads must use Content-Type text/csv.")
+    if media_type != "text/csv":
+        raise UnsupportedMediaType("Payroll uploads must use Content-Type text/csv.")
+    filename = request.query_params.get("filename", "payroll.csv")
+    if not _is_csv_filename(filename):
+        raise UnsupportedMediaType(
+            "Only .csv payroll files with Content-Type text/csv are supported."
+        )
+    return await _read_limited_body(request, service.MAX_PAYROLL_UPLOAD_BYTES), filename
 
 
 @router.post("/payroll/profiles", response_model=ProfileResponse)
