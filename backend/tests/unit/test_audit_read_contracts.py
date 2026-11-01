@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from app.api import audit as audit_api
 from app.core.errors import install_error_handlers
 from app.domains.auth.service import CurrentSession
+from app.domains.audit.service import AuditVerification
 
 pytestmark = pytest.mark.unit
 
@@ -107,3 +108,21 @@ async def test_allowed_roles_get_exact_contract(
 
 def test_tenant_id_is_required_by_read_service_contract() -> None:
     assert _session("admin").cooperative_id is not None
+
+
+@pytest.mark.parametrize("role", ["admin", "auditor"])
+async def test_verification_reports_first_broken_position(
+    role: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = FastAPI()
+    install_error_handlers(app)
+    app.include_router(audit_api.router)
+    app.dependency_overrides[audit_api.current_session] = lambda: _session(role)
+    async def stub(_: uuid.UUID) -> AuditVerification:
+        return AuditVerification(False, 4, uuid.uuid4())
+
+    monkeypatch.setattr(audit_api, "verify_audit_chain", stub)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/audit-events/verify")
+    assert response.status_code == 200
+    assert response.json() == {"ok": False, "entries_checked": 4, "first_broken_position": 4}

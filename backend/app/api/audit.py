@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api.auth import current_session
 from app.domains.audit import reads
+from app.domains.audit.service import verify_audit_chain
 from app.domains.auth.service import CurrentSession
 
 router = APIRouter(tags=["audit"])
@@ -35,6 +36,14 @@ class AuditEventPageResponse(BaseModel):
     page: int
     page_size: int
     total: int
+
+
+class AuditVerificationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    entries_checked: int
+    first_broken_position: int | None
 
 
 def _page_projection(page: dict[str, object]) -> dict[str, object]:
@@ -66,6 +75,19 @@ async def list_audit_events(
         page_size=page_size,
     )
     return _page_projection(page_data)
+
+
+@router.get("/audit-events/verify", response_model=AuditVerificationResponse)
+async def verify_audit_events(
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> AuditVerificationResponse:
+    reads.read_role(current)
+    result = await verify_audit_chain(current.cooperative_id)
+    return AuditVerificationResponse(
+        ok=result.valid,
+        entries_checked=result.entries_checked,
+        first_broken_position=None if result.valid else result.entries_checked,
+    )
 
 
 def _audit_projection(row: dict[str, object]) -> dict[str, object]:
