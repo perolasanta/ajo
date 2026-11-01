@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,

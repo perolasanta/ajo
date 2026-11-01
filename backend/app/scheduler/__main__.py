@@ -8,7 +8,7 @@ this exits.
 import asyncio
 import sys
 
-import asyncpg  # type: ignore[import-untyped]
+import asyncpg
 import structlog
 
 from app.core.config import get_settings

@@ -222,16 +222,17 @@ async def _drive_to_ready(
 async def _disburse(
     *,
     treasurer: CurrentSession,
-    admin: CurrentSession,
+    authorizer: CurrentSession,
+    confirmer: CurrentSession,
     loan_id: uuid.UUID,
     reference: str,
 ) -> None:
     """Run the full manual disbursement chain: prepare, authorize, record, confirm paid."""
     disbursement_id = await prepare(treasurer, loan_id, "127.0.0.1")
     assert disbursement_id is not None
-    await authorize(admin, disbursement_id, "127.0.0.1")
+    await authorize(authorizer, disbursement_id, "127.0.0.1")
     await record_transfer(treasurer, disbursement_id, reference, _today_wat(), "127.0.0.1")
-    await confirm_paid(admin, disbursement_id, "127.0.0.1")
+    await confirm_paid(confirmer, disbursement_id, "127.0.0.1")
 
 
 async def _seed_demo_heartbeat() -> None:
@@ -298,9 +299,17 @@ async def _seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
 
     rng = random.Random(DEMO_SEED)  # noqa: S311 - deterministic, non-cryptographic demo data
 
-    # Staff users: officer, committee, treasurer, auditor (admin already exists).
+    # Add an independent admin through the staff service for maker-checker workflows.
     staff_passwords: list[tuple[str, str]] = []
     staff_ids: dict[str, uuid.UUID] = {}
+    admin2_password = secrets.token_urlsafe(18)
+    admin2_email = f"admin2@{slug}.demo"
+    staff_ids["admin2"] = await create_staff_user(
+        admin, email=admin2_email, password=admin2_password, roles=("admin",)
+    )
+    staff_passwords.append(("admin2", admin2_password))
+
+    # Other demo staff users are provisioned through the same service.
     for role in ("officer", "committee", "treasurer", "auditor"):
         password = secrets.token_urlsafe(18)
         email = f"{role}@{slug}.demo"
@@ -309,6 +318,7 @@ async def _seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
         staff_passwords.append((role, password))
     _print_staff_passwords(staff_passwords, slug)
 
+    admin2 = _session(cooperative_id, slug, staff_ids["admin2"], admin2_email, "admin")
     officer = _session(
         cooperative_id, slug, staff_ids["officer"], f"officer@{slug}.demo", "officer"
     )
@@ -478,7 +488,11 @@ async def _seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
 
         # repaying and closed: disburse, then post repayments via the real service.
         await _disburse(
-            treasurer=treasurer, admin=admin, loan_id=loan_id, reference=f"BANK-REF-{plan_index}"
+            treasurer=treasurer,
+            authorizer=admin,
+            confirmer=admin2,
+            loan_id=loan_id,
+            reference=f"BANK-REF-{plan_index}",
         )
         schedule = build_schedule(
             principal_kobo, ANNUAL_RATE_BPS, tenor_months, "reducing_balance", first_due
@@ -516,7 +530,7 @@ async def _seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
         "members": MEMBER_COUNT,
         "loan_applications": len(LOAN_PLAN),
         "loans": 9,
-        "staff_users": 5,
+        "staff_users": 6,
         "disputed_loan_reachable": True,
     }
 
@@ -531,6 +545,6 @@ def _print_staff_passwords(staff_passwords: list[tuple[str, str]], slug: str) ->
 def _print_output(slug: str) -> None:
     """Print a short completion summary without repeating the one-time passwords."""
     print(
-        f"Seed complete for {slug}: members=25, loan_applications=14, loans=9, staff_users=5.",
+        f"Seed complete for {slug}: members=25, loan_applications=14, loans=9, staff_users=6.",
         flush=True,
     )

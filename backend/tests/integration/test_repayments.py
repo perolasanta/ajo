@@ -76,8 +76,8 @@ async def repaying_loan(db: asyncpg.Connection, base: LoanBase) -> tuple[uuid.UU
         base.bank_account_id,
         base.savings_account_id,
     )
-    disbursement_id, loan_id, authorizer = await authorized_transfer(db, repayment_base)
-    await confirm_paid(session(base.cooperative_id, authorizer, "committee"), disbursement_id, None)
+    disbursement_id, loan_id, _authorizer, confirmer = await authorized_transfer(db, repayment_base)
+    await confirm_paid(session(base.cooperative_id, confirmer, "admin"), disbursement_id, None)
     member_id = await db.fetchval(
         "SELECT member_id FROM loans WHERE cooperative_id=$1 AND id=$2",
         base.cooperative_id,

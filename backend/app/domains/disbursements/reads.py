@@ -14,6 +14,44 @@ from app.domains.auth.service import CurrentSession
 READ_ROLES = {"admin", "treasurer", "auditor"}
 BANK_ROLES = {"admin", "treasurer"}
 
+_DISBURSEMENT_COMMON_FIELDS = (
+    "id",
+    "loan_id",
+    "application_id",
+    "member_no",
+    "full_name",
+    "amount_kobo",
+    "status",
+    "prepared_by",
+    "authorized_by",
+    "transfer_reference",
+    "transfer_date",
+    "confirmed_by",
+    "created_at",
+    "authorized_at",
+    "transfer_recorded_at",
+    "paid_at",
+    "failed_at",
+    "reversed_at",
+    "reversal_reason",
+    "failure_reason",
+)
+_DISBURSEMENT_BANK_FIELDS = ("bank_code", "last4")
+_DISBURSEMENT_FIELDS_BY_ROLE: dict[str, tuple[str, ...]] = {
+    "admin": _DISBURSEMENT_COMMON_FIELDS + _DISBURSEMENT_BANK_FIELDS,
+    "treasurer": _DISBURSEMENT_COMMON_FIELDS + _DISBURSEMENT_BANK_FIELDS,
+    "auditor": _DISBURSEMENT_COMMON_FIELDS,
+}
+_READY_LOAN_FIELDS = (
+    "loan_id",
+    "application_id",
+    "member_no",
+    "full_name",
+    "amount_kobo",
+    "status",
+)
+_UUID_FIELDS = ("id", "loan_id", "application_id", "prepared_by", "authorized_by", "confirmed_by")
+
 
 def read_role(current: CurrentSession) -> str:
     for role in ("admin", "treasurer", "auditor"):
@@ -42,9 +80,19 @@ SELECT d.id,d.loan_id,a.id AS application_id,m.member_no,m.full_name,d.amount_ko
 """
 
 
-def _row(item: Any) -> dict[str, Any]:
-    result = dict(item)
-    for key in ("id", "loan_id", "application_id", "prepared_by", "authorized_by", "confirmed_by"):
+def _row(item: Any, role: str) -> dict[str, Any]:
+    source = dict(item)
+    result = {key: source[key] for key in _DISBURSEMENT_FIELDS_BY_ROLE[role] if key in source}
+    for key in _UUID_FIELDS:
+        if result.get(key) is not None:
+            result[key] = str(result[key])
+    return result
+
+
+def _ready_loan_row(item: Any) -> dict[str, Any]:
+    source = dict(item)
+    result = {key: source[key] for key in _READY_LOAN_FIELDS if key in source}
+    for key in ("loan_id", "application_id"):
         if result.get(key) is not None:
             result[key] = str(result[key])
     return result
@@ -53,7 +101,7 @@ def _row(item: Any) -> dict[str, Any]:
 async def list_disbursements(
     current: CurrentSession, *, status: str | None, search: str | None, page: int, page_size: int
 ) -> dict[str, Any]:
-    read_role(current)
+    role = read_role(current)
     params = {
         "cid": current.cooperative_id,
         "status": status.strip() if status else None,
@@ -80,12 +128,12 @@ async def list_disbursements(
             text(SELECT + " ORDER BY d.created_at DESC,d.id DESC LIMIT :limit OFFSET :offset"),
             params,
         )
-        items = [_row(item) for item in result.mappings()]
+        items = [_row(item, role) for item in result.mappings()]
     return {"items": items, "page": page, "page_size": page_size, "total": total}
 
 
 async def get_disbursement(current: CurrentSession, disbursement_id: uuid.UUID) -> dict[str, Any]:
-    read_role(current)
+    role = read_role(current)
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
             text(SELECT + " AND d.id=:id"),
@@ -94,7 +142,7 @@ async def get_disbursement(current: CurrentSession, disbursement_id: uuid.UUID) 
         row = result.mappings().one_or_none()
     if row is None:
         raise NotFound("Disbursement not found")
-    return _row(row)
+    return _row(row, role)
 
 
 async def list_ready_loans(
@@ -133,8 +181,5 @@ async def list_ready_loans(
             ),
             params,
         )
-        items = [dict(item) for item in result.mappings()]
-    for item in items:
-        item["loan_id"] = str(item["loan_id"])
-        item["application_id"] = str(item["application_id"])
+        items = [_ready_loan_row(item) for item in result.mappings()]
     return {"items": items, "page": page, "page_size": page_size, "total": total}
