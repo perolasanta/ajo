@@ -127,7 +127,11 @@ async def test_upload_routes_reject_files_over_5_mib(
 @pytest.mark.parametrize("action", ["dry-run", "import"])
 @pytest.mark.parametrize(
     ("content_type", "filename"),
-    [("application/pdf", "payroll.csv"), ("text/csv", "payroll.xlsx")],
+    [
+        ("application/pdf", "payroll.csv"),
+        ("application/json", "payroll.csv"),
+        ("text/csv", "payroll.xlsx"),
+    ],
 )
 async def test_upload_routes_reject_non_csv_content_types(
     action: str, content_type: str, filename: str, monkeypatch: pytest.MonkeyPatch

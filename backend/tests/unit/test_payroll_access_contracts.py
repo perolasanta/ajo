@@ -514,7 +514,15 @@ async def test_roles_without_payroll_access_receive_403(
     app.dependency_overrides[payroll_api.require_csrf] = lambda: None
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.request(method, f"/api/v1{path}", json=payload)
+        if method == "POST" and path.rsplit("/", 1)[-1] in {"dry-run", "import"}:
+            response = await client.request(
+                method,
+                f"/api/v1{path}?filename=payroll.csv",
+                content=b"Staff,Amount\nS-1,0\n",
+                headers={"Content-Type": "text/csv"},
+            )
+        else:
+            response = await client.request(method, f"/api/v1{path}", json=payload)
     assert response.status_code == 403
 
 
