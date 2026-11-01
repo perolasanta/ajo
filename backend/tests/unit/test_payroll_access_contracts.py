@@ -417,6 +417,8 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
     assert "## 1b. Payroll access and reporting" in decisions
     for path in (
         "POST /payroll/runs",
+        "GET /payroll/runs",
+        "GET /payroll/runs/{run_id}",
         "GET /payroll/runs/{run_id}/expected.csv",
         "POST /payroll/runs/{run_id}/dry-run",
         "POST /payroll/runs/{run_id}/import",
@@ -429,6 +431,9 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
     assert "no application write path" in decisions.lower()
     assert "500 characters" in decisions
     assert "personal and bank data" in decisions.lower()
+    assert "Dry-run results are not persisted" in decisions
+    assert "raw uploaded rows that were never imported" in decisions
+    assert "does not include original row numbers" in decisions
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,8 @@ import type {
   ReadyDisbursementLoanPage,
   MemberDetail,
   MemberListItem,
+  PayrollRunDetail,
+  PayrollRunPage,
   paths,
 } from "./schema";
 
@@ -170,6 +172,22 @@ export async function getDisbursements(
 
 export function getDisbursement(disbursementId: string): Promise<DisbursementRecord> {
   return request<DisbursementRecord>(`/disbursements/${disbursementId}`);
+}
+
+export async function getPayrollRuns(
+  params: { page?: number; pageSize?: number } = {},
+): Promise<PayrollRunPage> {
+  return unwrap(
+    await api.GET("/payroll/runs", {
+      params: {
+        query: { page: params.page ?? 1, page_size: params.pageSize ?? 10 },
+      },
+    }),
+  );
+}
+
+export async function getPayrollRun(runId: string): Promise<PayrollRunDetail> {
+  return unwrap(await api.GET("/payroll/runs/{run_id}", { params: { path: { run_id: runId } } }));
 }
 
 export async function getReadyDisbursementLoans(
