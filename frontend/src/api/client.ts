@@ -3,6 +3,9 @@ import type {
   LoanApplicationDetail,
   LoanApplicationPage,
   LoanProduct,
+  DisbursementPage,
+  DisbursementRecord,
+  ReadyDisbursementLoanPage,
   MemberDetail,
   MemberListItem,
   paths,
@@ -152,4 +155,80 @@ export function decideLoanApplication(
       body: JSON.stringify(body),
     },
   );
+}
+
+export async function getDisbursements(
+  params: { status?: string; search?: string; page?: number; pageSize?: number } = {},
+): Promise<DisbursementPage> {
+  const query = new URLSearchParams();
+  if (params.status && params.status !== "all") query.set("status", params.status);
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 10));
+  return request<DisbursementPage>(`/disbursements?${query.toString()}`);
+}
+
+export function getDisbursement(disbursementId: string): Promise<DisbursementRecord> {
+  return request<DisbursementRecord>(`/disbursements/${disbursementId}`);
+}
+
+export async function getReadyDisbursementLoans(
+  params: { search?: string; page?: number; pageSize?: number } = {},
+): Promise<ReadyDisbursementLoanPage> {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 10));
+  return request<ReadyDisbursementLoanPage>(`/disbursements/ready-loans?${query.toString()}`);
+}
+
+export function prepareDisbursement(loanId: string): Promise<{ disbursement_id: string }> {
+  return request<{ disbursement_id: string }>(`/loans/${loanId}/disbursements`, { method: "POST" });
+}
+
+export function authorizeDisbursement(disbursementId: string): Promise<{ authorized: boolean }> {
+  return request<{ authorized: boolean }>(`/disbursements/${disbursementId}/authorize`, {
+    method: "POST",
+  });
+}
+
+export function recordDisbursementTransfer(
+  disbursementId: string,
+  body: { reference: string; transfer_date: string },
+): Promise<{ recorded: boolean }> {
+  return request<{ recorded: boolean }>(`/disbursements/${disbursementId}/transfer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function confirmDisbursementPaid(
+  disbursementId: string,
+): Promise<{ journal_entry_id: string }> {
+  return request<{ journal_entry_id: string }>(`/disbursements/${disbursementId}/confirm-paid`, {
+    method: "POST",
+  });
+}
+
+export function failDisbursement(
+  disbursementId: string,
+  body: { reason: string },
+): Promise<{ failed: boolean }> {
+  return request<{ failed: boolean }>(`/disbursements/${disbursementId}/failed`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function reverseDisbursement(
+  disbursementId: string,
+  body: { reason: string },
+): Promise<{ journal_entry_id: string }> {
+  return request<{ journal_entry_id: string }>(`/disbursements/${disbursementId}/reverse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }

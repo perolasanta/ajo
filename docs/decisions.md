@@ -92,3 +92,16 @@ Enforce this matrix server-side with role-specific response schemas. Read endpoi
 Bank-account ids are returned by admin/officer/treasurer member detail responses only so the submit form can select an account; account numbers remain masked to last four digits.
 
 **TODO:** define a fuller committee loan-review summary after real committee review needs are validated.
+
+## 1d. Disbursement read access
+
+`GET /disbursements`, `GET /disbursements/{id}`, and `GET /disbursements/ready-loans` are tenant-scoped. List reads support pagination, status filtering, and search by member name or number. New fields are omitted unless explicitly allowlisted.
+
+| Role | Disbursement read access |
+|---|---|
+| **admin** | Paginated list, detail timeline, and ready-loan queue. May receive masked destination `bank_code` and `last4`. |
+| **treasurer** | Same read fields as admin, including masked destination `bank_code` and `last4`. |
+| **auditor** | Read-only list, detail timeline, and ready-loan queue. Destination bank fields are omitted. |
+| **officer, committee, members, all other roles** | HTTP 403. |
+
+Read projections include disbursement, loan and application ids; member number and name; amount in kobo; status; preparer, authorizer and paid confirmer user ids; transfer reference/date; failure and reversal reasons; and available workflow timestamps (`created_at`, `authorized_at`, `transfer_recorded_at`, `paid_at`, `failed_at`, `reversed_at`). Failure reason is read from the tenant-scoped audit record because it is not a disbursement-table column. No phone, email, salary, staff number, full bank-account number, token or hash is returned. These reads do not initiate or represent a bank transfer; money is transferred manually outside the application.

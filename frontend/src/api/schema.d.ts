@@ -92,6 +92,56 @@ export type LoanProduct = {
   guarantors_required: number;
 };
 
+export type DisbursementBase = {
+  id: string;
+  loan_id: string;
+  application_id: string;
+  member_no: string;
+  full_name: string;
+  amount_kobo: number;
+  status: string;
+  prepared_by: string;
+  authorized_by: string | null;
+  transfer_reference: string | null;
+  transfer_date: string | null;
+  confirmed_by: string | null;
+  failure_reason: string | null;
+  reversal_reason: string | null;
+  created_at: string;
+  authorized_at: string | null;
+  transfer_recorded_at: string | null;
+  paid_at: string | null;
+  failed_at: string | null;
+  reversed_at: string | null;
+};
+export type DisbursementAdminTreasurer = DisbursementBase & {
+  bank_code: string;
+  last4: string;
+};
+export type DisbursementAuditor = DisbursementBase;
+export type DisbursementRecord = DisbursementAdminTreasurer | DisbursementAuditor;
+export type DisbursementPage = {
+  items: DisbursementRecord[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+export type ReadyDisbursementLoan = {
+  loan_id: string;
+  application_id: string;
+  member_no: string;
+  full_name: string;
+  amount_kobo: number;
+  status: string;
+};
+export type ReadyDisbursementLoanPage = {
+  items: ReadyDisbursementLoan[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+export type DisbursementActionBody = { reason: string };
+
 export interface paths {
   "/auth/csrf": Record<string, never>;
   "/auth/login": Record<string, never>;
@@ -130,4 +180,49 @@ export interface paths {
     get: { responses: { 200: { content: { "application/json": LoanProduct[] } } } };
   };
   "/loan-applications/{application_id}/decision": { post: Record<string, never> };
+  "/disbursements": {
+    get: {
+      parameters?: { query?: { status?: string; search?: string; page?: number; page_size?: number } };
+      responses: { 200: { content: { "application/json": DisbursementPage } } };
+    };
+  };
+  "/disbursements/ready-loans": {
+    get: {
+      parameters?: { query?: { search?: string; page?: number; page_size?: number } };
+      responses: { 200: { content: { "application/json": ReadyDisbursementLoanPage } } };
+    };
+  };
+  "/disbursements/{disbursement_id}": {
+    get: {
+      parameters: { path: { disbursement_id: string } };
+      responses: { 200: { content: { "application/json": DisbursementRecord } } };
+    };
+  };
+  "/loans/{loan_id}/disbursements": {
+    post: { responses: { 200: { content: { "application/json": { disbursement_id: string } } } } };
+  };
+  "/disbursements/{disbursement_id}/authorize": {
+    post: { responses: { 200: { content: { "application/json": { authorized: boolean } } } } };
+  };
+  "/disbursements/{disbursement_id}/transfer": {
+    post: {
+      requestBody: { content: { "application/json": { reference: string; transfer_date: string } } };
+      responses: { 200: { content: { "application/json": { recorded: boolean } } } };
+    };
+  };
+  "/disbursements/{disbursement_id}/confirm-paid": {
+    post: { responses: { 200: { content: { "application/json": { journal_entry_id: string } } } } };
+  };
+  "/disbursements/{disbursement_id}/failed": {
+    post: {
+      requestBody: { content: { "application/json": DisbursementActionBody } };
+      responses: { 200: { content: { "application/json": { failed: boolean } } } };
+    };
+  };
+  "/disbursements/{disbursement_id}/reverse": {
+    post: {
+      requestBody: { content: { "application/json": DisbursementActionBody } };
+      responses: { 200: { content: { "application/json": { journal_entry_id: string } } } };
+    };
+  };
 }
