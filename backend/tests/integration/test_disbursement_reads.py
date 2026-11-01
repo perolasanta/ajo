@@ -33,7 +33,8 @@ async def db(test_database) -> asyncpg.Connection:
 
 async def _make_disbursement(db: asyncpg.Connection, base: LoanBase) -> str:
     member = await setup_loan_member(db, base)
-    cid, preparer, approver = base.cooperative_id, base.user_ids[:2]
+    cid = base.cooperative_id
+    preparer, approver = base.user_ids[:2]
     bank_id = uuid.uuid4()
     await db.execute(
         """INSERT INTO bank_accounts(cooperative_id,id,member_id,bank_code,account_number_encrypted,
@@ -147,3 +148,17 @@ async def test_detail_is_tenant_scoped_and_auditor_omits_bank_fields(
         await get_disbursement(
             session(other.cooperative_id, other.user_ids[0], "admin"), identifier
         )
+
+
+async def test_auditor_list_omits_bank_fields(db, base) -> None:
+    identifier = await _make_disbursement(db, base)
+    page = await list_disbursements(
+        session(base.cooperative_id, base.user_ids[0], "auditor"),
+        status=None,
+        search=None,
+        page=1,
+        page_size=100,
+    )
+    auditor_item = next(item for item in page["items"] if item["id"] == identifier)
+    assert "status" in auditor_item and "full_name" in auditor_item
+    assert "bank_code" not in auditor_item and "last4" not in auditor_item

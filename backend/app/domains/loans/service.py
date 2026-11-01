@@ -753,8 +753,9 @@ async def reissue_consent(
     cid = current.cooperative_id
     async with transaction(cid) as session:
         row = (
-            await session.execute(
-                text("""SELECT c.member_id,c.kind,c.status,c.otp_attempts,
+            (
+                await session.execute(
+                    text("""SELECT c.member_id,c.kind,c.status,c.otp_attempts,
                   a.member_id AS borrower_id,a.beneficiary_member_id,a.status AS application_status,
                   a.current_terms_snapshot_id,s.terms_sha256
                   FROM member_consents c
@@ -762,19 +763,27 @@ async def reissue_consent(
                   LEFT JOIN loan_terms_snapshots s ON s.cooperative_id=a.cooperative_id AND s.id=a.current_terms_snapshot_id
                   WHERE c.cooperative_id=:cid AND c.application_id=:app AND c.id=:consent
                   FOR UPDATE OF c,a"""),
-                {"cid": cid, "app": application_id, "consent": consent_id},
+                    {"cid": cid, "app": application_id, "consent": consent_id},
+                )
             )
-        ).mappings().one_or_none()
+            .mappings()
+            .one_or_none()
+        )
         if row is None:
             raise NotFound("Consent not found")
         if row["status"] != "invalidated" or row["otp_attempts"] < 5:
             raise Conflict("Consent is not locked by exhausted OTP attempts")
         if row["kind"] not in {"final_terms", "beneficiary"}:
             raise Conflict("Only final-terms and beneficiary consents can be reissued")
-        if row["application_status"] not in {
-            "awaiting_borrower_final_confirmation",
-            "ready_for_disbursement",
-        } or row["current_terms_snapshot_id"] is None or row["terms_sha256"] is None:
+        if (
+            row["application_status"]
+            not in {
+                "awaiting_borrower_final_confirmation",
+                "ready_for_disbursement",
+            }
+            or row["current_terms_snapshot_id"] is None
+            or row["terms_sha256"] is None
+        ):
             raise Conflict("Current approved terms are unavailable for reissue")
         expected_member_id = row["borrower_id"]
         if row["kind"] == "beneficiary":
@@ -812,7 +821,11 @@ async def reissue_consent(
             action="member_consent_reissued",
             entity_type="member_consent",
             entity_id=str(new_consent_id),
-            summary={"application_id": str(application_id), "previous_consent_id": str(consent_id), "kind": row["kind"]},
+            summary={
+                "application_id": str(application_id),
+                "previous_consent_id": str(consent_id),
+                "kind": row["kind"],
+            },
             channel="api",
             ip=None,
         )
