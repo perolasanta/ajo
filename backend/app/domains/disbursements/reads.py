@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from sqlalchemy import text
 
 from app.core.db import transaction
-from app.core.errors import Forbidden
+from app.core.errors import Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
 
 READ_ROLES = {"admin", "treasurer", "auditor"}
@@ -81,3 +82,16 @@ async def list_disbursements(
         )
         items = [_row(item) for item in result.mappings()]
     return {"items": items, "page": page, "page_size": page_size, "total": total}
+
+
+async def get_disbursement(current: CurrentSession, disbursement_id: uuid.UUID) -> dict[str, Any]:
+    read_role(current)
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text(SELECT + " AND d.id=:id"),
+            {"cid": current.cooperative_id, "status": None, "search": None, "id": disbursement_id},
+        )
+        row = result.mappings().one_or_none()
+    if row is None:
+        raise NotFound("Disbursement not found")
+    return _row(row)

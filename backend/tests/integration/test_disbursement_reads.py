@@ -9,7 +9,8 @@ import asyncpg
 import pytest
 
 from app.core.db import asyncpg_dsn, dispose_engine
-from app.domains.disbursements.reads import list_disbursements
+from app.core.errors import NotFound
+from app.domains.disbursements.reads import get_disbursement, list_disbursements
 from app.domains.disbursements.service import prepare
 from tests.integration.test_loans import LoanBase, _create_loan_base, session, setup_loan_member
 
@@ -122,3 +123,19 @@ async def test_search_pagination_status_and_tenant_scope(db, test_database, base
         page_size=10,
     )
     assert isolated["total"] == 1 and len(isolated["items"]) == 1
+
+
+async def test_detail_is_tenant_scoped_and_auditor_omits_bank_fields(
+    db, test_database, base
+) -> None:
+    other = await _create_loan_base(test_database)
+    identifier = uuid.UUID(await _make_disbursement(db, base))
+    auditor_detail = await get_disbursement(
+        session(base.cooperative_id, base.user_ids[0], "auditor"), identifier
+    )
+    assert auditor_detail["id"] == str(identifier)
+    assert "bank_code" not in auditor_detail and "last4" not in auditor_detail
+    with pytest.raises(NotFound):
+        await get_disbursement(
+            session(other.cooperative_id, other.user_ids[0], "admin"), identifier
+        )

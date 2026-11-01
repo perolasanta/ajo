@@ -82,6 +82,16 @@ async def list_disbursements(
     return _list_projection(result, role)
 
 
+@router.get("/disbursements/{disbursement_id}")
+async def disbursement_detail(
+    disbursement_id: uuid.UUID,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, object]:
+    role = reads.read_role(current)
+    row = await reads.get_disbursement(current, disbursement_id)
+    return _disbursement_projection(row, role)
+
+
 @router.post("/loans/{loan_id}/disbursements")
 async def prepare(
     loan_id: uuid.UUID,
