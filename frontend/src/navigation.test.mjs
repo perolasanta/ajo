@@ -54,6 +54,20 @@ test("disbursement navigation allowlist contains only admin, treasurer and audit
   assert.deepEqual(disbursementRoles, ["admin", "treasurer", "auditor"]);
 });
 
+for (const [role, expected] of [
+  ["admin", true],
+  ["auditor", true],
+  ["officer", false],
+  ["treasurer", false],
+  ["committee", false],
+  ["member", false],
+]) {
+  test(`${role} ${expected ? "sees" : "does not see"} Audit navigation`, () => {
+    const names = visibleNavigation([role]).map((item) => item.name);
+    assert.equal(names.includes("Audit"), expected);
+  });
+}
+
 for (const [role, expected] of loanCases) {
   test(`${role} ${expected ? "sees" : "does not see"} Loans navigation`, () => {
     const names = visibleNavigation([role]).map((item) => item.name);
