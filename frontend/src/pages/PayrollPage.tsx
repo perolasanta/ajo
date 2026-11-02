@@ -1,7 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ApiError, createPayrollRun, getPayrollRuns, request } from "../api/client";
+import {
+  ApiError,
+  createPayrollProfile,
+  createPayrollRun,
+  getPayrollProfiles,
+  getPayrollRuns,
+  request,
+} from "../api/client";
 import type { PayrollRunSummary } from "../api/schema";
 import { canCreatePayrollRun, payrollListState } from "../payrollPolicy.mjs";
 import { Badge } from "../ui/Badge";
@@ -86,7 +93,11 @@ function ListSkeleton() {
 export default function PayrollPage() {
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
+  const [showProfileForm, setShowProfileForm] = useState(false);
   const [profileId, setProfileId] = useState("");
+  const [staffNoColumn, setStaffNoColumn] = useState("");
+  const [amountColumn, setAmountColumn] = useState("");
+  const [nameColumn, setNameColumn] = useState("");
   const now = new Date();
   const [periodYear, setPeriodYear] = useState(String(now.getFullYear()));
   const [periodMonth, setPeriodMonth] = useState(String(now.getMonth() + 1));
@@ -97,17 +108,42 @@ export default function PayrollPage() {
     queryFn: () => request<Session>("/auth/me"),
     retry: false,
   });
-  const canCreate = canCreatePayrollRun(session.data?.roles ?? []);
+  const roles = session.data?.roles ?? [];
+  const canCreate = canCreatePayrollRun(roles);
+  const isAdmin = roles.includes("admin");
+  const profiles = useQuery({
+    queryKey: ["payroll-profiles"],
+    queryFn: getPayrollProfiles,
+    enabled: canCreate || isAdmin,
+    retry: false,
+  });
+  const selectedProfileId = profileId || profiles.data?.items[0]?.id || "";
   const createRun = useMutation({
     mutationFn: () =>
       createPayrollRun({
-        profile_id: profileId.trim(),
+        profile_id: selectedProfileId,
         period_year: Number(periodYear),
         period_month: Number(periodMonth),
       }),
     onSuccess: ({ run_id }) => {
       void queryClient.invalidateQueries({ queryKey: ["payroll-runs"] });
       navigate(`/payroll/runs/${run_id}`);
+    },
+  });
+  const createProfile = useMutation({
+    mutationFn: () =>
+      createPayrollProfile({
+        staff_no_column: staffNoColumn.trim(),
+        amount_column: amountColumn.trim(),
+        name_column: nameColumn.trim() || null,
+      }),
+    onSuccess: ({ profile_id }) => {
+      setProfileId(profile_id);
+      setStaffNoColumn("");
+      setAmountColumn("");
+      setNameColumn("");
+      setShowProfileForm(false);
+      void queryClient.invalidateQueries({ queryKey: ["payroll-profiles"] });
     },
   });
   const runs = useQuery({
@@ -120,16 +156,91 @@ export default function PayrollPage() {
   return (
     <>
       <PageHeader title="Payroll" breadcrumb="Monthly deduction runs">
-        {canCreate && (
-          <Button type="button" onClick={() => setShowCreate((value) => !value)}>
-            {showCreate ? "Close run form" : "Create run"}
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && (
+            <Button type="button" onClick={() => setShowProfileForm((value) => !value)}>
+              {showProfileForm ? "Close profile form" : "Create payroll profile"}
+            </Button>
+          )}
+          {canCreate && (
+            <Button type="button" onClick={() => setShowCreate((value) => !value)}>
+              {showCreate ? "Close run form" : "Create run"}
+            </Button>
+          )}
+        </div>
       </PageHeader>
       <p className="mb-5 max-w-2xl text-sm text-muted">
         Review expected and imported payroll totals. Member salary, contact, and bank details are
         not shown here.
       </p>
+      {showProfileForm && isAdmin && (
+        <form
+          className="mb-6 rounded-card border border-border bg-surface p-4 sm:p-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            createProfile.mutate();
+          }}
+        >
+          <h2 className="font-serif text-xl font-semibold">Create payroll profile</h2>
+          <p className="mt-1 text-sm text-muted">
+            Match these fields to the column headers in your payroll CSV.
+          </p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <label className="text-sm font-medium">
+              Staff number column header
+              <input
+                className="mt-1 min-h-11 w-full rounded-control border border-border bg-surface px-3 text-sm"
+                required
+                maxLength={100}
+                value={staffNoColumn}
+                onChange={(event) => setStaffNoColumn(event.target.value)}
+                placeholder="Staff No"
+              />
+            </label>
+            <label className="text-sm font-medium">
+              Amount column header
+              <input
+                className="mt-1 min-h-11 w-full rounded-control border border-border bg-surface px-3 text-sm"
+                required
+                maxLength={100}
+                value={amountColumn}
+                onChange={(event) => setAmountColumn(event.target.value)}
+                placeholder="Amount"
+              />
+            </label>
+            <label className="text-sm font-medium">
+              Name column header (optional)
+              <input
+                className="mt-1 min-h-11 w-full rounded-control border border-border bg-surface px-3 text-sm"
+                maxLength={100}
+                value={nameColumn}
+                onChange={(event) => setNameColumn(event.target.value)}
+                placeholder="Full Name"
+              />
+            </label>
+          </div>
+          {createProfile.isError && (
+            <p className="mt-3 text-sm text-danger" role="alert">
+              {createProfile.error instanceof ApiError
+                ? createProfile.error.message
+                : "Unable to create the payroll profile. Check the column headers and try again."}
+            </p>
+          )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button type="submit" loading={createProfile.isPending}>
+              Save profile
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setShowProfileForm(false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+      {createProfile.isSuccess && (
+        <p className="mb-4 text-sm text-success" role="status">
+          Payroll profile created successfully.
+        </p>
+      )}
       {showCreate && canCreate && (
         <form
           className="mb-6 rounded-card border border-border bg-surface p-4 sm:p-5"
@@ -140,22 +251,53 @@ export default function PayrollPage() {
         >
           <h2 className="font-serif text-xl font-semibold">Create payroll run</h2>
           <p className="mt-1 text-sm text-muted">
-            Enter the profile ID configured by your payroll administrator. Profile management
-            remains admin-only.
+            Choose a saved payroll profile and the period for this run.
           </p>
+          {profiles.isPending && (
+            <p className="mt-3 text-sm text-muted" role="status">
+              Loading payroll profiles…
+            </p>
+          )}
+          {profiles.isError && (
+            <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-danger" role="alert">
+              {profiles.error instanceof ApiError
+                ? profiles.error.message
+                : "Payroll profiles could not be loaded."}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => void profiles.refetch()}
+              >
+                Try again
+              </Button>
+            </p>
+          )}
+          {profiles.data?.items.length === 0 && (
+            <p className="mt-3 text-sm text-muted" role="status">
+              No payroll profiles yet. An admin has to create one.
+            </p>
+          )}
           <div className="mt-4 grid gap-4 sm:grid-cols-3">
             <label className="text-sm font-medium">
-              Payroll profile ID
-              <input
+              Payroll profile
+              <select
                 className="mt-1 min-h-11 w-full rounded-control border border-border bg-surface px-3 text-sm"
                 required
-                minLength={36}
-                maxLength={36}
-                pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-                value={profileId}
+                disabled={profiles.isPending || profiles.isError || !profiles.data?.items.length}
+                value={selectedProfileId}
                 onChange={(event) => setProfileId(event.target.value)}
-                placeholder="UUID from your admin"
-              />
+              >
+                <option value="" disabled>
+                  Select a profile
+                </option>
+                {profiles.data?.items.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name} ({profile.staff_no_column}, {profile.amount_column}
+                    {profile.name_column ? `, ${profile.name_column}` : ""})
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm font-medium">
               Period year
@@ -190,7 +332,11 @@ export default function PayrollPage() {
             </p>
           )}
           <div className="mt-4 flex flex-wrap gap-2">
-            <Button type="submit" loading={createRun.isPending}>
+            <Button
+              type="submit"
+              loading={createRun.isPending}
+              disabled={!selectedProfileId || profiles.isError || profiles.isPending}
+            >
               Create run
             </Button>
             <Button type="button" variant="secondary" onClick={() => setShowCreate(false)}>

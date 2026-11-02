@@ -41,6 +41,19 @@ class ProfileResponse(_PayrollResponse):
     profile_id: str
 
 
+class PayrollProfileSummaryResponse(_PayrollResponse):
+    id: str
+    name: str
+    staff_no_column: str
+    amount_column: str
+    name_column: str | None
+    created_at: datetime
+
+
+class PayrollProfileListResponse(_PayrollResponse):
+    items: list[PayrollProfileSummaryResponse]
+
+
 class RunResponse(_PayrollResponse):
     run_id: str
 
@@ -185,6 +198,13 @@ async def create_profile(
 ) -> dict[str, str]:
     profile_id = await service.create_profile(current, body.model_dump())
     return {"profile_id": str(profile_id)}
+
+
+@router.get("/payroll/profiles", response_model=PayrollProfileListResponse)
+async def list_profiles(
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, object]:
+    return await service.list_profiles(current)
 
 
 @router.post("/payroll/runs", response_model=RunResponse)

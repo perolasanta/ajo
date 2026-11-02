@@ -153,6 +153,61 @@ async def setup_payroll_fixture(
     return cid, users, loans
 
 
+async def test_payroll_profiles_are_role_limited_and_tenant_scoped(
+    db: asyncpg.Connection,
+) -> None:
+    roles = ("officer", "committee", "treasurer", "admin", "auditor")
+    first = await create_tenant(
+        db,
+        name="Payroll profile tenant one",
+        slug_prefix="payroll-profile-one",
+        roles=roles,
+    )
+    second = await create_tenant(
+        db,
+        name="Payroll profile tenant two",
+        slug_prefix="payroll-profile-two",
+        roles=roles,
+    )
+    first_users = dict(zip(roles, first.user_ids, strict=True))
+    second_users = dict(zip(roles, second.user_ids, strict=True))
+    values = {
+        "staff_no_column": "Staff No",
+        "amount_column": "Amount",
+        "name_column": "Full Name",
+    }
+    first_profile = await service.create_profile(
+        session(first.cooperative_id, first_users["admin"], "admin"), values
+    )
+    await service.create_profile(
+        session(second.cooperative_id, second_users["admin"], "admin"), values
+    )
+
+    expected_keys = {
+        "id",
+        "name",
+        "staff_no_column",
+        "amount_column",
+        "name_column",
+        "created_at",
+    }
+    for role in ("officer", "treasurer", "admin"):
+        result = await service.list_profiles(session(first.cooperative_id, first_users[role], role))
+        assert len(result["items"]) == 1
+        profile = result["items"][0]
+        assert set(profile) == expected_keys
+        assert profile["id"] == str(first_profile)
+        assert profile["name"] == "Payroll profile v1"
+        assert profile["staff_no_column"] == "Staff No"
+        assert profile["amount_column"] == "Amount"
+        assert profile["name_column"] == "Full Name"
+
+    for role in ("committee", "auditor", "member"):
+        user_id = first_users.get(role, uuid.uuid4())
+        with pytest.raises(Forbidden):
+            await service.list_profiles(session(first.cooperative_id, user_id, role))
+
+
 async def test_disputed_and_paused_loans_are_excluded_from_payroll_deductions_and_posting(
     db: asyncpg.Connection,
 ) -> None:
