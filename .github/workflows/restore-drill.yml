@@ -25,6 +25,8 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: pip install -e ".[dev]"
+      - name: Install PostgreSQL client tools
+        run: sudo apt-get update && sudo apt-get install --yes postgresql-client
       - name: Pull the disposable PostgreSQL image
         run: docker pull postgres:18
       - name: Run fake-data restore drill
