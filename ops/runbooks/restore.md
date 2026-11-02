@@ -31,6 +31,9 @@ Log each drill: date, route, time taken, result, problems.
 
 Run this only on a disposable Neon branch (or isolated local PostgreSQL instance), never on `main` or production. Stop the API, worker, and scheduler for the destination. A restore dump may contain personal and financial data: use a protected temporary directory (`umask 077`) and delete the dump when the drill is complete. Keep source and destination URLs in environment variables or a password manager; do not paste them into chat or commit them.
 
+### Backup role and RLS proof
+
+The backup connection must be the owner or another role with `BYPASSRLS`. A runtime role such as `ajo_app`, `ajo_readonly`, or `ajo_scheduler` must not bypass RLS: a dump taken with one of those roles can fail or omit tenant rows because `pg_dump` does not establish the application's tenant context. The disposable drill proves this by attempting a non-bypass dump and requiring it to be rejected or to restore row counts different from the owner dump. It also records that the owner used for the real dump has `rolbypassrls = true`.
 ### Recorded pre-restore Neon validation (2026-11-02)
 
 All six checks of `backend/scripts/neon_validate.py --phase before-restore` passed on a disposable Neon `dev`-branch database running PostgreSQL 18, using a fresh local PostgreSQL 18 reference. `ajo_scheduler` used a direct connection and its password was set by SQL on the Neon branch. The run verified pooled RLS isolation across 20 transaction reuses; app/scheduler role safety; advisory locks; schema and effective-grant matches against the migration-built reference; and `ajo_app` read/write access with the insert rolled back. This was a pre-restore validation only: the backup/restore/ACL drill, behavior under load, and production branch remain unverified. No URLs or passwords are recorded. See [the Neon guide](../../docs/neon.md#7-validate-a-disposable-branch) for the check-by-check results.
@@ -87,3 +90,18 @@ All six checks of `backend/scripts/neon_validate.py --phase before-restore` pass
 7. Record source/destination labels (not URLs or passwords), dump/restore exit status, ACL helper result, validator output, smoke result, date, and duration. Remove the temporary dump and destroy the disposable destination database/branch after evidence is recorded.
 
 Drill record: date ______; source label ______; destination label ______; dump/restore ______; ACL restore ______; validator ______; app read/write ______; duration ______; issues ______.
+
+## D. Operator-run encrypted backups
+
+The scripts below are documentation-only operational tools. They require an operator-owned environment file outside the repository; never put that file, a database URL, a private age key, or an rclone credential in GitHub Actions or this repository.
+
+Required environment names are `DATABASE_URL_DIRECT`, `BACKUP_AGE_RECIPIENT` (public age key), `BACKUP_REMOTE` (rclone destination), and `BACKUP_AGE_IDENTITY_FILE` (private key path for verification only). Optional names are `BACKUP_ROOT`, `BACKUP_MIN_BYTES`, `BACKUP_RETENTION_DAILY`, `BACKUP_RETENTION_WEEKLY`, `BACKUP_RETENTION_MONTHLY`, `POSTGRES_IMAGE`, and `BACKUP_ALERT_HOOK`. The defaults retain 7 daily, 4 weekly, and 6 monthly windows. Keep the environment file readable only by the backup operator.
+
+Run the backup and restore verifier separately, with no overlapping execution:
+
+```cron
+15 1 * * * . /etc/ajo/backup.env && /opt/ajo/ops/backup/backup.sh >>/var/log/ajo-backup.log 2>&1
+45 2 * * 0 . /etc/ajo/backup.env && /opt/ajo/ops/backup/verify_restore.sh >>/var/log/ajo-restore-verify.log 2>&1
+```
+
+The backup script requires a PostgreSQL 18 `pg_dump` client, writes a custom-format dump manifest and checksum, encrypts a bundle with the age public key, copies only the encrypted artifacts offsite with rclone, and invokes the optional alert hook on failure. The verifier selects the latest encrypted `.age` artifact, decrypts it only inside a mode-700 temporary directory, restores into a local PostgreSQL 18 container, reapplies ACLs, runs `neon_validate.py --phase after-restore`, compares every manifest count, and securely removes decrypted files and the container on both success and failure.

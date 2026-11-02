@@ -1,4 +1,4 @@
-.PHONY: setup api test test-all test-db-up test-db-down lint fmt migrate smoke web
+.PHONY: setup api test test-all test-db-up test-db-down lint fmt migrate smoke restore-drill web
 PY=backend/.venv/bin
 setup:
 	cd backend && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
@@ -21,3 +21,5 @@ migrate:
 	cd backend && .venv/bin/alembic upgrade head
 smoke:
 	cd backend && .venv/bin/python scripts/neon_smoke_test.py
+restore-drill:
+	./scripts/restore_drill.sh
