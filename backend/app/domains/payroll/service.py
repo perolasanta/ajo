@@ -156,6 +156,39 @@ async def create_profile(current: CurrentSession, values: dict[str, Any]) -> uui
     return profile_id
 
 
+async def list_profiles(current: CurrentSession) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer", "admin"})
+    cid = current.cooperative_id
+    async with transaction(cid) as session:
+        rows = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT id,version,staff_no_column,amount_column,name_column,created_at
+                       FROM payroll_import_profiles
+                       WHERE cooperative_id=:cid ORDER BY version DESC"""
+                    ),
+                    {"cid": cid},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return {
+        "items": [
+            {
+                "id": str(row["id"]),
+                "name": f"Payroll profile v{row['version']}",
+                "staff_no_column": row["staff_no_column"],
+                "amount_column": row["amount_column"],
+                "name_column": row["name_column"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
 async def create_run(
     current: CurrentSession, profile_id: uuid.UUID, year: int, month: int
 ) -> uuid.UUID:

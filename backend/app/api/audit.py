@@ -1,4 +1,5 @@
 """Read-only audit log endpoints."""
+
 from __future__ import annotations
 
 import uuid
@@ -17,7 +18,7 @@ router = APIRouter(tags=["audit"])
 
 
 class AuditEventResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     event_id: str
     timestamp: datetime
@@ -30,7 +31,7 @@ class AuditEventResponse(BaseModel):
 
 
 class AuditEventPageResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     items: list[AuditEventResponse]
     page: int
@@ -47,9 +48,15 @@ class AuditVerificationResponse(BaseModel):
 
 
 def _page_projection(page: dict[str, object]) -> dict[str, object]:
-    return AuditEventPageResponse.model_validate(
-        {**page, "items": [AuditEventResponse.model_validate(item) for item in page["items"]]}
-    ).model_dump(mode="json")
+    raw_items = page.get("items")
+    if not isinstance(raw_items, list):
+        raise TypeError("Audit event page must contain an item list")
+    items: list[dict[str, object]] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            raise TypeError("Audit event rows must be objects")
+        items.append(reads.audit_projection(item))
+    return AuditEventPageResponse.model_validate({**page, "items": items}).model_dump(mode="json")
 
 
 @router.get("/audit-events", response_model=AuditEventPageResponse)

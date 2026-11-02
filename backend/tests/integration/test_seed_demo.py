@@ -87,6 +87,18 @@ async def test_seed_demo_end_to_end(db: asyncpg.Connection, capsys) -> None:
             "auditor",
         }
 
+        profiles = await db.fetch(
+            """SELECT staff_no_column, amount_column, name_column
+                 FROM payroll_import_profiles WHERE cooperative_id = $1""",
+            cooperative_id,
+        )
+        assert len(profiles) == 1
+        assert dict(profiles[0]) == {
+            "staff_no_column": "Staff No",
+            "amount_column": "Amount",
+            "name_column": "Full Name",
+        }
+
         rows = await db.fetch(
             """SELECT m.member_no, a.status AS application_status, l.status AS loan_status
                  FROM loan_applications a

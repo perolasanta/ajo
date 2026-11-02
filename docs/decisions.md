@@ -30,9 +30,12 @@ Enforce these permissions server-side; hiding fields or navigation in the user i
 | `POST /payroll/runs/{run_id}/import` | Officer and treasurer |
 | `POST /payroll/runs/{run_id}/post` | Treasurer only |
 | `POST /payroll/profiles` | Admin only |
+| `GET /payroll/profiles` | Officer, treasurer, and admin; read-only, limited to profile ID, display name, configured column headers, and creation time |
 | `POST /payroll/runs/{run_id}/sign-off` | Admin only; the signer must differ from the poster, or the importer for a run posted before poster tracking |
 
 Committee and auditor roles have no payroll access. **TODO:** read-only sign-off report for auditors.
+
+Payroll profile display names are generated from the stored profile version; the response contains no other profile metadata.
 
 Dry-run results are not persisted. They remain in the current page session only; users must re-run the dry-run after a reload. This avoids retaining raw uploaded rows that were never imported. Run detail reads persisted `payroll_items` exceptions only and does not include original row numbers, which are not stored.
 

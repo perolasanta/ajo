@@ -1,4 +1,5 @@
 """Read-only, tenant-scoped audit log queries."""
+
 from __future__ import annotations
 
 import uuid
@@ -27,7 +28,9 @@ def _safe_summary(summary: object) -> dict[str, str | int | bool | None]:
         return {}
     safe: dict[str, str | int | bool | None] = {}
     for key in SAFE_SUMMARY_KEYS:
-        value = summary.get(key)
+        if key not in summary:
+            continue
+        value = summary[key]
         if isinstance(value, (str, int, bool)) or value is None:
             safe[key] = value
     return safe
@@ -58,42 +61,46 @@ async def list_audit_events(
     page_size: int = 25,
 ) -> dict[str, object]:
     read_role(current)
-    filters = ["cooperative_id = :cooperative_id"]
-    params: dict[str, object] = {"cooperative_id": current.cooperative_id}
-    if from_timestamp is not None:
-        filters.append("created_at >= :from_timestamp")
-        params["from_timestamp"] = from_timestamp
-    if to_timestamp is not None:
-        filters.append("created_at < :to_timestamp")
-        params["to_timestamp"] = to_timestamp
-    if actor_id is not None:
-        filters.append("actor_user_id = :actor_id")
-        params["actor_id"] = actor_id
-    if action is not None:
-        filters.append("action = :action")
-        params["action"] = action
-    if entity_type is not None:
-        filters.append("entity_type = :entity_type")
-        params["entity_type"] = entity_type
-    where = " AND ".join(filters)
-    params["limit"] = page_size
-    params["offset"] = (page - 1) * page_size
+    params: dict[str, object] = {
+        "cooperative_id": current.cooperative_id,
+        "from_timestamp": from_timestamp,
+        "to_timestamp": to_timestamp,
+        "actor_id": actor_id,
+        "action": action,
+        "entity_type": entity_type,
+    }
     async with transaction(current.cooperative_id) as session:
         total = int(
-            await session.scalar(text(f"SELECT count(*) FROM audit_logs WHERE {where}"), params)
+            await session.scalar(
+                text(
+                    """SELECT count(*) FROM audit_logs
+                       WHERE cooperative_id=:cooperative_id
+                         AND (:from_timestamp IS NULL OR created_at >= :from_timestamp)
+                         AND (:to_timestamp IS NULL OR created_at < :to_timestamp)
+                         AND (:actor_id IS NULL OR actor_user_id = :actor_id)
+                         AND (:action IS NULL OR action = :action)
+                         AND (:entity_type IS NULL OR entity_type = :entity_type)"""
+                ),
+                params,
+            )
             or 0
         )
         result = await session.execute(
             text(
-                f"""
+                """
                 SELECT id, created_at, actor_user_id, role, action, entity_type, entity_id, summary
                   FROM audit_logs
-                 WHERE {where}
+                 WHERE cooperative_id=:cooperative_id
+                   AND (:from_timestamp IS NULL OR created_at >= :from_timestamp)
+                   AND (:to_timestamp IS NULL OR created_at < :to_timestamp)
+                   AND (:actor_id IS NULL OR actor_user_id = :actor_id)
+                   AND (:action IS NULL OR action = :action)
+                   AND (:entity_type IS NULL OR entity_type = :entity_type)
                  ORDER BY created_at DESC, id DESC
                  LIMIT :limit OFFSET :offset
                 """
             ),
-            params,
+            {**params, "limit": page_size, "offset": (page - 1) * page_size},
         )
-        items = [audit_projection(dict(row)) for row in result.mappings()]
+        items = [dict(row) for row in result.mappings()]
     return {"items": items, "page": page, "page_size": page_size, "total": total}

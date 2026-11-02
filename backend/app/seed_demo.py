@@ -32,6 +32,7 @@ from app.domains.loans.service import decide_application, submit_application
 from app.domains.members.bank_accounts import add_bank_account
 from app.domains.members.salary import add_salary_record
 from app.domains.members.service import import_members, record_contribution
+from app.domains.payroll.service import create_profile
 from app.domains.policies.service import (
     approve_loan_product,
     approve_policy,
@@ -327,6 +328,14 @@ async def _seed_demo(slug: str, yes_fake_data: bool) -> dict[str, Any]:
     )
     treasurer = _session(
         cooperative_id, slug, staff_ids["treasurer"], f"treasurer@{slug}.demo", "treasurer"
+    )
+    await create_profile(
+        admin,
+        {
+            "staff_no_column": "Staff No",
+            "amount_column": "Amount",
+            "name_column": "Full Name",
+        },
     )
 
     # One approved policy version: officer proposes, admin approves (different users).

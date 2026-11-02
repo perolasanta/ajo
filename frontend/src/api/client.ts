@@ -32,6 +32,27 @@ export class ApiError extends Error {
   }
 }
 
+function readableErrorMessage(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return undefined;
+
+  const messages = value.flatMap((issue: unknown) => {
+    if (typeof issue !== "object" || issue === null || !("msg" in issue)) return [];
+    const message = Reflect.get(issue, "msg");
+    if (typeof message !== "string") return [];
+    const location = Reflect.get(issue, "loc");
+    const field = Array.isArray(location)
+      ? location
+          .slice(1)
+          .filter((part): part is string => typeof part === "string")
+          .join(".")
+          .replaceAll("_", " ")
+      : "";
+    return [field ? `${field}: ${message}` : message];
+  });
+  return messages.length > 0 ? messages.join("; ") : undefined;
+}
+
 function csrfToken(): string | undefined {
   return document.cookie
     .split("; ")
@@ -73,17 +94,17 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const errorBody = (await response
       .clone()
       .json()
-      .catch(() => null)) as { error?: string; detail?: string; message?: string } | null;
+      .catch(() => null)) as { error?: unknown; detail?: unknown; message?: unknown } | null;
     throw new ApiError(
       response.status,
       response.status === 403
         ? "You do not have permission to view this information."
-        : (errorBody?.message ??
-            errorBody?.detail ??
-            errorBody?.error ??
+        : (readableErrorMessage(errorBody?.message) ??
+            readableErrorMessage(errorBody?.detail) ??
+            readableErrorMessage(errorBody?.error) ??
             "Request failed. Please try again."),
       response.headers.get("X-Request-ID") ?? undefined,
-      errorBody?.error,
+      readableErrorMessage(errorBody?.error),
     );
   }
   return response.json() as Promise<T>;
@@ -227,6 +248,32 @@ export async function getPayrollRuns(
       },
     }),
   );
+}
+
+export type PayrollProfile = {
+  id: string;
+  name: string;
+  staff_no_column: string;
+  amount_column: string;
+  name_column: string | null;
+  created_at: string;
+};
+
+export function getPayrollProfiles(): Promise<{ items: PayrollProfile[] }> {
+  return request<{ items: PayrollProfile[] }>("/payroll/profiles");
+}
+
+export function createPayrollProfile(body: {
+  staff_no_column: string;
+  amount_column: string;
+  name_column?: string | null;
+  header_row?: number;
+}): Promise<{ profile_id: string }> {
+  return request<{ profile_id: string }>("/payroll/profiles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export async function getPayrollRun(runId: string): Promise<PayrollRunDetail> {

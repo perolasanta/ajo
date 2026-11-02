@@ -138,6 +138,26 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
         },
     ),
     ("POST", "/payroll/profiles"): ({"profile_id"}, {"profile_id": PROFILE_ID}),
+    (
+        "GET",
+        "/payroll/profiles",
+    ): (
+        {"items"},
+        {
+            "items": [
+                {
+                    "id": PROFILE_ID,
+                    "name": "Payroll profile v1",
+                    "staff_no_column": "Staff No",
+                    "amount_column": "Amount",
+                    "name_column": "Name",
+                    "created_at": "2026-10-01T10:00:00Z",
+                    "version": 1,
+                    "created_by": PROFILE_ID,
+                }
+            ]
+        },
+    ),
     ("POST", "/payroll/runs"): ({"run_id"}, {"run_id": RUN_ID}),
     (
         "POST",
@@ -244,6 +264,49 @@ def test_payroll_run_list_has_exact_safe_nested_keys() -> None:
         "duplicate",
     }
     assert not {"salary", "phone", "email", "bank", "member_id"} & set(item)
+
+
+@pytest.mark.parametrize("role", ["officer", "treasurer", "admin"])
+async def test_payroll_profile_list_has_exact_fields_for_each_read_role(
+    role: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = _session_for(role)
+    profile = {
+        "id": PROFILE_ID,
+        "name": "Payroll profile v1",
+        "staff_no_column": "Staff No",
+        "amount_column": "Amount",
+        "name_column": "Name",
+        "created_at": "2026-10-01T10:00:00Z",
+        "version": 1,
+        "created_by": PROFILE_ID,
+    }
+
+    async def _list_profiles(session: CurrentSession) -> dict[str, Any]:
+        assert session.cooperative_id == current.cooperative_id
+        return {"items": [profile]}
+
+    monkeypatch.setattr(payroll_api.service, "list_profiles", _list_profiles)
+    app = FastAPI()
+    install_error_handlers(app)
+    app.include_router(payroll_api.router, prefix="/api/v1")
+    app.dependency_overrides[payroll_api.current_session] = lambda: current
+    app.dependency_overrides[payroll_api.require_csrf] = lambda: None
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/payroll/profiles")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"items"}
+    assert set(payload["items"][0]) == {
+        "id",
+        "name",
+        "staff_no_column",
+        "amount_column",
+        "name_column",
+        "created_at",
+    }
 
 
 def test_payroll_run_detail_has_exact_safe_persisted_fields() -> None:
@@ -426,6 +489,7 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
         "POST /payroll/runs/{run_id}/import",
         "POST /payroll/runs/{run_id}/post",
         "POST /payroll/profiles",
+        "GET /payroll/profiles",
         "POST /payroll/runs/{run_id}/sign-off",
     ):
         assert path in decisions
@@ -482,6 +546,7 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
                 ),
                 ("GET", f"/payroll/runs/{RUN_ID}/expected.csv", None),
                 ("GET", "/payroll/runs", None),
+                ("GET", "/payroll/profiles", None),
                 ("GET", f"/payroll/runs/{RUN_ID}", None),
                 (
                     "POST",

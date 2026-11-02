@@ -8,8 +8,8 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from app.api import (
-    auth,
     audit,
+    auth,
     consent,
     disbursements,
     health,
