@@ -136,6 +136,18 @@ export function getLoanProducts(): Promise<LoanProduct[]> {
   return request<LoanProduct[]>("/loan-products");
 }
 
+export async function getDashboardCardCount(card: {
+  source: "loans" | "disbursements";
+  status: string;
+}): Promise<number> {
+  if (card.source === "loans") {
+    const page = await getLoanApplications({ status: card.status, page: 1, pageSize: 1 });
+    return page.total;
+  }
+  const page = await getDisbursements({ status: card.status, page: 1, pageSize: 1 });
+  return page.total;
+}
+
 export async function getAuditEvents(
   params: {
     from?: string;

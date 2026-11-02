@@ -27,6 +27,7 @@ const DesignPage = lazy(() => import("./pages/DesignPage"));
 const PayrollPage = lazy(() => import("./pages/PayrollPage"));
 const PayrollDetailPage = lazy(() => import("./pages/PayrollDetailPage"));
 const AuditPage = lazy(() => import("./pages/AuditPage"));
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 
 const fakeMembers: MemberListItem[] = [
   {
@@ -328,6 +329,7 @@ export default function App() {
         </>
       )}
       <Route element={<ProtectedShell />}>
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/members" element={<MembersPage />} />
         <Route path="/members/:memberId" element={<MemberDetailPage />} />
         <Route path="/loans" element={<LoansPage />} />
