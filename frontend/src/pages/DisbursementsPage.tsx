@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
@@ -84,8 +84,9 @@ function ListSkeleton() {
 export default function DisbursementsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState(() => searchParams.get("status") ?? "all");
   const [page, setPage] = useState(1);
   const debouncedSearch = useDebouncedValue(search);
   const session = useQuery({
@@ -113,11 +114,25 @@ export default function DisbursementsPage() {
   });
   const listState = disbursementListState(disbursements);
   const statuses = useMemo(
-    () => [...new Set((disbursements.data?.items ?? []).map((item) => item.status))],
-    [disbursements.data],
+    () => [
+      ...new Set([
+        ...(disbursements.data?.items ?? []).map((item) => item.status),
+        ...(status === "all" ? [] : [status]),
+      ]),
+    ],
+    [disbursements.data, status],
   );
   const totalPages = Math.max(1, Math.ceil((disbursements.data?.total ?? 0) / pageSize));
   useEffect(() => setPage(1), [debouncedSearch, status]);
+  useEffect(() => setStatus(searchParams.get("status") ?? "all"), [searchParams]);
+
+  function updateStatus(value: string) {
+    setStatus(value);
+    const next = new URLSearchParams(searchParams);
+    if (value === "all") next.delete("status");
+    else next.set("status", value);
+    setSearchParams(next, { replace: true });
+  }
   return (
     <>
       <PageHeader title="Disbursements" breadcrumb="Manual bank transfers" />
@@ -176,7 +191,7 @@ export default function DisbursementsPage() {
         <Select
           aria-label="Filter disbursements by status"
           value={status}
-          onChange={(event) => setStatus(event.target.value)}
+          onChange={(event) => updateStatus(event.target.value)}
         >
           <option value="all">All statuses</option>
           {statuses.map((value) => (

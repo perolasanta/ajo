@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
@@ -56,8 +56,9 @@ function ErrorState({
 }
 
 export default function LoansPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
+  const [status, setStatus] = useState(() => searchParams.get("status") ?? "all");
   const [page, setPage] = useState(1);
   const debouncedSearch = useDebouncedValue(search);
   const session = useQuery({ queryKey: ["session"], queryFn: () => requestSession() });
@@ -67,12 +68,26 @@ export default function LoansPage() {
       getLoanApplications({ search: debouncedSearch || undefined, status, page, pageSize }),
   });
   const statuses = useMemo(
-    () => [...new Set((loans.data?.items ?? []).map((item) => item.status))],
-    [loans.data],
+    () => [
+      ...new Set([
+        ...(loans.data?.items ?? []).map((item) => item.status),
+        ...(status === "all" ? [] : [status]),
+      ]),
+    ],
+    [loans.data, status],
   );
   const canSubmit = canSubmitLoans(session.data?.roles ?? []);
   const totalPages = Math.max(1, Math.ceil((loans.data?.total ?? 0) / pageSize));
   useEffect(() => setPage(1), [debouncedSearch, status]);
+  useEffect(() => setStatus(searchParams.get("status") ?? "all"), [searchParams]);
+
+  function updateStatus(value: string) {
+    setStatus(value);
+    const next = new URLSearchParams(searchParams);
+    if (value === "all") next.delete("status");
+    else next.set("status", value);
+    setSearchParams(next, { replace: true });
+  }
 
   return (
     <>
@@ -96,7 +111,7 @@ export default function LoansPage() {
         <Select
           aria-label="Filter loans by status"
           value={status}
-          onChange={(event) => setStatus(event.target.value)}
+          onChange={(event) => updateStatus(event.target.value)}
         >
           <option value="all">All statuses</option>
           {statuses.map((value) => (
