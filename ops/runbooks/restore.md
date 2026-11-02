@@ -87,3 +87,18 @@ The backup connection must be the owner or another role with `BYPASSRLS`. A runt
 7. Record source/destination labels (not URLs or passwords), dump/restore exit status, ACL helper result, validator output, smoke result, date, and duration. Remove the temporary dump and destroy the disposable destination database/branch after evidence is recorded.
 
 Drill record: date ______; source label ______; destination label ______; dump/restore ______; ACL restore ______; validator ______; app read/write ______; duration ______; issues ______.
+
+## D. Operator-run encrypted backups
+
+The scripts below are documentation-only operational tools. They require an operator-owned environment file outside the repository; never put that file, a database URL, a private age key, or an rclone credential in GitHub Actions or this repository.
+
+Required environment names are `DATABASE_URL_DIRECT`, `BACKUP_AGE_RECIPIENT` (public age key), `BACKUP_REMOTE` (rclone destination), and `BACKUP_AGE_IDENTITY_FILE` (private key path for verification only). Optional names are `BACKUP_ROOT`, `BACKUP_MIN_BYTES`, `BACKUP_RETENTION_DAILY`, `BACKUP_RETENTION_WEEKLY`, `BACKUP_RETENTION_MONTHLY`, `POSTGRES_IMAGE`, and `BACKUP_ALERT_HOOK`. The defaults retain 7 daily, 4 weekly, and 6 monthly windows. Keep the environment file readable only by the backup operator.
+
+Run the backup and restore verifier separately, with no overlapping execution:
+
+```cron
+15 1 * * * . /etc/ajo/backup.env && /opt/ajo/ops/backup/backup.sh >>/var/log/ajo-backup.log 2>&1
+45 2 * * 0 . /etc/ajo/backup.env && /opt/ajo/ops/backup/verify_restore.sh >>/var/log/ajo-restore-verify.log 2>&1
+```
+
+The backup script requires a PostgreSQL 18 `pg_dump` client, writes a custom-format dump manifest and checksum, encrypts a bundle with the age public key, copies only the encrypted artifacts offsite with rclone, and invokes the optional alert hook on failure. The verifier selects the latest encrypted `.age` artifact, decrypts it only inside a mode-700 temporary directory, restores into a local PostgreSQL 18 container, reapplies ACLs, runs `neon_validate.py --phase after-restore`, compares every manifest count, and securely removes decrypted files and the container on both success and failure.
