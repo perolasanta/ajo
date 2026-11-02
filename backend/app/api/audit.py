@@ -27,7 +27,7 @@ class AuditEventResponse(BaseModel):
     action: str
     entity_type: str
     entity_id: str | None
-    safe_summary: dict[str, str | int | bool | None]
+    safe_summary: dict[str, str | int | None]
 
 
 class AuditEventPageResponse(BaseModel):

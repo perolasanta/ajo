@@ -79,6 +79,19 @@ def test_audit_projection_has_exact_keys_and_safe_summary() -> None:
     )
 
 
+def test_audit_projection_drops_unbounded_values_and_boolean_counts() -> None:
+    row = _row()
+    row["summary"] = {
+        "status": "person@example.test",
+        "decision": "free-form reason with account 1234567890",
+        "old_role": "0123456789012345",
+        "new_role": "admin",
+        "count": True,
+    }
+    projected = audit_api._audit_projection(row)
+    assert projected["safe_summary"] == {"new_role": "admin"}
+
+
 @pytest.mark.parametrize("role", ["officer", "treasurer", "committee", "member"])
 async def test_other_roles_receive_403(role: str, monkeypatch: pytest.MonkeyPatch) -> None:
     app = FastAPI()

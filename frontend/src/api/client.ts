@@ -14,6 +14,8 @@ import type {
   PayrollRunDetail,
   PayrollRunPage,
   PayrollSignOffResponse,
+  RoleChangeProposalPage,
+  StaffPage,
   paths,
 } from "./schema";
 import type { AuditEventPage, AuditVerification } from "./audit";
@@ -350,6 +352,54 @@ export function signOffPayrollRun(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bank_receipt_total_kobo: bankReceiptTotalKobo }),
   });
+}
+
+export async function getStaff(
+  params: { page?: number; pageSize?: number } = {},
+): Promise<StaffPage> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.pageSize ?? 25),
+  });
+  return request<StaffPage>(`/staff?${query.toString()}`);
+}
+
+export async function getRoleChangeProposals(
+  params: {
+    status?: "all" | "pending" | "approved" | "rejected" | "cancelled" | "expired";
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<RoleChangeProposalPage> {
+  const query = new URLSearchParams({
+    status: params.status ?? "pending",
+    page: String(params.page ?? 1),
+    page_size: String(params.pageSize ?? 25),
+  });
+  return request<RoleChangeProposalPage>(`/role-change-proposals?${query.toString()}`);
+}
+
+export function createRoleChangeProposal(body: {
+  target_user_id: string;
+  role: "officer" | "committee" | "treasurer" | "admin" | "auditor";
+  action: "add" | "remove";
+  reason: string;
+}): Promise<{ proposal_id: string; status: "pending" }> {
+  return request<{ proposal_id: string; status: "pending" }>("/auth/role-change-proposals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function decideRoleChangeProposal(
+  proposalId: string,
+  action: "approve" | "reject" | "cancel",
+): Promise<Record<string, boolean>> {
+  return request<Record<string, boolean>>(
+    `/auth/role-change-proposals/${encodeURIComponent(proposalId)}/${action}`,
+    { method: "POST" },
+  );
 }
 
 export async function getReadyDisbursementLoans(

@@ -228,6 +228,43 @@ export type PayrollImportResponse = {
 export type PayrollPostResponse = { posted: number };
 export type PayrollSignOffResponse = { csv_base64: string; json_base64: string };
 
+export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "auditor";
+export type StaffRecord = {
+  user_id: string;
+  email: string;
+  status: "active" | "disabled";
+  roles: StaffRole[];
+  created_at: string;
+};
+export type StaffPage = {
+  items: StaffRecord[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
+export type RoleChangeProposal = {
+  proposal_id: string;
+  target_user_id: string;
+  target_email: string | null;
+  proposer_user_id: string;
+  proposer_email: string | null;
+  role: StaffRole;
+  action: "add" | "remove";
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "cancelled" | "expired";
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  decided_by: string | null;
+};
+export type RoleChangeProposalPage = {
+  items: RoleChangeProposal[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
 export interface paths {
   "/auth/csrf": Record<string, never>;
   "/auth/login": Record<string, never>;
@@ -235,6 +272,24 @@ export interface paths {
   "/auth/mfa/verify": Record<string, never>;
   "/auth/me": Record<string, never>;
   "/auth/logout": Record<string, never>;
+  "/staff": {
+    get: {
+      parameters?: { query?: { page?: number; page_size?: number } };
+      responses: { 200: { content: { "application/json": StaffPage } } };
+    };
+  };
+  "/role-change-proposals": {
+    get: {
+      parameters?: {
+        query?: {
+          status?: "all" | "pending" | "approved" | "rejected" | "cancelled" | "expired";
+          page?: number;
+          page_size?: number;
+        };
+      };
+      responses: { 200: { content: { "application/json": RoleChangeProposalPage } } };
+    };
+  };
   "/payroll/runs": {
     get: {
       parameters?: { query?: { page?: number; page_size?: number } };
