@@ -118,7 +118,7 @@ export default function AuditPage() {
             </div>
             <div className="space-y-3 p-3 md:hidden">{events.map((event) => <button type="button" key={event.event_id} onClick={() => setSelected(event)} className="block w-full rounded-card border border-border p-4 text-left"><div className="flex items-start justify-between gap-3"><span className="font-medium">{event.action}</span><Badge>{event.entity_type}</Badge></div><p className="mt-2 text-xs text-muted">{formatTimestamp(event.timestamp)}</p><p className="mt-2 text-sm">{summaryText(event)}</p></button>)}</div>
           </div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm"><span>{audit.data.total} events</span><div className="flex items-center gap-2"><Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</Button><span>Page {page} of {totalPages}</span><Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button></div></div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm"><span>{audit.data?.total ?? events.length} events</span><div className="flex items-center gap-2"><Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</Button><span>Page {page} of {totalPages}</span><Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button></div></div>
         </>
       )}
       <Dialog open={selected !== null} onOpenChange={(open) => { if (!open) setSelected(null); }} title="Audit event" description="Read-only event details">
