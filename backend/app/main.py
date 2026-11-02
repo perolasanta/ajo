@@ -18,6 +18,7 @@ from app.api import (
     payroll,
     policies,
     repayments,
+    staff,
 )
 from app.core.config import get_settings
 from app.core.db import check_application_role, dispose_engine
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(disbursements.router, prefix="/api/v1")
     app.include_router(repayments.router, prefix="/api/v1")
     app.include_router(payroll.router, prefix="/api/v1")
+    app.include_router(staff.router, prefix="/api/v1")
     return app
 
 

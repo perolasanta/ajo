@@ -19,6 +19,7 @@ export const navigation = [
     roles: ["treasurer", "officer", "admin", "auditor"],
   },
   { name: "Audit", path: "/audit", roles: ["admin", "auditor"] },
+  { name: "Staff", path: "/staff", roles: ["admin"] },
 ];
 
 export function visibleNavigation(roles) {
