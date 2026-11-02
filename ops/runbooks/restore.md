@@ -31,6 +31,10 @@ Log each drill: date, route, time taken, result, problems.
 
 Run this only on a disposable Neon branch (or isolated local PostgreSQL instance), never on `main` or production. Stop the API, worker, and scheduler for the destination. A restore dump may contain personal and financial data: use a protected temporary directory (`umask 077`) and delete the dump when the drill is complete. Keep source and destination URLs in environment variables or a password manager; do not paste them into chat or commit them.
 
+### Backup role and RLS proof
+
+The backup connection must be the owner or another role with `BYPASSRLS`. A runtime role such as `ajo_app`, `ajo_readonly`, or `ajo_scheduler` must not bypass RLS: a dump taken with one of those roles can fail or omit tenant rows because `pg_dump` does not establish the application's tenant context. The disposable drill proves this by attempting a non-bypass dump and requiring it to be rejected or to restore row counts different from the owner dump. It also records that the owner used for the real dump has `rolbypassrls = true`.
+
 1. On a disposable Neon branch, create an empty destination database (for example `ajo_restore_drill`) and set `DATABASE_URL_DIRECT_RESTORE` to its direct owner URL. If the owner permits SQL database creation, connect to the source branch as owner and run `CREATE DATABASE ajo_restore_drill;`; otherwise create it through the Neon Console. Grant `CONNECT` on it to `ajo_app` and `ajo_scheduler` as owner. Set `DATABASE_URL_APP_RESTORE` to the pooled `ajo_app` URL for that database and `DATABASE_URL_SCHEDULER_RESTORE` to the direct `ajo_scheduler` URL. Confirm all roles exist on the destination branch. Do not use a populated destination database.
 2. Dump the source database without owner or ACL records:
 

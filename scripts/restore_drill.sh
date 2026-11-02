@@ -122,6 +122,31 @@ verify_audit() {
     verify-audit --cooperative-id "$cooperative_id" >/dev/null
 }
 
+check_backup_owner_bypasses_rls() {
+  local bypass
+  bypass="$(psql "$OWNER_URL" -X -At -v ON_ERROR_STOP=1 -c \
+    "SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user;")"
+  [[ "$bypass" == "t" ]]
+}
+
+prove_rls_risk() {
+  # A dump taken as ajo_app runs under forced RLS and has no tenant context. It
+  # must fail or restore fewer rows than the owner dump; equality is a hard fail.
+  if docker exec -e PGPASSWORD="$APP_PASSWORD" "$CONTAINER" pg_dump \
+    --username=ajo_app --format=custom --no-owner --no-privileges --dbname=ajo \
+    >"$RESTRICTED_DUMP_FILE" 2>>"$LOG_FILE"; then
+    [[ -s "$RESTRICTED_DUMP_FILE" ]]
+    docker exec -i "$CONTAINER" pg_restore --no-owner --no-privileges \
+      --dbname=ajo_restricted <"$RESTRICTED_DUMP_FILE" >>"$LOG_FILE" 2>&1 || return 0
+    write_counts "$RESTRICTED_OWNER_URL" "$TMP_DIR/restricted.counts"
+    if cmp -s "$TMP_DIR/source.counts" "$TMP_DIR/restricted.counts"; then
+      return 1
+    fi
+    return 0
+  fi
+  return 0
+}
+
 require_tools
 step 'start local PostgreSQL 18 container' docker run -d --rm --name "$CONTAINER" \
   -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=postgres -p 127.0.0.1:0:5432 "$POSTGRES_IMAGE"
@@ -135,6 +160,7 @@ SCHEDULER_URL="postgresql://ajo_scheduler:${SCHEDULER_PASSWORD}@127.0.0.1:${PORT
 RESTORE_OWNER_URL="postgresql://postgres:${PG_PASSWORD}@127.0.0.1:${PORT}/ajo_restore"
 RESTORE_APP_URL="postgresql://ajo_app:${APP_PASSWORD}@127.0.0.1:${PORT}/ajo_restore"
 RESTORE_SCHEDULER_URL="postgresql://ajo_scheduler:${SCHEDULER_PASSWORD}@127.0.0.1:${PORT}/ajo_restore"
+RESTRICTED_OWNER_URL="postgresql://postgres:${PG_PASSWORD}@127.0.0.1:${PORT}/ajo_restricted"
 REFERENCE_URL="postgresql://postgres:${PG_PASSWORD}@127.0.0.1:${PORT}/ajo_reference"
 
 step 'create source and restore databases' create_databases
@@ -146,6 +172,8 @@ step 'seed source with fake demo data' seed_source "$OWNER_URL"
 step 'record source table row counts' write_counts "$OWNER_URL" "$TMP_DIR/source.counts"
 step 'verify source ledger balances' check_ledger "$OWNER_URL"
 step 'verify source audit chain' verify_audit "$OWNER_URL"
+step 'confirm backup owner bypasses RLS' check_backup_owner_bypasses_rls
+step 'prove non-bypass RLS dump is incomplete or rejected' prove_rls_risk
 
 step 'create custom-format source dump with container client' bash -c \
   "docker exec '$CONTAINER' pg_dump --format=custom --no-owner --no-privileges --dbname=ajo > '$DUMP_FILE'"
