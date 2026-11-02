@@ -14,6 +14,43 @@ from app.domains.auth.service import CurrentSession
 
 READ_ROLES = frozenset({"admin", "auditor"})
 SAFE_SUMMARY_KEYS = frozenset({"status", "decision", "old_role", "new_role", "count"})
+SAFE_STATUS_VALUES = frozenset(
+    {
+        "active",
+        "applicant",
+        "approved",
+        "approved_awaiting_final",
+        "authorized",
+        "awaiting_applicant_confirmation",
+        "awaiting_borrower_final_confirmation",
+        "cancelled",
+        "closed",
+        "disbursed",
+        "disputed",
+        "disabled",
+        "expired",
+        "failed",
+        "missing",
+        "over",
+        "paid",
+        "pending",
+        "proposed",
+        "ready_for_disbursement",
+        "repaying",
+        "rejected",
+        "reversed",
+        "short",
+        "superseded",
+        "suspended",
+        "transfer_recorded",
+        "unknown_member",
+        "verified",
+        "withdrawn",
+    }
+)
+SAFE_DECISION_VALUES = frozenset({"approved", "confirm", "dispute", "rejected"})
+SAFE_ROLE_VALUES = frozenset({"officer", "committee", "treasurer", "admin", "auditor"})
+MAX_SAFE_COUNT = 1_000_000
 
 
 def read_role(current: CurrentSession) -> str:
@@ -23,15 +60,26 @@ def read_role(current: CurrentSession) -> str:
     raise Forbidden("Audit log access is restricted to admins and auditors")
 
 
-def _safe_summary(summary: object) -> dict[str, str | int | bool | None]:
+def _safe_summary(summary: object) -> dict[str, str | int | None]:
     if not isinstance(summary, dict):
         return {}
-    safe: dict[str, str | int | bool | None] = {}
-    for key in SAFE_SUMMARY_KEYS:
-        if key not in summary:
-            continue
+    safe: dict[str, str | int | None] = {}
+    for key in SAFE_SUMMARY_KEYS.intersection(summary):
         value = summary[key]
-        if isinstance(value, (str, int, bool)) or value is None:
+        if value is None:
+            safe[key] = None
+        elif key == "status" and isinstance(value, str) and value in SAFE_STATUS_VALUES:
+            safe[key] = value
+        elif key == "decision" and isinstance(value, str) and value in SAFE_DECISION_VALUES:
+            safe[key] = value
+        elif key in {"old_role", "new_role"} and isinstance(value, str) and value in SAFE_ROLE_VALUES:
+            safe[key] = value
+        elif (
+            key == "count"
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= MAX_SAFE_COUNT
+        ):
             safe[key] = value
     return safe
 

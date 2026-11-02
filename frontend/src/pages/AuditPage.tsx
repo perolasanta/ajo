@@ -30,9 +30,18 @@ function formatTimestamp(value: string) {
   );
 }
 
+function nextUtcDayStart(value: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(`${value}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString();
+}
+
 function summaryText(event: AuditEvent) {
   const values = Object.entries(event.safe_summary).filter(([, value]) => value !== null);
-  return values.length > 0 ? values.map(([key, value]) => `${key}: ${value}`).join(" · ") : "No safe details";
+  return values.length > 0
+    ? values.map(([key, value]) => `${key}: ${value}`).join(" · ")
+    : "No safe details";
 }
 
 export default function AuditPage() {
@@ -53,7 +62,7 @@ export default function AuditPage() {
     queryFn: () =>
       getAuditEvents({
         from: from ? `${from}T00:00:00Z` : undefined,
-        to: to ? `${to}T23:59:59.999Z` : undefined,
+        to: nextUtcDayStart(to),
         actorId: actorId || undefined,
         action: action || undefined,
         entityType: entityType || undefined,
@@ -61,7 +70,11 @@ export default function AuditPage() {
         pageSize,
       }),
   });
-  const verification = useQuery({ queryKey: ["audit-verify"], queryFn: verifyAuditChain, enabled: false });
+  const verification = useQuery({
+    queryKey: ["audit-verify"],
+    queryFn: verifyAuditChain,
+    enabled: false,
+  });
   const events = audit.data?.items ?? [];
   const totalPages = Math.max(1, Math.ceil((audit.data?.total ?? 0) / pageSize));
   const entityTypes = useMemo(
@@ -94,44 +107,200 @@ export default function AuditPage() {
             : `Chain broken at position ${verification.data.first_broken_position}.`}
         </p>
       )}
+      {verification.isError && (
+        <p className="mb-4 flex flex-wrap items-center gap-2 text-sm text-danger" role="alert">
+          {verification.error instanceof ApiError
+            ? verification.error.message
+            : "Audit-chain verification could not be completed."}
+          <Button size="sm" variant="secondary" onClick={() => void verification.refetch()}>
+            Try again
+          </Button>
+        </p>
+      )}
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <label className="text-sm font-medium">From<input className="mt-1.5 block w-full rounded-control border border-border bg-surface px-3 py-2" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-        <label className="text-sm font-medium">To<input className="mt-1.5 block w-full rounded-control border border-border bg-surface px-3 py-2" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
-        <Input aria-label="Filter by actor" placeholder="Actor ID" value={actorId} onChange={(event) => setActorId(event.target.value)} />
-        <Input aria-label="Filter by action" placeholder="Action" value={action} onChange={(event) => setAction(event.target.value)} />
-        <Select aria-label="Filter by entity type" value={entityType} onChange={(event) => setEntityType(event.target.value)}>
+        <label className="text-sm font-medium">
+          From
+          <input
+            className="mt-1.5 block w-full rounded-control border border-border bg-surface px-3 py-2"
+            type="date"
+            value={from}
+            onChange={(event) => setFrom(event.target.value)}
+          />
+        </label>
+        <label className="text-sm font-medium">
+          To
+          <input
+            className="mt-1.5 block w-full rounded-control border border-border bg-surface px-3 py-2"
+            type="date"
+            value={to}
+            onChange={(event) => setTo(event.target.value)}
+          />
+        </label>
+        <Input
+          aria-label="Filter by actor"
+          placeholder="Actor ID"
+          value={actorId}
+          onChange={(event) => setActorId(event.target.value)}
+        />
+        <Input
+          aria-label="Filter by action"
+          placeholder="Action"
+          value={action}
+          onChange={(event) => setAction(event.target.value)}
+        />
+        <Select
+          aria-label="Filter by entity type"
+          value={entityType}
+          onChange={(event) => setEntityType(event.target.value)}
+        >
           <option value="">All entity types</option>
-          {entityTypes.map((value) => <option key={value}>{value}</option>)}
+          {entityTypes.map((value) => (
+            <option key={value}>{value}</option>
+          ))}
         </Select>
       </div>
-      {audit.isPending && <div className="space-y-3"><Skeleton className="h-16" /><Skeleton className="h-16" /><Skeleton className="h-16" /></div>}
+      {audit.isPending && (
+        <div className="space-y-3">
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+          <Skeleton className="h-16" />
+        </div>
+      )}
       {audit.isError && <ErrorState error={audit.error} retry={() => void audit.refetch()} />}
-      {audit.data && events.length === 0 && <EmptyState title="No audit events found" detail="Try a wider date range or clear a filter." action={<Button variant="secondary" onClick={() => { setFrom(""); setTo(""); setActorId(""); setAction(""); setEntityType(""); }}>Clear filters</Button>} />}
+      {audit.data && events.length === 0 && (
+        <EmptyState
+          title="No audit events found"
+          detail="Try a wider date range or clear a filter."
+          action={
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setFrom("");
+                setTo("");
+                setActorId("");
+                setAction("");
+                setEntityType("");
+              }}
+            >
+              Clear filters
+            </Button>
+          }
+        />
+      )}
       {events.length > 0 && (
         <>
           <div className="overflow-hidden rounded-card border border-border bg-surface">
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full min-w-[720px] text-left text-sm">
-                <thead className="border-b border-border bg-[#FAF9F6] text-[11px] uppercase tracking-[0.12em] text-muted"><tr><th className="px-3 py-3">When</th><th className="px-3 py-3">Action</th><th className="px-3 py-3">Entity</th><th className="px-3 py-3">Actor</th><th className="px-3 py-3">Summary</th></tr></thead>
-                <tbody>{events.map((event) => <EventRow key={event.event_id} event={event} onOpen={setSelected} />)}</tbody>
+                <thead className="border-b border-border bg-[#FAF9F6] text-[11px] uppercase tracking-[0.12em] text-muted">
+                  <tr>
+                    <th className="px-3 py-3">When</th>
+                    <th className="px-3 py-3">Action</th>
+                    <th className="px-3 py-3">Entity</th>
+                    <th className="px-3 py-3">Actor</th>
+                    <th className="px-3 py-3">Summary</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {events.map((event) => (
+                    <EventRow key={event.event_id} event={event} onOpen={setSelected} />
+                  ))}
+                </tbody>
               </table>
             </div>
-            <div className="space-y-3 p-3 md:hidden">{events.map((event) => <button type="button" key={event.event_id} onClick={() => setSelected(event)} className="block w-full rounded-card border border-border p-4 text-left"><div className="flex items-start justify-between gap-3"><span className="font-medium">{event.action}</span><Badge>{event.entity_type}</Badge></div><p className="mt-2 text-xs text-muted">{formatTimestamp(event.timestamp)}</p><p className="mt-2 text-sm">{summaryText(event)}</p></button>)}</div>
+            <div className="space-y-3 p-3 md:hidden">
+              {events.map((event) => (
+                <button
+                  type="button"
+                  key={event.event_id}
+                  onClick={() => setSelected(event)}
+                  className="block w-full rounded-card border border-border p-4 text-left"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="font-medium">{event.action}</span>
+                    <Badge>{event.entity_type}</Badge>
+                  </div>
+                  <p className="mt-2 text-xs text-muted">{formatTimestamp(event.timestamp)}</p>
+                  <p className="mt-2 text-sm">{summaryText(event)}</p>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm"><span>{audit.data?.total ?? events.length} events</span><div className="flex items-center gap-2"><Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</Button><span>Page {page} of {totalPages}</span><Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next</Button></div></div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span>{audit.data?.total ?? events.length} events</span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={page === 1}
+                onClick={() => setPage(page - 1)}
+              >
+                Previous
+              </Button>
+              <span>
+                Page {page} of {totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage(page + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         </>
       )}
-      <Dialog open={selected !== null} onOpenChange={(open) => { if (!open) setSelected(null); }} title="Audit event" description="Read-only event details">
-        {selected && <dl className="space-y-3 text-sm"><Detail label="Event ID" value={selected.event_id} /><Detail label="Timestamp" value={formatTimestamp(selected.timestamp)} /><Detail label="Actor" value={selected.actor_id ?? "System"} /><Detail label="Role" value={selected.actor_role ?? "—"} /><Detail label="Action" value={selected.action} /><Detail label="Entity" value={`${selected.entity_type} · ${selected.entity_id ?? "—"}`} /><Detail label="Safe summary" value={summaryText(selected)} /></dl>}
+      <Dialog
+        open={selected !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelected(null);
+        }}
+        title="Audit event"
+        description="Read-only event details"
+      >
+        {selected && (
+          <dl className="space-y-3 text-sm">
+            <Detail label="Event ID" value={selected.event_id} />
+            <Detail label="Timestamp" value={formatTimestamp(selected.timestamp)} />
+            <Detail label="Actor" value={selected.actor_id ?? "System"} />
+            <Detail label="Role" value={selected.actor_role ?? "—"} />
+            <Detail label="Action" value={selected.action} />
+            <Detail
+              label="Entity"
+              value={`${selected.entity_type} · ${selected.entity_id ?? "—"}`}
+            />
+            <Detail label="Safe summary" value={summaryText(selected)} />
+          </dl>
+        )}
       </Dialog>
     </>
   );
 }
 
 function EventRow({ event, onOpen }: { event: AuditEvent; onOpen: (event: AuditEvent) => void }) {
-  return <tr className="cursor-pointer hover:bg-[#F7F7F1]" onClick={() => onOpen(event)}><td className="border-b border-border px-3 py-3 whitespace-nowrap">{formatTimestamp(event.timestamp)}</td><td className="border-b border-border px-3 py-3 font-medium">{event.action}</td><td className="border-b border-border px-3 py-3">{event.entity_type}<span className="block text-xs text-muted">{event.entity_id ?? "—"}</span></td><td className="border-b border-border px-3 py-3">{event.actor_role ?? "System"}</td><td className="border-b border-border px-3 py-3 text-muted">{summaryText(event)}</td></tr>;
+  return (
+    <tr className="cursor-pointer hover:bg-[#F7F7F1]" onClick={() => onOpen(event)}>
+      <td className="border-b border-border px-3 py-3 whitespace-nowrap">
+        {formatTimestamp(event.timestamp)}
+      </td>
+      <td className="border-b border-border px-3 py-3 font-medium">{event.action}</td>
+      <td className="border-b border-border px-3 py-3">
+        {event.entity_type}
+        <span className="block text-xs text-muted">{event.entity_id ?? "—"}</span>
+      </td>
+      <td className="border-b border-border px-3 py-3">{event.actor_role ?? "System"}</td>
+      <td className="border-b border-border px-3 py-3 text-muted">{summaryText(event)}</td>
+    </tr>
+  );
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
-  return <div><dt className="text-xs uppercase tracking-[0.1em] text-muted">{label}</dt><dd className="mt-1 break-words">{value}</dd></div>;
+  return (
+    <div>
+      <dt className="text-xs uppercase tracking-[0.1em] text-muted">{label}</dt>
+      <dd className="mt-1 break-words">{value}</dd>
+    </div>
+  );
 }

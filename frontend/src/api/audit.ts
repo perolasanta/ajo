@@ -1,8 +1,39 @@
 export type AuditSafeSummary = Partial<{
-  status: string | null;
-  decision: string | null;
-  old_role: string | null;
-  new_role: string | null;
+  status:
+    | "active"
+    | "applicant"
+    | "approved"
+    | "approved_awaiting_final"
+    | "authorized"
+    | "awaiting_applicant_confirmation"
+    | "awaiting_borrower_final_confirmation"
+    | "cancelled"
+    | "closed"
+    | "disbursed"
+    | "disputed"
+    | "disabled"
+    | "expired"
+    | "failed"
+    | "missing"
+    | "over"
+    | "paid"
+    | "pending"
+    | "proposed"
+    | "ready_for_disbursement"
+    | "repaying"
+    | "rejected"
+    | "reversed"
+    | "short"
+    | "superseded"
+    | "suspended"
+    | "transfer_recorded"
+    | "unknown_member"
+    | "verified"
+    | "withdrawn"
+    | null;
+  decision: "approved" | "confirm" | "dispute" | "rejected" | null;
+  old_role: "officer" | "committee" | "treasurer" | "admin" | "auditor" | null;
+  new_role: "officer" | "committee" | "treasurer" | "admin" | "auditor" | null;
   count: number | null;
 }>;
 
