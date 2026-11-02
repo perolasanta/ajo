@@ -2,12 +2,13 @@
 
 Target: one Neon project in **AWS Europe (Frankfurt), `aws-eu-central-1`**, next to the Frankfurt VPS.
 
-## Verification status (2026-10-31)
+## Verification status (2026-11-02)
 - Historical project notes report that the migrations and the original smoke test were run on local PostgreSQL 16. This batch did not independently reproduce that run.
 - The Batch 5 validator and restore drill were run on a fresh, isolated local PostgreSQL 16.15 cluster. All six checks passed before restore and after `pg_dump`/`pg_restore` plus ACL restoration; the runbook's `ajo_app` read/write smoke also passed and rolled back its fixture row.
-- No Batch 5 check has been run against Neon; no check is claimed as Neon-verified. The local target used direct loopback connections and therefore did not prove transaction-pooler behavior.
+- On 2026-11-02, all six checks of `backend/scripts/neon_validate.py --phase before-restore` passed against a disposable Neon `dev`-branch database running PostgreSQL 18, compared with a fresh local PostgreSQL 18 reference. The scheduler used a direct connection, with its role password set by SQL on that Neon branch.
+- This Neon run verified tenant RLS isolation across 20 pooled transaction reuses; app and scheduler role safety; transaction and scheduler advisory locks; the target schema and `ajo_app` effective grants against the migration-built reference; and `ajo_app` read/write access.
+- The backup/restore/ACL drill, behavior under load, and anything on the production branch remain unverified. The production branch was not accessed.
 - Run Batch 5 only against a disposable Neon branch. Never use production credentials or the `main` branch for the validation run.
-- The local reference verifies migration output and application logic, but cannot prove Neon PgBouncer behavior, Neon role membership/ownership, or the Neon backup/restore path. Those still require a real disposable Neon branch.
 
 ## 1. Create the project
 1. Sign up at neon.com and create a project named `ajo`.
@@ -56,7 +57,7 @@ In the Console choose Connect, pick the branch, database and role, and toggle **
 
 ## 7. Validate a disposable branch
 
-First create a **fresh local reference database** on the same PostgreSQL major version as the target, then apply the checked-in migrations to it. Disable python-dotenv explicitly so the Alembic environment cannot load a repository `.env` file:
+First create a **fresh local reference database** on the same PostgreSQL major version as the target, then apply the checked-in migrations to it. For the recorded Neon run, both target and reference ran PostgreSQL 18. Disable python-dotenv explicitly so the Alembic environment cannot load a repository `.env` file:
 
 ```bash
 createdb ajo_validate_reference
@@ -64,14 +65,25 @@ cd backend
 PYTHON_DOTENV_DISABLED=1 DATABASE_URL_DIRECT="$LOCAL_REFERENCE_URL" .venv/bin/alembic upgrade head
 ```
 
-Export the three target URLs (`DATABASE_URL` pooled as `ajo_app`, `DATABASE_URL_DIRECT` direct owner, and `DATABASE_URL_SCHEDULER` direct as `ajo_scheduler`) plus `NEON_VALIDATE_REFERENCE_URL` pointing to that local reference. The validator refuses a remote reference URL, does not load `.env`, does not print URLs, and rolls back its fixture writes. Its required branch label is a human confirmation only; it cannot identify the Neon branch from a connection URL.
+Confirm the app and scheduler roles exist on the **target Neon branch**; role definitions are branch-scoped, so do not assume a role change on another branch is present here. `DATABASE_URL_SCHEDULER` must use the direct host and `ajo_scheduler`; set that role's password with SQL on the target branch and keep it only in the password manager. Export `DATABASE_URL` (pooled `ajo_app`), `DATABASE_URL_DIRECT` (direct owner), `DATABASE_URL_SCHEDULER` (direct `ajo_scheduler`), and `NEON_VALIDATE_REFERENCE_URL` (the local reference) in the **same terminal** that will run the validator. Do not put URLs or passwords in this guide. The validator refuses a remote reference URL, does not load `.env`, does not print URLs, and rolls back its fixture writes. Its required branch label is a human confirmation only; it cannot identify the Neon branch from a connection URL.
 
 ```bash
 cd backend
 python scripts/neon_validate.py --confirm-disposable-branch batch-5-validation --phase before-restore
 ```
 
-It prints six PASS/FAIL checks: Alembic head/schema comparison, RLS and transaction-context reuse, app/scheduler role safety and startup guard, transaction/session advisory locks, effective grants versus the migration-built reference, and an app-role read/write smoke. `tenant_directory` is intentionally global routing metadata and is exempt from tenant-data RLS; the validator checks the remaining tables that carry `cooperative_id`. On local PostgreSQL, checks 2 and 4 validate Postgres semantics only; the output explicitly says Neon PgBouncer remains unverified. The lock probe exercises the exact member and tenant advisory-lock primitives used by the withdrawal/audit paths; it is not a financial withdrawal API test. The script does not create or restore a backup; follow [the offsite restore drill](../ops/runbooks/restore.md#c-batch-5-backup-restore-and-acl-drill) and run it again with `--phase after-restore` against the restored database.
+It prints six PASS/FAIL checks. The recorded Neon run passed all six:
+
+| # | Check | Neon result |
+|---|---|---|
+| 1 | Migration head and schema reference | PASS — Neon schema and Alembic head matched the fresh migration-built PostgreSQL 18 reference. |
+| 2 | Pooled RLS isolation and connection reuse | PASS — tenant isolation held across 20 pooled transaction reuses. |
+| 3 | App/scheduler role safety and startup guard | PASS — neither role was owner, superuser, `BYPASSRLS`, or a member of a bypass-RLS role; the app startup guard passed. |
+| 4 | Transaction and scheduler session advisory locks | PASS — pooled transaction locks and the direct scheduler session lock checks passed. |
+| 5 | Effective grants (`before-restore`) | PASS — `ajo_app` effective grants matched the migration-built reference before restore. |
+| 6 | App read/write smoke (`before-restore`) | PASS — `ajo_app` read and tenant-scoped insert/read succeeded; the insert was rolled back. |
+
+`tenant_directory` is intentionally global routing metadata and is exempt from tenant-data RLS; the validator checks the remaining tables that carry `cooperative_id`. On a local PostgreSQL target, checks 2 and 4 validate PostgreSQL semantics only and do not prove Neon PgBouncer behavior. The lock probe exercises the member and tenant advisory-lock primitives used by withdrawal/audit paths; it is not a financial withdrawal API test. The validator does not create or restore a backup. The backup/restore/ACL drill remains outstanding; follow [the offsite restore drill](../ops/runbooks/restore.md#c-batch-5-backup-restore-and-acl-drill) and run it with `--phase after-restore` against the restored database.
 
 ## 8. Normal deployment verification
 ```bash
@@ -86,19 +98,16 @@ These are owner-operated commands, not checks run by the PR author. The original
 - The backup uses `--no-privileges`, so restore must run `ops/backup/restore_app_acl.sh` as the owner after roles exist and before API/worker start.
 - Rehearse both restore routes monthly, including the Batch 5 drill (`ops/runbooks/restore.md`).
 
-## 10. Checks that require a real Neon branch
-- **1. Target schema/head:** compare the actual Neon branch after migrations with the fresh local reference; a local result cannot prove the target branch's state.
-- **2. Transaction pooling:** only the Neon `-pooler` endpoint can prove tenant context clearing and cross-transaction connection reuse through Neon's PgBouncer.
-- **3. Neon role metadata:** local PostgreSQL tests cannot establish actual Neon ownership, superuser/BYPASSRLS attributes, or membership in Neon-provided roles.
-- **4. Locks:** transaction locks must be exercised through the Neon pooler, and scheduler session-lock release must be observed on a direct Neon connection.
-- **5. Target grants:** inspect effective grants on the Neon branch before and after ACL restoration; the local reference only supplies the expected migration grants.
-- **6. Backup/restore:** dump, restore to a new Neon database/branch, rerun ACL restoration, then read/write as `ajo_app` using the linked runbook.
+## 10. Remaining Neon validation
+- The disposable Neon `dev` branch passed the six `before-restore` checks recorded in Section 7. This does not establish anything about the production branch, which was not accessed.
+- **Backup/restore/ACL drill:** still outstanding. Dump, restore to a new disposable Neon database/branch, rerun ACL restoration, and validate it with `--phase after-restore` using the linked runbook.
+- **Behavior under load:** not tested; the validation is a correctness/smoke check, not a load or capacity test.
 
 ## 11. Things to check on your plan (not verified here)
 - Restore window and price of point-in-time recovery.
 - IP allow-listing to the VPS address (which plans include it).
 - Branch count and storage limits; compute-hours alert in billing.
-- Neon Postgres major version offered, and a matching `pg_dump` on the VPS.
+- Production branch PostgreSQL major version and a matching `pg_dump` client on the VPS; the disposable dev-branch validation used PostgreSQL 18.
 
 ## 12. Learning log (fill in as you go)
 | Date | Experiment | What I saw | Decision |
