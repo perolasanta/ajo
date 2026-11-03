@@ -12,14 +12,18 @@ Transaction-mode pooling rules that this module enforces by design:
 
 from __future__ import annotations
 
+import os
 import uuid
+from contextvars import ContextVar, Token
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 import asyncpg
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -31,6 +35,91 @@ from app.core.config import get_settings
 
 _SSL_REQUIRED = {"require"}
 _SSL_VERIFICATION_MODES = {"verify-ca", "verify-full"}
+
+
+@dataclass
+class RequestDbTiming:
+    sql_statements: int = 0
+    database_time_ms: float = 0.0
+    new_connections: int = 0
+    connection_acquire_time_ms: float = 0.0
+
+    def log_fields(self) -> dict[str, int | float]:
+        return {
+            "db_sql_statements": self.sql_statements,
+            "db_time_ms": round(self.database_time_ms, 2),
+            "db_new_connections": self.new_connections,
+            "db_connection_acquire_ms": round(self.connection_acquire_time_ms, 2),
+        }
+
+
+_request_db_timing: ContextVar[RequestDbTiming | None] = ContextVar(
+    "request_db_timing", default=None
+)
+
+
+def begin_request_db_timing() -> Token[RequestDbTiming | None]:
+    timing = RequestDbTiming() if os.getenv("AJO_DB_TIMING") == "1" else None
+    return _request_db_timing.set(timing)
+
+
+def end_request_db_timing(token: Token[RequestDbTiming | None]) -> RequestDbTiming | None:
+    timing = _request_db_timing.get()
+    _request_db_timing.reset(token)
+    return timing
+
+
+def _record_sql(duration_seconds: float) -> None:
+    timing = _request_db_timing.get()
+    if timing is not None:
+        timing.sql_statements += 1
+        timing.database_time_ms += duration_seconds * 1000
+
+
+def _record_new_connection() -> None:
+    timing = _request_db_timing.get()
+    if timing is not None:
+        timing.new_connections += 1
+
+
+def record_connection_acquire(duration_seconds: float) -> None:
+    timing = _request_db_timing.get()
+    if timing is not None:
+        timing.connection_acquire_time_ms += duration_seconds * 1000
+
+
+def _install_timing_listeners(engine: AsyncEngine) -> None:
+    sync_engine = engine.sync_engine
+
+    def before_cursor_execute(
+        conn: Any,
+        cursor: Any,
+        statement: str,
+        parameters: Any,
+        context: Any,
+        executemany: bool,
+    ) -> None:
+        if _request_db_timing.get() is not None:
+            context._ajo_db_timing_started = perf_counter()
+
+    def after_cursor_execute(
+        conn: Any,
+        cursor: Any,
+        statement: str,
+        parameters: Any,
+        context: Any,
+        executemany: bool,
+    ) -> None:
+        started = getattr(context, "_ajo_db_timing_started", None)
+        if started is not None:
+            _record_sql(perf_counter() - started)
+
+    def on_connect(dbapi_connection: Any, connection_record: Any) -> None:
+        _record_new_connection()
+
+    event.listen(sync_engine, "before_cursor_execute", before_cursor_execute)
+    event.listen(sync_engine, "after_cursor_execute", after_cursor_execute)
+    event.listen(sync_engine, "connect", on_connect)
 
 
 def validate_application_role_identity(
@@ -134,7 +223,7 @@ def make_engine(url: str, *, pooled: bool, application_name: str = "ajo-api") ->
         url, disable_prepared_cache=settings.db_disable_prepared_cache if pooled else False
     )
     connect_args["server_settings"] = {"application_name": application_name}
-    return create_async_engine(
+    engine = create_async_engine(
         async_url,
         connect_args=connect_args,
         pool_pre_ping=True,
@@ -142,6 +231,8 @@ def make_engine(url: str, *, pooled: bool, application_name: str = "ajo-api") ->
         pool_size=settings.db_pool_size if pooled else 2,
         max_overflow=settings.db_max_overflow if pooled else 0,
     )
+    _install_timing_listeners(engine)
+    return engine
 
 
 _engine: AsyncEngine | None = None
@@ -167,6 +258,14 @@ async def dispose_engine() -> None:
 
 
 @asynccontextmanager
+async def connection() -> AsyncIterator[Any]:
+    started = perf_counter()
+    async with get_engine().connect() as conn:
+        record_connection_acquire(perf_counter() - started)
+        yield conn
+
+
+@asynccontextmanager
 async def transaction(cooperative_id: uuid.UUID | None = None) -> AsyncIterator[AsyncSession]:
     """One explicit transaction, optionally scoped to a cooperative (tenant).
 
@@ -177,6 +276,10 @@ async def transaction(cooperative_id: uuid.UUID | None = None) -> AsyncIterator[
     get_engine()
     assert _sessionmaker is not None
     async with _sessionmaker() as session, session.begin():
+        if _request_db_timing.get() is not None:
+            started = perf_counter()
+            await session.connection()
+            record_connection_acquire(perf_counter() - started)
         if cooperative_id is not None:
             await session.execute(
                 text("SELECT set_config('app.cooperative_id', :cid, true)"),
