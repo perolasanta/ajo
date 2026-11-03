@@ -7,12 +7,11 @@ Two independent routes. Practise both.
 2. Prefer restoring into a NEW branch and verifying before touching production.
 3. Verify: run `python scripts/neon_smoke_test.py` against the branch and compare ledger totals.
 
-## B. Offsite dump (disaster route)
-1. Create a fresh Neon branch or project in aws-eu-central-1.
-2. `gpg --decrypt ajo-<stamp>.dump.gpg > ajo.dump`
-3. `pg_restore --no-owner --dbname "$DATABASE_URL_DIRECT" ajo.dump`
-4. Re-run `scripts/neon_roles.sql` if roles are missing, then run
-   `DATABASE_URL_DIRECT=... ops/backup/restore_app_acl.sh` as the database owner.
+## B. Offsite encrypted backup (disaster route)
+1. Create a fresh Neon branch or isolated PostgreSQL 18 destination; never restore over the source or production database.
+2. On an authorized operator machine, configure the S3 endpoint, region, access key ID, secret access key and private bucket through the documented environment variables. Use `ops/backup/pull_offsite_copy.sh LOCAL_DIRECTORY` to download new encrypted files, or run `ops/backup/verify_restore.sh /path/to/age-identity.txt` for the monthly decrypt/restore check. The verifier reads the supplied identity in place and does not copy or store it.
+3. For a manual restore, verify the `.age.sha256` checksum, decrypt with age using an authorized primary or recovery identity, and restore the custom-format dump with `pg_restore --no-owner --no-privileges` into the fresh empty destination.
+4. Re-run `scripts/neon_roles.sql` if roles are missing, then run `DATABASE_URL_DIRECT=... ops/backup/restore_app_acl.sh` as the database owner.
 5. Run `alembic current` and verify ledger balances and audit hash chain (Phase 1+).
 6. Do not switch the app env vars until the restore-drill checklist below passes.
 
@@ -93,15 +92,26 @@ Drill record: date ______; source label ______; destination label ______; dump/r
 
 ## D. Operator-run encrypted backups
 
-The scripts below are documentation-only operational tools. They require an operator-owned environment file outside the repository; never put that file, a database URL, a private age key, or an rclone credential in GitHub Actions or this repository.
+These scripts require operator-managed environment variables outside the repository. Never put a database URL, S3 access key, webhook, Telegram bot token, age private identity, or populated environment file in GitHub Actions or this repository. Offsite storage is a private bucket in a dedicated Supabase project, accessed through its S3-compatible endpoint. `ops/backup/offsite_env.sh` configures rclone from environment variables only, with path-style addressing; no on-disk rclone profile is used.
 
-Required environment names are `DATABASE_URL_DIRECT`, `BACKUP_AGE_RECIPIENT` (public age key), `BACKUP_REMOTE` (rclone destination), and `BACKUP_AGE_IDENTITY_FILE` (private key path for verification only). Optional names are `BACKUP_ROOT`, `BACKUP_MIN_BYTES`, `BACKUP_RETENTION_DAILY`, `BACKUP_RETENTION_WEEKLY`, `BACKUP_RETENTION_MONTHLY`, `POSTGRES_IMAGE`, and `BACKUP_ALERT_HOOK`. The defaults retain 7 daily, 4 weekly, and 6 monthly windows. Keep the environment file readable only by the backup operator.
+The backup host's protected environment must provide `DATABASE_URL_DIRECT`, `BACKUP_S3_ENDPOINT`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, `BACKUP_S3_BUCKET`, `BACKUP_AGE_RECIPIENTS` (comma-separated primary and recovery public recipients), `BACKUP_SLACK_WEBHOOK_URL`, `BACKUP_TELEGRAM_BOT_TOKEN`, and `BACKUP_TELEGRAM_CHAT_ID`. Restrict this environment to the backup operator. Do not set or store an age private identity there. See [age key custody and rotation](../../docs/backup-keys.md).
 
-Run the backup and restore verifier separately, with no overlapping execution:
+`BACKUP_RETENTION_DAILY`, `BACKUP_RETENTION_WEEKLY`, and `BACKUP_RETENTION_MONTHLY` default to 7, 4, and 6 windows. `BACKUP_FILE_LIMIT_MB` defaults to 50 MB with warnings at 70% and failure at 90%; `BACKUP_BUCKET_CAPACITY_GB` defaults to 1 GB with warning at 70%. Percentages can be adjusted with `BACKUP_FILE_WARN_PERCENT`, `BACKUP_FILE_FAIL_PERCENT`, and `BACKUP_BUCKET_WARN_PERCENT`. Capacity is measured across the dedicated bucket; the configured budget alert is not a provider-enforced quota. `BACKUP_FRESHNESS_HOURS` defaults to 26 hours.
+
+Example operator schedules (keep the environment file readable only by the operator):
 
 ```cron
 15 1 * * * . /etc/ajo/backup.env && /opt/ajo/ops/backup/backup.sh >>/var/log/ajo-backup.log 2>&1
-45 2 * * 0 . /etc/ajo/backup.env && /opt/ajo/ops/backup/verify_restore.sh >>/var/log/ajo-restore-verify.log 2>&1
+0 * * * * . /etc/ajo/backup.env && /opt/ajo/ops/backup/check_freshness.sh >>/var/log/ajo-backup-freshness.log 2>&1
 ```
 
-The backup script requires a PostgreSQL 18 `pg_dump` client, writes a custom-format dump manifest and checksum, encrypts a bundle with the age public key, copies only the encrypted artifacts offsite with rclone, and invokes the optional alert hook on failure. The verifier selects the latest encrypted `.age` artifact, decrypts it only inside a mode-700 temporary directory, restores into a local PostgreSQL 18 container, reapplies ACLs, runs `neon_validate.py --phase after-restore`, compares every manifest count, and securely removes decrypted files and the container on both success and failure.
+Run the decrypt/restore verification monthly from an authorized operator machine, once with the primary identity and separately with the recovery identity. Source only the S3 and alert environment needed by the verifier; pass each private identity by path:
+
+```sh
+. /secure/operator/offsite-environment
+/opt/ajo/ops/backup/verify_restore.sh /secure/offline-mounted/age-identity.txt
+```
+
+The verifier selects the newest encrypted `.age` artifact, validates its checksum, decrypts only inside a mode-700 temporary directory, verifies the dump checksum, restores into a local PostgreSQL 18 container, reapplies ACLs, runs `neon_validate.py --phase after-restore`, compares every manifest count, and removes the decrypted files and container on both success and failure. The age identity is read from the supplied path and never copied into the temporary directory. Command diagnostics stay in the protected temporary directory and are discarded at exit. Failure alerts go to both Slack and Telegram; the successful backup heartbeat goes only to Telegram. Alert text is fixed and contains no URLs, credentials, backup names, or database data.
+
+For a laptop copy, configure the same S3 endpoint/region/access credentials and alert hooks, then run `ops/backup/pull_offsite_copy.sh LOCAL_DIRECTORY`. It downloads new `.age` objects and checksum companions only, does not overwrite existing local objects, and never deletes local files.

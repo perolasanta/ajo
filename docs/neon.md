@@ -94,12 +94,12 @@ These are owner-operated commands, not checks run by the PR author. The original
 
 ## 9. Backups and restore
 - Check what restore window and instant-restore options your plan gives, and write them below.
-- Nightly encrypted `pg_dump` to storage outside Neon and the VPS: `ops/backup/backup.sh`. It requires a PostgreSQL 18 client, an age public key, and an operator-configured rclone remote; retention and alert settings are environment-controlled.
+- Nightly encrypted `pg_dump` to a private bucket in a dedicated Supabase project: `ops/backup/backup.sh`. It requires a PostgreSQL 18 client, `BACKUP_AGE_RECIPIENTS` with primary and recovery public recipients, and the Supabase S3 endpoint/region/access credentials in environment variables. Rclone path-style configuration is generated from those variables at runtime; no local rclone config file is used. Retention and size guards are environment-controlled.
 - The backup uses `--no-privileges`, so restore must run `ops/backup/restore_app_acl.sh` as the owner after roles exist and before API/worker start.
 - The backup role must be the owner or an equivalent role with `BYPASSRLS`; `ajo_app`, `ajo_readonly`, and `ajo_scheduler` intentionally cannot make complete tenant-independent dumps.
-- Rehearse both restore routes monthly, including the fake-data Batch 5 drill and encrypted-backup verifier (`ops/runbooks/restore.md`).
+- Rehearse both restore routes monthly, including the fake-data Batch 5 drill and encrypted-backup verifier (`ops/backup/verify_restore.sh /path/to/age-identity.txt`). The verifier takes the operator's private identity by path and does not store it; see the [key custody and rotation guide](backup-keys.md).
 
-The fake-data drill proves the checked-in migrations, role setup, row-count preservation, ledger balance check, audit-chain verification, ACL restoration, and validator behavior on a local PostgreSQL 18 container. It does not prove real Neon connectivity, point-in-time restore, the age private key, the rclone destination, retention, alert delivery, or production cutover. Those require an operator-run verification with the documented environment variables.
+The fake-data drill proves the checked-in migrations, role setup, row-count preservation, ledger balance check, audit-chain verification, ACL restoration, and validator behavior on a local PostgreSQL 18 container. It does not prove real Neon connectivity, point-in-time restore, the age private key, Supabase S3 destination, retention, alert delivery, or production cutover. Those require an operator-run verification with the documented environment variables.
 
 ## 10. Remaining Neon validation
 - The disposable Neon `dev` branch passed the six `before-restore` checks recorded in Section 7. This does not establish anything about the production branch, which was not accessed.
