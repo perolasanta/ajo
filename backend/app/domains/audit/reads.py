@@ -123,11 +123,15 @@ async def list_audit_events(
                 text(
                     """SELECT count(*) FROM audit_logs
                        WHERE cooperative_id=:cooperative_id
-                         AND (:from_timestamp IS NULL OR created_at >= :from_timestamp)
-                         AND (:to_timestamp IS NULL OR created_at < :to_timestamp)
-                         AND (:actor_id IS NULL OR actor_user_id = :actor_id)
-                         AND (:action IS NULL OR action = :action)
-                         AND (:entity_type IS NULL OR entity_type = :entity_type)"""
+                         AND (CAST(:from_timestamp AS timestamptz) IS NULL
+                              OR created_at >= CAST(:from_timestamp AS timestamptz))
+                         AND (CAST(:to_timestamp AS timestamptz) IS NULL
+                              OR created_at < CAST(:to_timestamp AS timestamptz))
+                         AND (CAST(:actor_id AS uuid) IS NULL
+                              OR actor_user_id = CAST(:actor_id AS uuid))
+                         AND (CAST(:action AS text) IS NULL OR action = CAST(:action AS text))
+                         AND (CAST(:entity_type AS text) IS NULL
+                              OR entity_type = CAST(:entity_type AS text))"""
                 ),
                 params,
             )
@@ -139,11 +143,15 @@ async def list_audit_events(
                 SELECT id, created_at, actor_user_id, role, action, entity_type, entity_id, summary
                   FROM audit_logs
                  WHERE cooperative_id=:cooperative_id
-                   AND (:from_timestamp IS NULL OR created_at >= :from_timestamp)
-                   AND (:to_timestamp IS NULL OR created_at < :to_timestamp)
-                   AND (:actor_id IS NULL OR actor_user_id = :actor_id)
-                   AND (:action IS NULL OR action = :action)
-                   AND (:entity_type IS NULL OR entity_type = :entity_type)
+                   AND (CAST(:from_timestamp AS timestamptz) IS NULL
+                        OR created_at >= CAST(:from_timestamp AS timestamptz))
+                   AND (CAST(:to_timestamp AS timestamptz) IS NULL
+                        OR created_at < CAST(:to_timestamp AS timestamptz))
+                   AND (CAST(:actor_id AS uuid) IS NULL
+                        OR actor_user_id = CAST(:actor_id AS uuid))
+                   AND (CAST(:action AS text) IS NULL OR action = CAST(:action AS text))
+                   AND (CAST(:entity_type AS text) IS NULL
+                        OR entity_type = CAST(:entity_type AS text))
                  ORDER BY created_at DESC, id DESC
                  LIMIT :limit OFFSET :offset
                 """
