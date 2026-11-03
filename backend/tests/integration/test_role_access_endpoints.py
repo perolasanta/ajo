@@ -100,6 +100,13 @@ async def test_screen_read_endpoint_is_available_to_matrix_role_without_csrf(
     response = await client.get(path)
 
     assert response.status_code == 200, f"{screen} for {role}: {response.status_code} {response.text}"
+    if screen == "staff selector":
+        assert any(
+            item["user_id"] == str(selected["current"].user_id)
+            for item in response.json()["items"]
+        )
+    if screen == "new-loan member picker":
+        assert any(item["id"] == str(seed.member_id) for item in response.json())
 
 
 async def test_member_detail_endpoint_is_available_to_officer_for_new_loan_form(

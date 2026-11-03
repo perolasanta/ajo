@@ -11,7 +11,7 @@ from app.api.auth import current_session, require_csrf
 from app.domains.auth.service import CurrentSession
 from app.domains.disbursements import reads, service
 
-router = APIRouter(tags=["disbursements"], dependencies=[Depends(require_csrf)])
+router = APIRouter(tags=["disbursements"])
 
 
 class TransferBody(BaseModel):
@@ -175,7 +175,7 @@ async def disbursement_detail(
     return _disbursement_projection(row, role)
 
 
-@router.post("/loans/{loan_id}/disbursements")
+@router.post("/loans/{loan_id}/disbursements", dependencies=[Depends(require_csrf)])
 async def prepare(
     loan_id: uuid.UUID,
     request: Request,
@@ -189,7 +189,7 @@ async def prepare(
     return {"disbursement_id": str(identifier)}
 
 
-@router.post("/disbursements/{disbursement_id}/authorize")
+@router.post("/disbursements/{disbursement_id}/authorize", dependencies=[Depends(require_csrf)])
 async def authorize(
     disbursement_id: uuid.UUID,
     request: Request,
@@ -203,7 +203,7 @@ async def authorize(
     return {"authorized": True}
 
 
-@router.post("/disbursements/{disbursement_id}/transfer")
+@router.post("/disbursements/{disbursement_id}/transfer", dependencies=[Depends(require_csrf)])
 async def record_transfer(
     disbursement_id: uuid.UUID,
     body: TransferBody,
@@ -220,7 +220,7 @@ async def record_transfer(
     return {"recorded": True}
 
 
-@router.post("/disbursements/{disbursement_id}/confirm-paid")
+@router.post("/disbursements/{disbursement_id}/confirm-paid", dependencies=[Depends(require_csrf)])
 async def confirm_paid(
     disbursement_id: uuid.UUID,
     request: Request,
@@ -234,7 +234,7 @@ async def confirm_paid(
     return {"journal_entry_id": str(entry_id)}
 
 
-@router.post("/disbursements/{disbursement_id}/failed")
+@router.post("/disbursements/{disbursement_id}/failed", dependencies=[Depends(require_csrf)])
 async def fail_transfer(
     disbursement_id: uuid.UUID,
     body: FailureBody,
@@ -245,7 +245,7 @@ async def fail_transfer(
     return {"failed": True}
 
 
-@router.post("/disbursements/{disbursement_id}/reverse")
+@router.post("/disbursements/{disbursement_id}/reverse", dependencies=[Depends(require_csrf)])
 async def reverse_paid(
     disbursement_id: uuid.UUID,
     body: FailureBody,
