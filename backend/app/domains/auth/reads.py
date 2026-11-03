@@ -41,7 +41,7 @@ async def list_staff(
                   LEFT JOIN user_roles AS r
                     ON r.cooperative_id = u.cooperative_id AND r.user_id = u.id
                  WHERE u.cooperative_id = :cooperative_id
-                 GROUP BY u.id
+                 GROUP BY u.cooperative_id, u.id, u.email, u.status, u.created_at
                  ORDER BY lower(u.email), u.id
                  LIMIT :limit OFFSET :offset
                 """
