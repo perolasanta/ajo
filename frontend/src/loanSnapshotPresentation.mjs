@@ -40,7 +40,10 @@ function destinationLabel(destination) {
   return `${record.bank_code} · ••${record.last4} (${verification})`;
 }
 
-export function loanSnapshotPresentation(snapshot, { productName, beneficiaryName }) {
+export function loanSnapshotPresentation(
+  snapshot,
+  { productName, beneficiaryName, showDestination = false },
+) {
   const terms = typeof snapshot === "object" && snapshot !== null ? snapshot : {};
   return [
     { label: "Principal", value: formatNaira(terms.principal_kobo) },
@@ -50,7 +53,7 @@ export function loanSnapshotPresentation(snapshot, { productName, beneficiaryNam
     { label: "Beneficiary name", value: beneficiaryName || "Unavailable" },
     {
       label: "Destination",
-      value: names.showDestination ? destinationLabel(terms.destination) : "Not displayed",
+      value: showDestination ? destinationLabel(terms.destination) : "Not displayed",
     },
   ];
 }
