@@ -23,6 +23,7 @@ test("loan detail snapshot displays readable terms and never exposes raw identif
   const fields = loanSnapshotPresentation(snapshot, {
     productName: "Emergency loan",
     beneficiaryName: "Aisha Bello",
+    showDestination: true,
   });
   const visibleText = fields.map(({ label, value }) => `${label}: ${value}`).join(" | ");
 
@@ -37,4 +38,18 @@ test("loan detail snapshot displays readable terms and never exposes raw identif
   assert.doesNotMatch(visibleText, /[0-9a-f]{8}-[0-9a-f-]{27,}/i);
   assert.doesNotMatch(visibleText, /_kobo|_bps|product_id|member_id|account_id|policy_version_id/);
   assert.doesNotMatch(visibleText, /PRIVATE ACCOUNT NAME|account_name/);
+});
+
+test("loan snapshot omits destination details for roles outside the bank-field allowlist", () => {
+  const fields = loanSnapshotPresentation(snapshot, {
+    productName: "Emergency loan",
+    beneficiaryName: "Aisha Bello",
+    showDestination: false,
+  });
+
+  assert.equal(fields.find(({ label }) => label === "Destination")?.value, "Not displayed");
+  assert.doesNotMatch(
+    fields.map(({ value }) => value).join(" "),
+    /001 · ••0010|PRIVATE ACCOUNT NAME/,
+  );
 });

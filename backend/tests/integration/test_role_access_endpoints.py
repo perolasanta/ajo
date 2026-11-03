@@ -127,3 +127,66 @@ async def test_member_detail_endpoint_is_available_to_officer_for_new_loan_form(
     response = await client.get(f"/api/v1/members/{seed.member_id}")
 
     assert response.status_code == 200, f"new-loan member detail: {response.status_code} {response.text}"
+
+
+async def test_officer_loan_detail_endpoint_returns_snapshot_for_detail_screen(
+    db: asyncpg.Connection,
+    test_database,
+    role_api: tuple[AsyncClient, dict[str, CurrentSession]],
+) -> None:
+    from app.domains.loans.service import decide_application, submit_application
+    from tests.integration.test_loans import _create_loan_base, setup_loan_member
+
+    base = await _create_loan_base(test_database)
+    member_id = await setup_loan_member(db, base)
+    bank_account_id = uuid.uuid4()
+    await db.execute(
+        """INSERT INTO bank_accounts(cooperative_id,id,member_id,bank_code,account_number_encrypted,
+          last4,account_name,status,verified_at)
+          VALUES($1,$2,$3,'001','test-ciphertext','0010','Snapshot Beneficiary','verified',now())""",
+        base.cooperative_id,
+        bank_account_id,
+        member_id,
+    )
+    officer = CurrentSession(
+        base.cooperative_id,
+        "loan-detail-test",
+        uuid.uuid4(),
+        base.user_ids[0],
+        "officer@example.test",
+        ("officer",),
+        bytes(32),
+    )
+    application_id = await submit_application(
+        officer,
+        member_id=member_id,
+        product_id=base.product_id,
+        principal_kobo=500_000,
+        tenor_months=6,
+        destination_bank_account_id=bank_account_id,
+    )
+    await db.execute(
+        "UPDATE loan_applications SET status='under_review' WHERE cooperative_id=$1 AND id=$2",
+        base.cooperative_id,
+        application_id,
+    )
+    committee = CurrentSession(
+        base.cooperative_id,
+        "loan-detail-test",
+        uuid.uuid4(),
+        base.user_ids[1],
+        "committee@example.test",
+        ("committee",),
+        bytes(32),
+    )
+    await decide_application(committee, application_id, "approved", "test approval")
+    client, selected = role_api
+    selected["current"] = officer
+
+    response = await client.get(f"/api/v1/loan-applications/{application_id}")
+
+    assert response.status_code == 200, f"loan detail: {response.status_code} {response.text}"
+    detail = response.json()
+    assert detail["terms_snapshot"]["destination"]["bank_code"] == "001"
+    assert detail["terms_snapshot"]["destination"]["last4"] == "0010"
+    assert detail["terms_snapshot"]["destination"]["account_name"] == "Snapshot Beneficiary"

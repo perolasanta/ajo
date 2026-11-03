@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { useState } from "react";
-import { ApiError, decideLoanApplication, getLoanApplication } from "../api/client";
+import { ApiError, decideLoanApplication, getLoanApplication, getMember } from "../api/client";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
@@ -13,6 +13,7 @@ import { Select } from "../ui/Select";
 import { Table, TableCell, TableHead } from "../ui/Table";
 import type { LoanApplicationDetail } from "../api/schema";
 import { canDecideLoans, canSeeDestinationAccount } from "../loanPolicy";
+import { loanSnapshotPresentation } from "../loanSnapshotPresentation.mjs";
 
 type Session = { roles: string[] };
 
@@ -39,6 +40,21 @@ export default function LoanDetailPage() {
 function LoanDetail({ detail, roles }: { detail: LoanApplicationDetail; roles: string[] }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const beneficiaryId =
+    typeof detail.terms_snapshot?.beneficiary_member_id === "string"
+      ? detail.terms_snapshot.beneficiary_member_id
+      : "";
+  const beneficiary = useQuery({
+    queryKey: ["loan-beneficiary", beneficiaryId],
+    queryFn: () => getMember(beneficiaryId),
+    enabled: Boolean(beneficiaryId),
+  });
+  const snapshotFields = loanSnapshotPresentation(detail.terms_snapshot, {
+    productName: detail.product_name,
+    beneficiaryName:
+      beneficiary.data?.full_name ?? (beneficiary.isError ? "Unavailable" : "Loading…"),
+    showDestination: canSeeDestinationAccount(roles),
+  });
   const [decision, setDecision] = useState<"approved" | "rejected">("approved");
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -86,9 +102,11 @@ function LoanDetail({ detail, roles }: { detail: LoanApplicationDetail; roles: s
               )}
             </dl>
             {detail.terms_snapshot && (
-              <pre className="mt-5 overflow-x-auto rounded-control bg-bg p-3 text-xs text-muted">
-                {JSON.stringify(detail.terms_snapshot, null, 2)}
-              </pre>
+              <dl className="mt-5 grid gap-4 rounded-control bg-bg p-4 sm:grid-cols-2">
+                {snapshotFields.map(({ label, value }) => (
+                  <Item key={label} label={label} value={value} />
+                ))}
+              </dl>
             )}
           </Card>
           <Card>
@@ -197,15 +215,6 @@ function LoanDetail({ detail, roles }: { detail: LoanApplicationDetail; roles: s
               <p className="mt-3 text-sm text-muted">No guarantors recorded.</p>
             )}
           </Card>
-          {canSeeDestinationAccount(roles) && detail.destination_bank_account && (
-            <Card>
-              <h2 className="font-serif text-lg font-semibold">Destination account</h2>
-              <p className="mt-3 text-sm">
-                {detail.destination_bank_account.bank_code} · ••••{" "}
-                {detail.destination_bank_account.last4}
-              </p>
-            </Card>
-          )}
           {canDecide && (
             <Card>
               <h2 className="font-serif text-lg font-semibold">Committee decision</h2>
