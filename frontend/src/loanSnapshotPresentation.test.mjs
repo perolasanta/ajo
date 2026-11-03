@@ -33,11 +33,12 @@ test("loan detail snapshot displays readable terms and never exposes raw identif
     { label: "Tenor", value: "6 months" },
     { label: "Product name", value: "Emergency loan" },
     { label: "Beneficiary name", value: "Aisha Bello" },
-    { label: "Destination", value: "001 · ••0010 (verified)" },
+    { label: "Destination", value: "PRIVATE ACCOUNT NAME · bank 001 · ••0010 (verified)" },
   ]);
   assert.doesNotMatch(visibleText, /[0-9a-f]{8}-[0-9a-f-]{27,}/i);
   assert.doesNotMatch(visibleText, /_kobo|_bps|product_id|member_id|account_id|policy_version_id/);
-  assert.doesNotMatch(visibleText, /PRIVATE ACCOUNT NAME|account_name/);
+  assert.match(visibleText, /PRIVATE ACCOUNT NAME · bank 001 · ••0010 \(verified\)/);
+  assert.doesNotMatch(visibleText, /account_name/);
 });
 
 test("loan snapshot omits destination details for roles outside the bank-field allowlist", () => {

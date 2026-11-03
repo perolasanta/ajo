@@ -36,8 +36,12 @@ function destinationLabel(destination) {
   ) {
     return "Not provided";
   }
+  const accountName =
+    typeof record.account_name === "string" && record.account_name.trim()
+      ? `${record.account_name.trim()} · `
+      : "";
   const verification = record.verified === true ? "verified" : "not verified";
-  return `${record.bank_code} · ••${record.last4} (${verification})`;
+  return `${accountName}bank ${record.bank_code} · ••${record.last4} (${verification})`;
 }
 
 export function loanSnapshotPresentation(
