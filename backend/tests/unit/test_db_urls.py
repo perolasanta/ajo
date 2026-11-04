@@ -1,6 +1,9 @@
 import pytest
+from sqlalchemy.pool import NullPool
 
+from app.core import db
 from app.core.db import asyncpg_dsn, split_url, to_sqlalchemy_async_url
+from tests.conftest import _assert_local_test_database_url
 
 pytestmark = pytest.mark.unit
 DATABASE_URL_EXAMPLE = (
@@ -38,3 +41,28 @@ def test_certificate_verification_modes_are_rejected(sslmode: str) -> None:
 def test_asyncpg_dsn_keeps_sslmode_drops_channel_binding():
     dsn = asyncpg_dsn(DATABASE_URL_EXAMPLE)
     assert "sslmode=require" in dsn and "channel_binding" not in dsn
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://postgres:pg@localhost:5432/postgres",
+        "postgresql://postgres:pg@example.invalid:55432/postgres",
+    ],
+)
+def test_database_reset_guard_rejects_nonlocal_or_wrong_port(url: str) -> None:
+    with pytest.raises(RuntimeError, match="local PostgreSQL on port 55432"):
+        _assert_local_test_database_url(url)
+
+
+def test_database_reset_guard_allows_only_local_test_port() -> None:
+    _assert_local_test_database_url("postgresql://postgres:pg@127.0.0.1:55432/postgres")
+
+
+@pytest.mark.asyncio
+async def test_engine_uses_null_pool_in_tests() -> None:
+    engine = db.make_engine("postgresql://test:test@127.0.0.1:55432/test", pooled=True)
+    try:
+        assert isinstance(engine.sync_engine.pool, NullPool)
+    finally:
+        await engine.dispose()
