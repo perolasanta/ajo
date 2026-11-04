@@ -3,7 +3,7 @@
 # The PostgreSQL image must already exist locally; CI may pull it before invoking this script.
 set -Eeuo pipefail
 
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:latest}"
 CONTAINER="ajo-restore-drill-${RANDOM}-${RANDOM}"
 PG_PASSWORD="$(openssl rand -hex 24)"
 APP_PASSWORD="$(openssl rand -hex 24)"
@@ -40,6 +40,7 @@ step() {
     printf 'PASS %s\n' "$label"
   else
     printf 'FAIL %s\n' "$label" >&2
+    tail -n 15 "$LOG_FILE" >&2
     return 1
   fi
 }
