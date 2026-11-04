@@ -78,6 +78,11 @@ export type LoanApplicationPage = {
   total: number;
 };
 
+export type DashboardSummary = {
+  loans: Record<string, number>;
+  disbursements: Record<string, number>;
+};
+
 export type LoanProduct = {
   id: string;
   code: string;
