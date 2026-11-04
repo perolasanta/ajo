@@ -58,7 +58,7 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
-      command: ["python", "-m", "app.worker"]
+    command: ["python", "-m", "app.worker"]
     mem_limit: 256m
     cpus: 0.5
   scheduler:
