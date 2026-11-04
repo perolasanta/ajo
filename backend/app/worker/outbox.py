@@ -15,7 +15,7 @@ import structlog
 from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
-from app.core.db import get_engine, transaction
+from app.core.db import connection, transaction
 from app.domains.notifications.outbox import decrypt_payload
 from app.worker.sender import SmsSender
 
@@ -310,8 +310,8 @@ async def process_next_notification(
 
 
 async def active_cooperative_ids() -> list[uuid.UUID]:
-    async with get_engine().connect() as connection:
-        result = await connection.execute(
+    async with connection() as db_connection:
+        result = await db_connection.execute(
             text(
                 "SELECT cooperative_id FROM tenant_directory WHERE status='active' ORDER BY cooperative_id"
             )
