@@ -236,6 +236,17 @@ export type PayrollImportResponse = {
 export type PayrollPostResponse = { posted: number };
 export type PayrollSignOffResponse = { csv_base64: string; json_base64: string };
 
+export type NotificationSummary = {
+  payroll?: { awaiting_posting?: number; awaiting_sign_off?: number };
+  disbursements?: {
+    awaiting_authorization?: number;
+    awaiting_confirmation?: number;
+    ready_to_record?: number;
+  };
+  role_changes?: { awaiting_approval?: number };
+  loans?: { awaiting_decision?: number; disputed_or_paused?: number };
+};
+
 export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "auditor";
 export type StaffRecord = {
   user_id: string;
@@ -277,6 +288,11 @@ export type RoleChangeProposalPage = {
 };
 
 export interface paths {
+  "/notifications/summary": {
+    get: {
+      responses: { 200: { content: { "application/json": NotificationSummary } } };
+    };
+  };
   "/auth/csrf": Record<string, never>;
   "/auth/login": Record<string, never>;
   "/auth/mfa/enroll": Record<string, never>;

@@ -8,6 +8,7 @@ import type {
   ReadyDisbursementLoanPage,
   MemberDetail,
   MemberListItem,
+  NotificationSummary,
   PayrollDryRunResponse,
   PayrollImportResponse,
   PayrollPostResponse,
@@ -110,6 +111,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
   return response.json() as Promise<T>;
+}
+
+export function getNotificationSummary(): Promise<NotificationSummary> {
+  return request<NotificationSummary>("/notifications/summary");
 }
 
 async function unwrap<T>(result: { data?: T; response: Response }): Promise<T> {

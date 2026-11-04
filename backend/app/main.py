@@ -15,6 +15,7 @@ from app.api import (
     health,
     loans,
     members,
+    notifications,
     payroll,
     policies,
     repayments,
@@ -90,6 +91,7 @@ def create_app() -> FastAPI:
     app.include_router(policies.router, prefix="/api/v1")
     app.include_router(members.router, prefix="/api/v1")
     app.include_router(loans.router, prefix="/api/v1")
+    app.include_router(notifications.router, prefix="/api/v1")
     app.include_router(consent.router, prefix="/api/v1")
     app.include_router(disbursements.router, prefix="/api/v1")
     app.include_router(repayments.router, prefix="/api/v1")

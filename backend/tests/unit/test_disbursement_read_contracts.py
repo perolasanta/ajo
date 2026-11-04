@@ -87,9 +87,15 @@ def test_role_projections_are_exact_and_never_include_sensitive_columns() -> Non
     )
     domain_admin = _row(values, "admin")
     domain_auditor = _row(values, "auditor")
-    assert domain_admin["prepared_by_name"] == domain_auditor["prepared_by_name"] == "Prepared Staff"
-    assert domain_admin["authorized_by_name"] == domain_auditor["authorized_by_name"] == "Unnamed user"
-    assert domain_admin["confirmed_by_name"] == domain_auditor["confirmed_by_name"] == "Unknown user"
+    assert (
+        domain_admin["prepared_by_name"] == domain_auditor["prepared_by_name"] == "Prepared Staff"
+    )
+    assert (
+        domain_admin["authorized_by_name"] == domain_auditor["authorized_by_name"] == "Unnamed user"
+    )
+    assert (
+        domain_admin["confirmed_by_name"] == domain_auditor["confirmed_by_name"] == "Unknown user"
+    )
     assert "bank_code" in domain_admin and "last4" in domain_admin
     assert "bank_code" not in domain_auditor and "last4" not in domain_auditor
     assert not (
