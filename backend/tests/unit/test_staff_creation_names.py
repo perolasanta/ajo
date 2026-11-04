@@ -20,8 +20,10 @@ class RecordingSession:
 
 async def test_staff_creation_persists_optional_full_name(monkeypatch: pytest.MonkeyPatch) -> None:
     session = RecordingSession()
+
     async def audit(*args: object, **kwargs: object) -> None:
         return None
+
     monkeypatch.setattr(staff, "hash_password", lambda password: "hashed")
     monkeypatch.setattr(staff, "append_audit", audit)
     user_id = await staff._create_staff_user_in_session(

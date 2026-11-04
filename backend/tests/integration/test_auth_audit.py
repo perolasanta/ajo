@@ -21,7 +21,7 @@ pytestmark = pytest.mark.db
 
 @pytest.fixture(autouse=True)
 async def isolated_app_engine(monkeypatch: pytest.MonkeyPatch):
-    """Keep pooled async connections on their owning event loop and use a test key."""
+    """Use a test key and dispose the test engine after each test."""
     monkeypatch.setenv("ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
     get_settings.cache_clear()
     security._fernet.cache_clear()

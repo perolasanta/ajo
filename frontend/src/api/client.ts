@@ -8,6 +8,8 @@ import type {
   ReadyDisbursementLoanPage,
   MemberDetail,
   MemberListItem,
+  NotificationSummary,
+  DashboardSummary,
   PayrollDryRunResponse,
   PayrollImportResponse,
   PayrollPostResponse,
@@ -112,6 +114,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export function getNotificationSummary(): Promise<NotificationSummary> {
+  return request<NotificationSummary>("/notifications/summary");
+}
+
 async function unwrap<T>(result: { data?: T; response: Response }): Promise<T> {
   if (!result.response.ok || result.data === undefined) {
     throw new ApiError(
@@ -159,16 +165,8 @@ export function getLoanProducts(): Promise<LoanProduct[]> {
   return request<LoanProduct[]>("/loan-products");
 }
 
-export async function getDashboardCardCount(card: {
-  source: "loans" | "disbursements";
-  status: string;
-}): Promise<number> {
-  if (card.source === "loans") {
-    const page = await getLoanApplications({ status: card.status, page: 1, pageSize: 1 });
-    return page.total;
-  }
-  const page = await getDisbursements({ status: card.status, page: 1, pageSize: 1 });
-  return page.total;
+export function getDashboardSummary(): Promise<DashboardSummary> {
+  return request<DashboardSummary>("/dashboard/summary");
 }
 
 export async function getAuditEvents(

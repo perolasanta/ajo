@@ -4,10 +4,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Menu, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
-import { request } from "./api/client";
+import { getNotificationSummary, request } from "./api/client";
 import { visibleNavigation } from "./navigation";
 import { canViewPayroll } from "./payrollPolicy.mjs";
-import type { MemberListItem } from "./api/schema";
+import type { MemberListItem, NotificationSummary } from "./api/schema";
 import { Avatar } from "./ui/Avatar";
 import { Skeleton } from "./ui/Feedback";
 
@@ -69,14 +69,40 @@ function LoadingPage() {
   );
 }
 
+function menuActionCount(name: string, summary?: NotificationSummary): number {
+  if (name === "Payroll") {
+    return (
+      (summary?.payroll?.awaiting_posting ?? 0) +
+      (summary?.payroll?.awaiting_sign_off ?? 0)
+    );
+  }
+  if (name === "Disbursements") {
+    return (
+      (summary?.disbursements?.awaiting_authorization ?? 0) +
+      (summary?.disbursements?.awaiting_confirmation ?? 0) +
+      (summary?.disbursements?.ready_to_record ?? 0)
+    );
+  }
+  if (name === "Staff") return summary?.role_changes?.awaiting_approval ?? 0;
+  if (name === "Loans") {
+    return (
+      (summary?.loans?.awaiting_decision ?? 0) +
+      (summary?.loans?.disputed_or_paused ?? 0)
+    );
+  }
+  return 0;
+}
+
 function Shell({
   session,
   onLogout,
   children,
+  notificationSummary,
 }: {
   session: Session;
   onLogout?: () => void;
   children: React.ReactNode;
+  notificationSummary?: NotificationSummary;
 }) {
   const [drawer, setDrawer] = useState(false);
   const links = visibleNavigation(session.roles);
@@ -95,18 +121,29 @@ function Shell({
       </Link>
       <p className="mt-2 text-xs text-white/65">Example Cooperative Society</p>
       <nav className="mt-8 space-y-1" aria-label="Main navigation">
-        {links.map(({ name, path }) => (
-          <NavLink
-            key={path}
-            to={path}
-            onClick={closeDrawer}
-            className={({ isActive }) =>
-              `flex min-h-10 items-center justify-between rounded-control px-3 text-sm text-white/85 transition hover:bg-white/10 ${isActive ? "bg-white/12 font-medium text-white" : ""}`
-            }
-          >
-            {name}
-          </NavLink>
-        ))}
+        {links.map(({ name, path }) => {
+          const actionCount = menuActionCount(name, notificationSummary);
+          return (
+            <NavLink
+              key={path}
+              to={path}
+              onClick={closeDrawer}
+              className={({ isActive }) =>
+                `flex min-h-10 items-center justify-between rounded-control px-3 text-sm text-white/85 transition hover:bg-white/10 ${isActive ? "bg-white/12 font-medium text-white" : ""}`
+              }
+            >
+              <span>{name}</span>
+              {actionCount > 0 && (
+                <span
+                  aria-label={`${actionCount} action ${actionCount === 1 ? "item" : "items"}`}
+                  className="ml-3 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#EBC26E] px-1.5 text-[11px] font-semibold leading-none text-[#15332E]"
+                >
+                  {actionCount > 99 ? "99+" : actionCount}
+                </span>
+              )}
+            </NavLink>
+          );
+        })}
       </nav>
       <div className="mt-auto flex items-center gap-3 border-t border-white/15 pt-4">
         <Avatar name={userName} className="bg-white/15 text-white" />
@@ -210,6 +247,13 @@ function ProtectedShell() {
     queryFn: () => request<Session>("/auth/me"),
     retry: false,
   });
+  const notificationSummary = useQuery({
+    queryKey: ["notification-summary", session.data?.user_id],
+    queryFn: getNotificationSummary,
+    enabled: Boolean(session.data),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+  });
   useEffect(() => {
     const expired = () => {
       queryClient.removeQueries({ queryKey: ["session"] });
@@ -231,7 +275,11 @@ function ProtectedShell() {
     }
   };
   return (
-    <Shell session={session.data} onLogout={() => void logout()}>
+    <Shell
+      session={session.data}
+      onLogout={() => void logout()}
+      notificationSummary={notificationSummary.data}
+    >
       <Suspense fallback={<LoadingPage />}>
         <Outlet />
       </Suspense>
