@@ -41,6 +41,7 @@ export type AuditEvent = {
   event_id: string;
   timestamp: string;
   actor_id: string | null;
+  actor_display_name: string;
   actor_role: string | null;
   action: string;
   entity_type: string;

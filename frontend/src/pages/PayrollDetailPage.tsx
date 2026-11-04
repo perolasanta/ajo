@@ -885,7 +885,7 @@ export default function PayrollDetailPage() {
         <dl className="mt-3 grid gap-3 sm:grid-cols-2">
           <div>
             <dt>Created by</dt>
-            <dd className="mt-1 break-all text-ink">{data.created_by}</dd>
+            <dd className="mt-1 break-all text-ink">{data.created_by_name}</dd>
           </div>
           <div>
             <dt>Created</dt>
@@ -896,7 +896,7 @@ export default function PayrollDetailPage() {
           {data.imported_by && (
             <div>
               <dt>Imported by</dt>
-              <dd className="mt-1 break-all text-ink">{data.imported_by}</dd>
+              <dd className="mt-1 break-all text-ink">{data.imported_by_name ?? "Unknown user"}</dd>
             </div>
           )}
           {data.imported_at && (
@@ -910,7 +910,7 @@ export default function PayrollDetailPage() {
           {data.posted_by && (
             <div>
               <dt>Posted by</dt>
-              <dd className="mt-1 break-all text-ink">{data.posted_by}</dd>
+              <dd className="mt-1 break-all text-ink">{data.posted_by_name ?? "Unknown user"}</dd>
             </div>
           )}
           {data.posted_at && (

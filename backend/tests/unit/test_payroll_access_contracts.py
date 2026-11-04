@@ -66,7 +66,9 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
                         "duplicate": 0,
                     },
                     "created_by": PROFILE_ID,
+                    "created_by_name": "Payroll Creator",
                     "posted_by": None,
+                    "posted_by_name": None,
                     "created_at": "2026-10-01T10:00:00Z",
                     "imported_at": "2026-10-02T10:00:00Z",
                     "posted_at": None,
@@ -94,8 +96,11 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             "counts",
             "component_totals_kobo",
             "created_by",
+            "created_by_name",
             "imported_by",
+            "imported_by_name",
             "posted_by",
+            "posted_by_name",
             "created_at",
             "imported_at",
             "posted_at",
@@ -121,8 +126,11 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             },
             "component_totals_kobo": {"loan": 1000, "savings": 100, "dues": 100},
             "created_by": PROFILE_ID,
+            "created_by_name": "Payroll Creator",
             "imported_by": PROFILE_ID,
+            "imported_by_name": "Unnamed user",
             "posted_by": PROFILE_ID,
+            "posted_by_name": "Payroll Poster",
             "created_at": "2026-10-01T10:00:00Z",
             "imported_at": "2026-10-02T10:00:00Z",
             "posted_at": "2026-10-03T10:00:00Z",
@@ -249,7 +257,9 @@ def test_payroll_run_list_has_exact_safe_nested_keys() -> None:
         "file_total_kobo",
         "counts",
         "created_by",
+        "created_by_name",
         "posted_by",
+        "posted_by_name",
         "created_at",
         "imported_at",
         "posted_at",
@@ -264,6 +274,8 @@ def test_payroll_run_list_has_exact_safe_nested_keys() -> None:
         "duplicate",
     }
     assert not {"salary", "phone", "email", "bank", "member_id"} & set(item)
+    assert item["created_by_name"] == "Payroll Creator"
+    assert item["posted_by_name"] is None
 
 
 @pytest.mark.parametrize("role", ["officer", "treasurer", "admin"])
@@ -318,6 +330,8 @@ def test_payroll_run_detail_has_exact_safe_persisted_fields() -> None:
     assert set(payload) == JSON_RESPONSE_CONTRACTS[("GET", "/payroll/runs/{run_id}")][0]
     assert set(payload["counts"]) == set(sample["counts"])
     assert set(payload["component_totals_kobo"]) == {"loan", "savings", "dues"}
+    assert payload["posted_by_name"] == "Payroll Poster"
+    assert payload["imported_by_name"] == "Unnamed user"
     assert set(payload["exceptions"][0]) == {
         "staff_no_raw",
         "classification",

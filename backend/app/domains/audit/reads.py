@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.core.db import transaction
 from app.core.errors import Forbidden
+from app.domains.auth.display_names import staff_actor_display_name
 from app.domains.auth.service import CurrentSession
 
 READ_ROLES = frozenset({"admin", "auditor"})
@@ -85,10 +86,22 @@ def _safe_summary(summary: object) -> dict[str, str | int | None]:
 
 
 def audit_projection(row: dict[str, Any]) -> dict[str, object]:
+    actor_id = row["actor_user_id"]
+    actor_name = (
+        "System"
+        if actor_id is None
+        else staff_actor_display_name(
+            row.get("actor_full_name"),
+            row.get("actor_email"),
+            user_exists=row.get("joined_actor_id") is not None,
+            include_email=True,
+        )
+    )
     return {
         "event_id": str(row["id"]),
         "timestamp": row["created_at"],
-        "actor_id": str(row["actor_user_id"]) if row["actor_user_id"] is not None else None,
+        "actor_id": str(actor_id) if actor_id is not None else None,
+        "actor_display_name": actor_name,
         "actor_role": row["role"],
         "action": row["action"],
         "entity_type": row["entity_type"],
@@ -140,19 +153,23 @@ async def list_audit_events(
         result = await session.execute(
             text(
                 """
-                SELECT id, created_at, actor_user_id, role, action, entity_type, entity_id, summary
-                  FROM audit_logs
-                 WHERE cooperative_id=:cooperative_id
+                SELECT a.id, a.created_at, a.actor_user_id, a.role, a.action,
+                       a.entity_type, a.entity_id, a.summary,
+                       u.id AS joined_actor_id, u.full_name AS actor_full_name, u.email AS actor_email
+                  FROM audit_logs AS a
+                  LEFT JOIN users AS u
+                    ON u.cooperative_id = a.cooperative_id AND u.id = a.actor_user_id
+                 WHERE a.cooperative_id=:cooperative_id
                    AND (CAST(:from_timestamp AS timestamptz) IS NULL
-                        OR created_at >= CAST(:from_timestamp AS timestamptz))
+                        OR a.created_at >= CAST(:from_timestamp AS timestamptz))
                    AND (CAST(:to_timestamp AS timestamptz) IS NULL
-                        OR created_at < CAST(:to_timestamp AS timestamptz))
+                        OR a.created_at < CAST(:to_timestamp AS timestamptz))
                    AND (CAST(:actor_id AS uuid) IS NULL
-                        OR actor_user_id = CAST(:actor_id AS uuid))
-                   AND (CAST(:action AS text) IS NULL OR action = CAST(:action AS text))
+                        OR a.actor_user_id = CAST(:actor_id AS uuid))
+                   AND (CAST(:action AS text) IS NULL OR a.action = CAST(:action AS text))
                    AND (CAST(:entity_type AS text) IS NULL
-                        OR entity_type = CAST(:entity_type AS text))
-                 ORDER BY created_at DESC, id DESC
+                        OR a.entity_type = CAST(:entity_type AS text))
+                 ORDER BY a.created_at DESC, a.id DESC
                  LIMIT :limit OFFSET :offset
                 """
             ),

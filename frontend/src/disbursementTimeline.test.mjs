@@ -11,10 +11,13 @@ const prepared = {
   amount_kobo: 1000,
   status: "pending_authorization",
   prepared_by: "user-1",
+  prepared_by_name: "Prepared Staff",
   authorized_by: null,
+  authorized_by_name: null,
   transfer_reference: null,
   transfer_date: null,
   confirmed_by: null,
+  confirmed_by_name: null,
   failure_reason: null,
   reversal_reason: null,
   created_at: "2026-10-01T10:00:00Z",
@@ -26,10 +29,9 @@ const prepared = {
 };
 
 test("timeline includes only workflow steps and timestamps returned by the API", () => {
-  assert.deepEqual(
-    eventsForDisbursement(prepared).map((item) => item.title),
-    ["Prepared"],
-  );
+  const events = eventsForDisbursement(prepared);
+  assert.deepEqual(events.map((item) => item.title), ["Prepared"]);
+  assert.equal(events[0].actor, "Prepared Staff");
 });
 
 test("timeline displays transfer, paid confirmation, failure and reversal when present", () => {
@@ -37,11 +39,13 @@ test("timeline displays transfer, paid confirmation, failure and reversal when p
     ...prepared,
     status: "reversed",
     authorized_by: "user-2",
+    authorized_by_name: "Approving Staff",
     authorized_at: "2026-10-01T11:00:00Z",
     transfer_reference: "BANK-REF",
     transfer_recorded_at: "2026-10-01T12:00:00Z",
     paid_at: "2026-10-01T13:00:00Z",
     confirmed_by: "user-3",
+    confirmed_by_name: "Confirming Staff",
     failed_at: "2026-10-02T10:00:00Z",
     failure_reason: "Rejected",
     reversed_at: "2026-10-03T10:00:00Z",
@@ -60,6 +64,11 @@ test("timeline displays transfer, paid confirmation, failure and reversal when p
     ],
   );
   assert.equal(events[2].evidence, "BANK-REF");
+  assert.deepEqual(events.slice(0, 2).map((entry) => entry.actor), [
+    "Prepared Staff",
+    "Approving Staff",
+  ]);
+  assert.equal(events[3].actor, "Confirming Staff");
   assert.equal(events[4].evidence, "Rejected");
   assert.equal(events[5].evidence, "Incorrect account");
 });

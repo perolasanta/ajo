@@ -23,10 +23,13 @@ _DISBURSEMENT_COMMON_FIELDS = (
     "amount_kobo",
     "status",
     "prepared_by",
+    "prepared_by_name",
     "authorized_by",
+    "authorized_by_name",
     "transfer_reference",
     "transfer_date",
     "confirmed_by",
+    "confirmed_by_name",
     "created_at",
     "authorized_at",
     "transfer_recorded_at",
@@ -62,8 +65,21 @@ def read_role(current: CurrentSession) -> str:
 
 SELECT = """
 SELECT d.id,d.loan_id,a.id AS application_id,m.member_no,m.full_name,d.amount_kobo,
-       d.status,d.bank_code,d.last4,d.prepared_by,d.authorized_by,d.transfer_reference,
-       d.transfer_date,d.paid_confirmed_by AS confirmed_by,d.created_at,d.authorized_at,
+       d.status,d.bank_code,d.last4,d.prepared_by,
+       CASE WHEN prepared_user.id IS NULL THEN 'Unknown user'
+            WHEN NULLIF(btrim(prepared_user.full_name), '') IS NULL THEN 'Unnamed user'
+            ELSE btrim(prepared_user.full_name) END AS prepared_by_name,
+       d.authorized_by,
+       CASE WHEN d.authorized_by IS NULL THEN NULL
+            WHEN authorized_user.id IS NULL THEN 'Unknown user'
+            WHEN NULLIF(btrim(authorized_user.full_name), '') IS NULL THEN 'Unnamed user'
+            ELSE btrim(authorized_user.full_name) END AS authorized_by_name,
+       d.transfer_reference,d.transfer_date,d.paid_confirmed_by AS confirmed_by,
+       CASE WHEN d.paid_confirmed_by IS NULL THEN NULL
+            WHEN confirmed_user.id IS NULL THEN 'Unknown user'
+            WHEN NULLIF(btrim(confirmed_user.full_name), '') IS NULL THEN 'Unnamed user'
+            ELSE btrim(confirmed_user.full_name) END AS confirmed_by_name,
+       d.created_at,d.authorized_at,
        d.transfer_recorded_at,d.paid_at,d.failed_at,d.reversed_at,d.reversal_reason,
        (SELECT al.reason FROM audit_logs al
           WHERE al.cooperative_id=d.cooperative_id AND al.entity_type='disbursement'
@@ -73,6 +89,12 @@ SELECT d.id,d.loan_id,a.id AS application_id,m.member_no,m.full_name,d.amount_ko
   JOIN loans l ON l.cooperative_id=d.cooperative_id AND l.id=d.loan_id
   JOIN loan_applications a ON a.cooperative_id=l.cooperative_id AND a.id=l.application_id
   JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id
+  LEFT JOIN users AS prepared_user
+    ON prepared_user.cooperative_id=d.cooperative_id AND prepared_user.id=d.prepared_by
+  LEFT JOIN users AS authorized_user
+    ON authorized_user.cooperative_id=d.cooperative_id AND authorized_user.id=d.authorized_by
+  LEFT JOIN users AS confirmed_user
+    ON confirmed_user.cooperative_id=d.cooperative_id AND confirmed_user.id=d.paid_confirmed_by
  WHERE d.cooperative_id=:cid
    AND (CAST(:status AS text) IS NULL OR d.status=CAST(:status AS text))
    AND (CAST(:search AS text) IS NULL OR m.full_name ILIKE ('%'||CAST(:search AS text)||'%')

@@ -101,10 +101,13 @@ export type DisbursementBase = {
   amount_kobo: number;
   status: string;
   prepared_by: string;
+  prepared_by_name: string;
   authorized_by: string | null;
+  authorized_by_name: string | null;
   transfer_reference: string | null;
   transfer_date: string | null;
   confirmed_by: string | null;
+  confirmed_by_name: string | null;
   failure_reason: string | null;
   reversal_reason: string | null;
   created_at: string;
@@ -160,7 +163,9 @@ export type PayrollRunSummary = {
   file_total_kobo: number | null;
   counts: PayrollRunCounts;
   created_by: string;
+  created_by_name: string;
   posted_by: string | null;
+  posted_by_name: string | null;
   created_at: string;
   imported_at: string | null;
   posted_at: string | null;
@@ -193,8 +198,11 @@ export type PayrollRunDetail = {
   counts: PayrollRunCounts;
   component_totals_kobo: { loan: number; savings: number; dues: number };
   created_by: string;
+  created_by_name: string;
   imported_by: string | null;
+  imported_by_name: string | null;
   posted_by: string | null;
+  posted_by_name: string | null;
   created_at: string;
   imported_at: string | null;
   posted_at: string | null;
@@ -232,6 +240,7 @@ export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "audit
 export type StaffRecord = {
   user_id: string;
   email: string;
+  full_name: string | null;
   status: "active" | "disabled";
   roles: StaffRole[];
   created_at: string;
@@ -249,6 +258,8 @@ export type RoleChangeProposal = {
   target_email: string | null;
   proposer_user_id: string;
   proposer_email: string | null;
+  proposer_display_name: string;
+  decided_by_display_name: string | null;
   role: StaffRole;
   action: "add" | "remove";
   reason: string;
@@ -276,6 +287,15 @@ export interface paths {
     get: {
       parameters?: { query?: { page?: number; page_size?: number } };
       responses: { 200: { content: { "application/json": StaffPage } } };
+    };
+  };
+  "/staff/{user_id}": {
+    patch: {
+      parameters: { path: { user_id: string } };
+      requestBody: { content: { "application/json": { full_name: string | null } } };
+      responses: {
+        200: { content: { "application/json": { user_id: string; full_name: string | null } } };
+      };
     };
   };
   "/role-change-proposals": {

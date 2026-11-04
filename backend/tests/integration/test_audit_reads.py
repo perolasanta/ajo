@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 
 from app.core.db import transaction
 from app.domains.audit.reads import list_audit_events
@@ -60,3 +61,31 @@ async def test_audit_reader_accepts_no_filter_and_each_filter_alone(
         page = await list_audit_events(current, **filters)
         assert page["total"] == 1
         assert len(page["items"]) == 1
+
+
+async def test_audit_actor_display_name_is_joined_at_read_time(
+    audit_reader_tenant: CurrentSession,
+) -> None:
+    current = audit_reader_tenant
+    async with transaction(current.cooperative_id) as session:
+        await session.execute(
+            text("UPDATE users SET full_name = :name WHERE cooperative_id = :cid AND id = :uid"),
+            {"name": "Audit Admin", "cid": current.cooperative_id, "uid": current.user_id},
+        )
+        await append_audit(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            role="admin",
+            action="audit_name_test",
+            entity_type="test_entity",
+            entity_id="entity-2",
+            summary={"status": "active"},
+            channel="pytest",
+            ip=None,
+        )
+    page = await list_audit_events(current, action="audit_name_test")
+    item = page["items"][0]
+    assert item["actor_id"] == str(current.user_id)
+    assert item["actor_display_name"].startswith("Audit Admin (")
+    assert item["actor_display_name"].endswith(")")

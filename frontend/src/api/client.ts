@@ -364,6 +364,20 @@ export async function getStaff(
   return request<StaffPage>(`/staff?${query.toString()}`);
 }
 
+export function updateStaffFullName(userId: string, fullName: string | null): Promise<{
+  user_id: string;
+  full_name: string | null;
+}> {
+  return request<{ user_id: string; full_name: string | null }>(
+    `/staff/${encodeURIComponent(userId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ full_name: fullName }),
+    },
+  );
+}
+
 export async function getRoleChangeProposals(
   params: {
     status?: "all" | "pending" | "approved" | "rejected" | "cancelled" | "expired";

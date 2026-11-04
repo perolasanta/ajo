@@ -221,6 +221,7 @@ export default function AuditPage() {
                     <Badge>{event.entity_type}</Badge>
                   </div>
                   <p className="mt-2 text-xs text-muted">{formatTimestamp(event.timestamp)}</p>
+                  <p className="mt-2 text-xs text-muted">Actor: {event.actor_display_name}</p>
                   <p className="mt-2 text-sm">{summaryText(event)}</p>
                 </button>
               ))}
@@ -264,7 +265,8 @@ export default function AuditPage() {
           <dl className="space-y-3 text-sm">
             <Detail label="Event ID" value={selected.event_id} />
             <Detail label="Timestamp" value={formatTimestamp(selected.timestamp)} />
-            <Detail label="Actor" value={selected.actor_id ?? "System"} />
+            <Detail label="Actor" value={selected.actor_display_name} />
+            {selected.actor_id && <Detail label="Actor ID" value={selected.actor_id} />}
             <Detail label="Role" value={selected.actor_role ?? "—"} />
             <Detail label="Action" value={selected.action} />
             <Detail
@@ -290,7 +292,10 @@ function EventRow({ event, onOpen }: { event: AuditEvent; onOpen: (event: AuditE
         {event.entity_type}
         <span className="block text-xs text-muted">{event.entity_id ?? "—"}</span>
       </td>
-      <td className="border-b border-border px-3 py-3">{event.actor_role ?? "System"}</td>
+      <td className="border-b border-border px-3 py-3">
+        {event.actor_display_name}
+        <span className="block text-xs text-muted">{event.actor_role ?? "System"}</span>
+      </td>
       <td className="border-b border-border px-3 py-3 text-muted">{summaryText(event)}</td>
     </tr>
   );

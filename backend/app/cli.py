@@ -35,7 +35,9 @@ def _direct_url() -> str:
     return url
 
 
-async def create_cooperative(slug: str, name: str, admin_email: str) -> str:
+async def create_cooperative(
+    slug: str, name: str, admin_email: str, full_name: str | None = None
+) -> str:
     if not _SLUG.fullmatch(slug):
         raise ValueError("slug must be lowercase letters, digits, and single hyphens")
     email = admin_email.strip().lower()
@@ -75,6 +77,7 @@ async def create_cooperative(slug: str, name: str, admin_email: str) -> str:
                 actor_role="admin",
                 channel="cli",
                 user_id=user_id,
+                full_name=full_name,
             )
         return temporary_password
     finally:
@@ -126,6 +129,7 @@ def _parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--slug", required=True)
     create_parser.add_argument("--name", required=True)
     create_parser.add_argument("--admin-email", required=True)
+    create_parser.add_argument("--full-name")
     verify_parser = subparsers.add_parser("verify-audit")
     verify_parser.add_argument("--cooperative-id", required=True, type=uuid.UUID)
     seed_parser = subparsers.add_parser("seed-demo")
@@ -139,7 +143,9 @@ def _parser() -> argparse.ArgumentParser:
 
 async def _run(args: argparse.Namespace) -> int:
     if args.command == "create-cooperative":
-        temporary_password = await create_cooperative(args.slug, args.name, args.admin_email)
+        temporary_password = await create_cooperative(
+            args.slug, args.name, args.admin_email, args.full_name
+        )
         print(f"Cooperative created: {args.slug}")
         print(f"Admin email: {args.admin_email.strip().lower()}")
         print(f"One-time temporary password: {temporary_password}")

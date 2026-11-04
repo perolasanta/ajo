@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import {
   ApiError,
@@ -8,8 +8,9 @@ import {
   getRoleChangeProposals,
   getStaff,
   request,
+  updateStaffFullName,
 } from "../api/client";
-import type { RoleChangeProposal, StaffRole } from "../api/schema";
+import type { RoleChangeProposal, StaffRecord, StaffRole } from "../api/schema";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState, Skeleton } from "../ui/Feedback";
@@ -103,6 +104,13 @@ export default function StaffPage() {
       void queryClient.invalidateQueries({ queryKey: ["session"] });
     },
   });
+  const staffNameUpdate = useMutation({
+    mutationFn: ({ userId, fullName }: { userId: string; fullName: string | null }) =>
+      updateStaffFullName(userId, fullName),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["staff"] });
+    },
+  });
 
   if (session.isPending) return <Skeleton className="h-60" />;
   if (session.isError || !session.data) return <Navigate to="/login" replace />;
@@ -140,7 +148,8 @@ export default function StaffPage() {
               </option>
               {staff.data?.items.map((person) => (
                 <option key={person.user_id} value={person.user_id}>
-                  {person.email} ({person.roles.join(", ") || "no role"})
+                  {person.full_name ? `${person.full_name} (${person.email})` : person.email} (
+                  {person.roles.join(", ") || "no role"})
                 </option>
               ))}
             </Select>
@@ -254,6 +263,11 @@ export default function StaffPage() {
             retry={() => void staff.refetch()}
           />
         )}
+        {staffNameUpdate.isError && (
+          <p className="mb-3 text-sm text-danger" role="alert">
+            {errorMessage(staffNameUpdate.error, "Staff name could not be saved.")}
+          </p>
+        )}
         {staff.data && staff.data.items.length === 0 && (
           <EmptyState
             title="No staff records"
@@ -275,7 +289,15 @@ export default function StaffPage() {
                 <tbody>
                   {staff.data.items.map((person) => (
                     <tr key={person.user_id} className="border-b border-border last:border-0">
-                      <td className="break-all px-4 py-3">{person.email}</td>
+                      <td className="px-4 py-3">
+                        <StaffNameCell
+                          person={person}
+                          saving={staffNameUpdate.isPending}
+                          onSave={(userId, fullName) =>
+                            staffNameUpdate.mutateAsync({ userId, fullName })
+                          }
+                        />
+                      </td>
                       <td className="px-4 py-3">{person.roles.join(", ") || "No role"}</td>
                       <td className="px-4 py-3">
                         <Badge>{person.status}</Badge>
@@ -291,7 +313,15 @@ export default function StaffPage() {
             <div className="space-y-3 p-3 md:hidden">
               {staff.data.items.map((person) => (
                 <article key={person.user_id} className="rounded-card border border-border p-4">
-                  <p className="break-all text-sm font-medium">{person.email}</p>
+                  <div className="break-all text-sm font-medium">
+                    <StaffNameCell
+                      person={person}
+                      saving={staffNameUpdate.isPending}
+                      onSave={(userId, fullName) =>
+                        staffNameUpdate.mutateAsync({ userId, fullName })
+                      }
+                    />
+                  </div>
                   <p className="mt-2 text-sm text-muted">{person.roles.join(", ") || "No role"}</p>
                   <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted">
                     <Badge>{person.status}</Badge>
@@ -425,13 +455,13 @@ function ProposalCard({
             {proposal.target_email ?? proposal.target_user_id}
           </h3>
           <p className="mt-1 break-all text-xs text-muted">
-            Proposed by {proposal.proposer_email ?? proposal.proposer_user_id}
+            Proposed by {proposal.proposer_display_name}
           </p>
         </div>
         <Badge status={proposal.status}>{proposal.status}</Badge>
       </div>
       <p className="mt-3 whitespace-pre-wrap break-words text-sm">{proposal.reason}</p>
-      <dl className="mt-4 grid gap-3 text-xs text-muted sm:grid-cols-3">
+      <dl className="mt-4 grid gap-3 text-xs text-muted sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <dt>Submitted</dt>
           <dd className="mt-1">{formatDate(proposal.created_at)}</dd>
@@ -444,6 +474,12 @@ function ProposalCard({
           <dt>Decision</dt>
           <dd className="mt-1">
             {proposal.decided_at ? formatDate(proposal.decided_at) : "Awaiting review"}
+          </dd>
+        </div>
+        <div>
+          <dt>Approved/rejected by</dt>
+          <dd className="mt-1 break-all">
+            {proposal.decided_by_display_name ?? "Awaiting review"}
           </dd>
         </div>
       </dl>
@@ -484,5 +520,74 @@ function ProposalCard({
         </div>
       )}
     </article>
+  );
+}
+
+function StaffNameCell({
+  person,
+  saving,
+  onSave,
+}: {
+  person: StaffRecord;
+  saving: boolean;
+  onSave: (userId: string, fullName: string | null) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(person.full_name ?? "");
+  useEffect(() => setValue(person.full_name ?? ""), [person.full_name]);
+  if (!editing) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-medium">{person.full_name || person.email}</span>
+        {person.full_name && (
+          <span className="break-all text-xs text-muted">{person.email}</span>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          onClick={() => setEditing(true)}
+        >
+          Edit name
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSave(person.user_id, value.trim() || null)
+          .then(() => setEditing(false))
+          .catch(() => undefined);
+      }}
+    >
+      <label className="sr-only" htmlFor={`staff-full-name-${person.user_id}`}>
+        Full name for {person.email}
+      </label>
+      <input
+        id={`staff-full-name-${person.user_id}`}
+        className="min-h-10 rounded-control border border-border bg-surface px-3 py-2"
+        maxLength={200}
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <Button type="submit" size="sm" loading={saving} disabled={saving}>
+        Save
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        disabled={saving}
+        onClick={() => {
+          setValue(person.full_name ?? "");
+          setEditing(false);
+        }}
+      >
+        Cancel
+      </Button>
+    </form>
   );
 }

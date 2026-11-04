@@ -226,6 +226,13 @@ async def list_runs(current: CurrentSession, page: int, page_size: int) -> dict[
                     text(
                         """SELECT r.id,r.period_year,r.period_month,r.status,
                           r.expected_total_kobo,r.file_total_kobo,r.created_by,r.posted_by,
+                          CASE WHEN created_user.id IS NULL THEN 'Unknown user'
+                               WHEN NULLIF(btrim(created_user.full_name), '') IS NULL THEN 'Unnamed user'
+                               ELSE btrim(created_user.full_name) END AS created_by_name,
+                          CASE WHEN r.posted_by IS NULL THEN NULL
+                               WHEN posted_user.id IS NULL THEN 'Unknown user'
+                               WHEN NULLIF(btrim(posted_user.full_name), '') IS NULL THEN 'Unnamed user'
+                               ELSE btrim(posted_user.full_name) END AS posted_by_name,
                           r.created_at,r.imported_at,r.posted_at,r.signed_off_at,
                           coalesce(c.matched,0)::int AS matched,
                           coalesce(c.short,0)::int AS short,
@@ -234,6 +241,12 @@ async def list_runs(current: CurrentSession, page: int, page_size: int) -> dict[
                           coalesce(c.unknown_member,0)::int AS unknown_member,
                           coalesce(c.duplicate,0)::int AS duplicate
                           FROM payroll_runs r
+                          LEFT JOIN users AS created_user
+                            ON created_user.cooperative_id=r.cooperative_id
+                           AND created_user.id=r.created_by
+                          LEFT JOIN users AS posted_user
+                            ON posted_user.cooperative_id=r.cooperative_id
+                           AND posted_user.id=r.posted_by
                           LEFT JOIN (
                             SELECT cooperative_id,run_id,
                               count(*) FILTER (WHERE classification='matched') AS matched,
@@ -280,7 +293,9 @@ async def list_runs(current: CurrentSession, page: int, page_size: int) -> dict[
                     )
                 },
                 "created_by": str(row["created_by"]),
+                "created_by_name": row["created_by_name"],
                 "posted_by": str(row["posted_by"]) if row["posted_by"] is not None else None,
+                "posted_by_name": row["posted_by_name"],
                 "created_at": row["created_at"],
                 "imported_at": row["imported_at"],
                 "posted_at": row["posted_at"],
@@ -298,10 +313,32 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
             (
                 await session.execute(
                     text(
-                        """SELECT id,period_year,period_month,status,expected_total_kobo,
-                          file_total_kobo,bank_receipt_total_kobo,created_by,imported_by,
-                          posted_by,created_at,imported_at,posted_at,signed_off_at
-                          FROM payroll_runs WHERE cooperative_id=:cid AND id=:id"""
+                        """SELECT r.id,r.period_year,r.period_month,r.status,r.expected_total_kobo,
+                          r.file_total_kobo,r.bank_receipt_total_kobo,r.created_by,r.imported_by,
+                          r.posted_by,
+                          CASE WHEN created_user.id IS NULL THEN 'Unknown user'
+                               WHEN NULLIF(btrim(created_user.full_name), '') IS NULL THEN 'Unnamed user'
+                               ELSE btrim(created_user.full_name) END AS created_by_name,
+                          CASE WHEN r.imported_by IS NULL THEN NULL
+                               WHEN imported_user.id IS NULL THEN 'Unknown user'
+                               WHEN NULLIF(btrim(imported_user.full_name), '') IS NULL THEN 'Unnamed user'
+                               ELSE btrim(imported_user.full_name) END AS imported_by_name,
+                          CASE WHEN r.posted_by IS NULL THEN NULL
+                               WHEN posted_user.id IS NULL THEN 'Unknown user'
+                               WHEN NULLIF(btrim(posted_user.full_name), '') IS NULL THEN 'Unnamed user'
+                               ELSE btrim(posted_user.full_name) END AS posted_by_name,
+                          r.created_at,r.imported_at,r.posted_at,r.signed_off_at
+                          FROM payroll_runs AS r
+                          LEFT JOIN users AS created_user
+                            ON created_user.cooperative_id=r.cooperative_id
+                           AND created_user.id=r.created_by
+                          LEFT JOIN users AS imported_user
+                            ON imported_user.cooperative_id=r.cooperative_id
+                           AND imported_user.id=r.imported_by
+                          LEFT JOIN users AS posted_user
+                            ON posted_user.cooperative_id=r.cooperative_id
+                           AND posted_user.id=r.posted_by
+                          WHERE r.cooperative_id=:cid AND r.id=:id"""
                     ),
                     {"cid": cid, "id": run_id},
                 )
@@ -390,8 +427,11 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
             "dues": int(totals["dues_kobo"]),
         },
         "created_by": str(run["created_by"]),
+        "created_by_name": run["created_by_name"],
         "imported_by": str(run["imported_by"]) if run["imported_by"] is not None else None,
+        "imported_by_name": run["imported_by_name"],
         "posted_by": str(run["posted_by"]) if run["posted_by"] is not None else None,
+        "posted_by_name": run["posted_by_name"],
         "created_at": run["created_at"],
         "imported_at": run["imported_at"],
         "posted_at": run["posted_at"],

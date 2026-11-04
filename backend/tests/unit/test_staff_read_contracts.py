@@ -33,15 +33,19 @@ def _app(role: str) -> FastAPI:
     install_error_handlers(app)
     app.include_router(staff_api.router)
     app.dependency_overrides[staff_api.current_session] = lambda: _session(role)
+    app.dependency_overrides[staff_api.require_csrf] = lambda: None
     return app
 
 
-async def test_staff_and_proposal_reads_reject_non_admin() -> None:
-    async with AsyncClient(transport=ASGITransport(app=_app("officer")), base_url="http://test") as client:
+@pytest.mark.parametrize("role", ["officer", "auditor", "treasurer", "committee"])
+async def test_staff_and_proposal_reads_reject_non_admin(role: str) -> None:
+    async with AsyncClient(transport=ASGITransport(app=_app(role)), base_url="http://test") as client:
         staff = await client.get("/staff")
         proposals = await client.get("/role-change-proposals")
+        edit = await client.patch(f"/staff/{uuid.uuid4()}", json={"full_name": "Not allowed"})
     assert staff.status_code == 403
     assert proposals.status_code == 403
+    assert edit.status_code == 403
 
 
 async def test_admin_read_responses_have_only_documented_fields(
@@ -57,6 +61,7 @@ async def test_admin_read_responses_have_only_documented_fields(
             "items": [{
                 "user_id": staff_id,
                 "email": "officer@example.test",
+                "full_name": "Officer One",
                 "status": "active",
                 "roles": ["officer"],
                 "created_at": created_at,
@@ -75,14 +80,16 @@ async def test_admin_read_responses_have_only_documented_fields(
                 "target_email": "officer@example.test",
                 "proposer_user_id": proposer_id,
                 "proposer_email": "admin@example.test",
+                "proposer_display_name": "Admin One (admin@example.test)",
+                "decided_by_display_name": "Admin Two (second@example.test)",
                 "role": "treasurer",
                 "action": "add",
                 "reason": "Role rotation",
-                "status": "pending",
+                "status": "approved",
                 "created_at": created_at,
                 "expires_at": created_at,
-                "decided_at": None,
-                "decided_by": None,
+                "decided_at": created_at,
+                "decided_by": str(uuid.uuid4()),
                 "session_token": "must never be returned",
             }],
             "page": 1,
@@ -98,15 +105,40 @@ async def test_admin_read_responses_have_only_documented_fields(
 
     assert staff.status_code == proposals.status_code == 200
     assert set(staff.json()["items"][0]) == {
-        "user_id", "email", "status", "roles", "created_at"
+        "user_id", "email", "full_name", "status", "roles", "created_at"
     }
     assert set(proposals.json()["items"][0]) == {
         "proposal_id", "target_user_id", "target_email", "proposer_user_id",
-        "proposer_email", "role", "action", "reason", "status", "created_at",
+        "proposer_email", "proposer_display_name", "decided_by_display_name",
+        "role", "action", "reason", "status", "created_at",
         "expires_at", "decided_at", "decided_by",
     }
     assert "password_hash" not in staff.json()["items"][0]
     assert "session_token" not in proposals.json()["items"][0]
+    assert staff.json()["items"][0]["full_name"] == "Officer One"
+    assert proposals.json()["items"][0]["proposer_display_name"] == "Admin One (admin@example.test)"
+    assert proposals.json()["items"][0]["decided_by_display_name"] == "Admin Two (second@example.test)"
+
+
+async def test_admin_can_edit_existing_staff_full_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id = uuid.uuid4()
+    calls: list[tuple[uuid.UUID, str | None]] = []
+
+    async def update_full_name(
+        current: CurrentSession, target_user_id: uuid.UUID, full_name: str | None
+    ) -> dict[str, object]:
+        assert "admin" in current.roles
+        calls.append((target_user_id, full_name))
+        return {"user_id": str(target_user_id), "full_name": full_name}
+
+    monkeypatch.setattr(
+        staff_api.reads, "update_staff_full_name", update_full_name, raising=False
+    )
+    async with AsyncClient(transport=ASGITransport(app=_app("admin")), base_url="http://test") as client:
+        response = await client.patch(f"/staff/{user_id}", json={"full_name": "Officer One"})
+    assert response.status_code == 200
+    assert response.json() == {"user_id": str(user_id), "full_name": "Officer One"}
+    assert calls == [(user_id, "Officer One")]
 
 
 async def test_proposal_status_filter_is_validated() -> None:

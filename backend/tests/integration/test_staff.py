@@ -52,3 +52,40 @@ async def test_admin_lists_seeded_staff_with_roles(test_database) -> None:
     rows_by_id = {row["user_id"]: row for row in body["items"]}
     assert rows_by_id[str(seed.user_ids[0])]["roles"] == ["admin"]
     assert rows_by_id[str(seed.user_ids[1])]["roles"] == ["officer", "treasurer"]
+    assert rows_by_id[str(seed.user_ids[1])]["full_name"] is None
+
+
+async def test_admin_can_edit_existing_staff_name(test_database) -> None:
+    conn = await asyncpg.connect(asyncpg_dsn(test_database.app_url))
+    try:
+        seed = await create_tenant(
+            conn,
+            name="Staff name edit integration test",
+            slug_prefix="staff-name-edit",
+            roles=("admin", "officer"),
+        )
+    finally:
+        await conn.close()
+    current = CurrentSession(
+        cooperative_id=seed.cooperative_id,
+        slug=f"staff-name-edit-{seed.cooperative_id.hex}",
+        session_id=uuid.uuid4(),
+        user_id=seed.user_ids[0],
+        email="admin@example.test",
+        roles=("admin",),
+        csrf_hash=bytes(32),
+    )
+    app = create_app()
+    app.dependency_overrides[staff_api.current_session] = lambda: current
+    app.dependency_overrides[staff_api.require_csrf] = lambda: None
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://testserver"
+    ) as client:
+        updated = await client.patch(
+            f"/api/v1/staff/{seed.user_ids[1]}", json={"full_name": "Officer Named"}
+        )
+        page = await client.get("/api/v1/staff")
+    assert updated.status_code == 200
+    assert updated.json() == {"user_id": str(seed.user_ids[1]), "full_name": "Officer Named"}
+    person = next(row for row in page.json()["items"] if row["user_id"] == str(seed.user_ids[1]))
+    assert person["full_name"] == "Officer Named"
