@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+from app.core.client_ip import resolve_client_ip
+
 try:
     import pytest
 except ModuleNotFoundError:  # Permit the stdlib runner in minimal local environments.
@@ -11,8 +13,6 @@ except ModuleNotFoundError:  # Permit the stdlib runner in minimal local environ
 
 if pytest is not None:
     pytestmark = pytest.mark.unit
-
-from app.core.client_ip import resolve_client_ip
 
 
 class ClientIpTests(unittest.TestCase):
