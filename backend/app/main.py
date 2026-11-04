@@ -21,7 +21,12 @@ from app.api import (
     staff,
 )
 from app.core.config import get_settings
-from app.core.db import check_application_role, dispose_engine
+from app.core.db import (
+    begin_request_db_timing,
+    check_application_role,
+    dispose_engine,
+    end_request_db_timing,
+)
 from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 
@@ -55,6 +60,7 @@ def create_app() -> FastAPI:
     ) -> Response:
         started = perf_counter()
         status_code = 500
+        timing_token = begin_request_db_timing()
         try:
             response = await call_next(request)
             status_code = response.status_code
@@ -63,9 +69,11 @@ def create_app() -> FastAPI:
                 response.headers["Referrer-Policy"] = "no-referrer"
             return response
         finally:
+            db_timing = end_request_db_timing(timing_token)
             route = request.scope.get("route")
             path = getattr(route, "path", "/<unmatched>")
             duration_ms = round((perf_counter() - started) * 1000, 2)
+            timing_fields = db_timing.log_fields() if db_timing is not None else {}
             access_log.info(
                 "request_complete",
                 method=request.method,
@@ -73,6 +81,7 @@ def create_app() -> FastAPI:
                 status_code=status_code,
                 duration_ms=duration_ms,
                 slow=duration_ms >= 300,
+                **timing_fields,
             )
 
     app.include_router(health.router, prefix="/api/v1")

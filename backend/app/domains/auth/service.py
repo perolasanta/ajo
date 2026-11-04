@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.db import get_engine, transaction
+from app.core.db import connection, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.core.security import (
     decrypt_mfa_secret,
@@ -58,8 +58,8 @@ class CurrentSession:
 
 async def resolve_tenant_slug(slug: str) -> tuple[uuid.UUID, str] | None:
     """Resolve the public slug before tenant context; the directory contains no PII."""
-    async with get_engine().connect() as connection:
-        result = await connection.execute(
+    async with connection() as db_connection:
+        result = await db_connection.execute(
             text("SELECT cooperative_id, status FROM tenant_directory WHERE slug = :slug"),
             {"slug": slug.lower().strip()},
         )

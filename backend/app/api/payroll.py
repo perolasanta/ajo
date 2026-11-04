@@ -13,7 +13,7 @@ from app.core.errors import PayloadTooLarge, UnsupportedMediaType
 from app.domains.auth.service import CurrentSession
 from app.domains.payroll import service
 
-router = APIRouter(tags=["payroll"], dependencies=[Depends(require_csrf)])
+router = APIRouter(tags=["payroll"])
 
 
 class ProfileBody(BaseModel):
@@ -192,7 +192,9 @@ async def _read_payroll_upload(request: Request) -> tuple[bytes, str]:
     return await _read_limited_body(request, service.MAX_PAYROLL_UPLOAD_BYTES), filename
 
 
-@router.post("/payroll/profiles", response_model=ProfileResponse)
+@router.post(
+    "/payroll/profiles", response_model=ProfileResponse, dependencies=[Depends(require_csrf)]
+)
 async def create_profile(
     body: ProfileBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, str]:
@@ -207,7 +209,7 @@ async def list_profiles(
     return await service.list_profiles(current)
 
 
-@router.post("/payroll/runs", response_model=RunResponse)
+@router.post("/payroll/runs", response_model=RunResponse, dependencies=[Depends(require_csrf)])
 async def create_run(
     body: RunBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, str]:
@@ -242,7 +244,11 @@ async def export_expected(
     )
 
 
-@router.post("/payroll/runs/{run_id}/dry-run", response_model=DryRunResponse)
+@router.post(
+    "/payroll/runs/{run_id}/dry-run",
+    response_model=DryRunResponse,
+    dependencies=[Depends(require_csrf)],
+)
 async def dry_run(
     run_id: uuid.UUID,
     request: Request,
@@ -258,7 +264,11 @@ async def dry_run(
     }
 
 
-@router.post("/payroll/runs/{run_id}/import", response_model=ImportResponse)
+@router.post(
+    "/payroll/runs/{run_id}/import",
+    response_model=ImportResponse,
+    dependencies=[Depends(require_csrf)],
+)
 async def import_file(
     run_id: uuid.UUID,
     request: Request,
@@ -273,14 +283,20 @@ async def import_file(
     }
 
 
-@router.post("/payroll/runs/{run_id}/post", response_model=PostResponse)
+@router.post(
+    "/payroll/runs/{run_id}/post", response_model=PostResponse, dependencies=[Depends(require_csrf)]
+)
 async def post_run(
     run_id: uuid.UUID, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, int]:
     return {"posted": await service.post_run(current, run_id)}
 
 
-@router.post("/payroll/runs/{run_id}/sign-off", response_model=SignOffResponse)
+@router.post(
+    "/payroll/runs/{run_id}/sign-off",
+    response_model=SignOffResponse,
+    dependencies=[Depends(require_csrf)],
+)
 async def sign_off(
     run_id: uuid.UUID,
     body: SignOffBody,

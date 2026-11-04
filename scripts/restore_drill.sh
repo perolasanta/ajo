@@ -7,6 +7,7 @@ POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:latest}"
 CONTAINER="ajo-restore-drill-${RANDOM}-${RANDOM}"
 PG_PASSWORD="$(openssl rand -hex 24)"
 APP_PASSWORD="$(openssl rand -hex 24)"
+READONLY_PASSWORD="$(openssl rand -hex 24)"
 SCHEDULER_PASSWORD="$(openssl rand -hex 24)"
 TMP_DIR="$(mktemp -d)"
 LOG_FILE="$TMP_DIR/commands.log"
@@ -27,6 +28,9 @@ cleanup() {
   if ((rc == 0)); then
     printf '%s\n' 'PASS restore drill: all checks passed'
   else
+    if [[ -f "$LOG_FILE" ]]; then
+      tail -n 15 "$LOG_FILE" >&2
+    fi
     printf '%s\n' 'FAIL restore drill: one or more checks failed' >&2
   fi
   exit "$rc"
@@ -72,11 +76,12 @@ create_databases() {
 set_role_passwords() {
   docker exec "$CONTAINER" psql -U postgres -d ajo -X -v ON_ERROR_STOP=1 \
     -v app_password="$APP_PASSWORD" \
-    -v readonly_password="$APP_PASSWORD" \
-    -v scheduler_password="$SCHEDULER_PASSWORD" \
-    -c "ALTER ROLE ajo_app PASSWORD :'app_password'" \
-    -c "ALTER ROLE ajo_readonly PASSWORD :'readonly_password'" \
-    -c "ALTER ROLE ajo_scheduler PASSWORD :'scheduler_password'"
+    -v readonly_password="$READONLY_PASSWORD" \
+    -v scheduler_password="$SCHEDULER_PASSWORD" <<'SQL'
+ALTER ROLE ajo_app PASSWORD :'app_password';
+ALTER ROLE ajo_readonly PASSWORD :'readonly_password';
+ALTER ROLE ajo_scheduler PASSWORD :'scheduler_password';
+SQL
 }
 
 migrate_database() {

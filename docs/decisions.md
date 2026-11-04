@@ -93,12 +93,14 @@ Enforce this matrix server-side with role-specific response schemas. Read endpoi
 
 | Role | Loan read access |
 |---|---|
-| **admin** | Paginated application summaries and details, approved current loan products, masked destination bank account (`bank_code`, `last4`), terms, timeline, consent statuses, guarantor names, and repayment schedule. |
-| **officer** | Same read fields as admin. |
-| **treasurer** | Same loan read fields as admin, including masked destination bank account. |
+| **admin** | Paginated application summaries and details, approved current loan products, and destination details (`account_name`, `bank_code`, `last4`), plus terms, timeline, consent statuses, guarantor names, and repayment schedule. |
+| **officer** | Same read fields as admin, including destination `account_name`, `bank_code`, and `last4`. |
+| **treasurer** | Same loan read fields as admin, including destination `account_name`, `bank_code`, and `last4`. |
 | **committee** | Conservative application summary/detail only: application id, member number, member name, product name, principal, tenor, annual rate, status, submitted date, decision, decision reason, decided date, consent type/status, guarantor count and guarantor names. No bank fields or member contact fields. |
 | **auditor** | Same conservative loan summary/detail fields as committee. No bank fields or member contact fields. |
 | **all other roles** | HTTP 403. |
+
+For loan snapshots, destination details are shown only to admin, officer, and treasurer. Committee and auditor receive no destination details. Full account numbers remain excluded; raw UUIDs and internal `*_kobo`/`*_bps` fields are never presented.
 
 Bank-account ids are returned by admin/officer/treasurer member detail responses only so the submit form can select an account; account numbers remain masked to last four digits.
 
