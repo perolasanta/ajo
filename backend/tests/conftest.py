@@ -9,11 +9,14 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import asyncpg
 import pytest
 from cryptography.fernet import Fernet
+from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.pool import NullPool
 
 # Test-only secrets must exist before any module can load cached application settings.
 os.environ["APP_ENV"] = "development"
@@ -26,6 +29,16 @@ APP_PASSWORD = "ajo_test_app_pw"
 READONLY_PASSWORD = "ajo_test_readonly_pw"
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
+
+
+def _assert_local_test_database_url(url: str) -> None:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("Database reset requires local PostgreSQL on port 55432") from exc
+    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"} or port != 55432:
+        raise RuntimeError("Database reset requires local PostgreSQL on port 55432")
 
 
 def _database_url(base_url: str, database: str, user: str, password: str) -> str:
@@ -41,11 +54,8 @@ def _database_url(base_url: str, database: str, user: str, password: str) -> str
 
 
 TEST_DATABASE_URL = os.environ.setdefault("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL)
+_assert_local_test_database_url(TEST_DATABASE_URL)
 _parsed_test_url = urlsplit(TEST_DATABASE_URL)
-if _parsed_test_url.hostname not in {"localhost", "127.0.0.1", "::1"}:
-    raise RuntimeError(
-        "TEST_DATABASE_URL must point to local PostgreSQL; Neon is forbidden in tests"
-    )
 
 TEST_ADMIN_URL = _database_url(
     TEST_DATABASE_URL,
@@ -65,6 +75,22 @@ TEST_APP_URL = _database_url(TEST_DATABASE_URL, DATABASE_NAME, "ajo_app", APP_PA
 os.environ["DATABASE_URL"] = TEST_APP_URL
 os.environ["DATABASE_URL_DIRECT"] = TEST_OWNER_URL
 os.environ["TEST_APP_DATABASE_URL"] = TEST_APP_URL
+
+# Engine construction is patched only in the test process. NullPool prevents asyncpg
+# connections from being carried from an asyncio.run loop into another test loop.
+from app.core import db as _app_db  # noqa: E402
+
+_sqlalchemy_create_async_engine = _app_db.create_async_engine
+
+
+def _create_test_async_engine(*args: Any, **kwargs: Any) -> AsyncEngine:
+    kwargs.pop("pool_size", None)
+    kwargs.pop("max_overflow", None)
+    kwargs["poolclass"] = NullPool
+    return _sqlalchemy_create_async_engine(*args, **kwargs)
+
+
+_app_db.create_async_engine = _create_test_async_engine
 
 
 @dataclass(frozen=True)
@@ -130,16 +156,24 @@ async def create_tenant(
 
 
 async def _reset_database() -> None:
+    _assert_local_test_database_url(TEST_DATABASE_URL)
     admin_url = TEST_ADMIN_URL
+    _assert_local_test_database_url(admin_url)
     conn = await asyncpg.connect(admin_url)
     try:
         await conn.execute(f"DROP DATABASE IF EXISTS {DATABASE_NAME} WITH (FORCE)")
         for role in ("ajo_app", "ajo_readonly"):
-            await conn.execute(f"DROP ROLE IF EXISTS {role}")
+            exists = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1)", role
+            )
+            if exists:
+                await conn.execute(f"DROP OWNED BY {role}")
+                await conn.execute(f"DROP ROLE IF EXISTS {role}")
         await conn.execute(f"CREATE DATABASE {DATABASE_NAME}")
     finally:
         await conn.close()
 
+    _assert_local_test_database_url(TEST_OWNER_URL)
     test_conn = await asyncpg.connect(TEST_OWNER_URL)
     try:
         roles_sql = (BACKEND / "scripts" / "neon_roles.sql").read_text()
@@ -175,6 +209,8 @@ async def _reset_database() -> None:
 
 
 async def _drop_database() -> None:
+    _assert_local_test_database_url(TEST_DATABASE_URL)
+    _assert_local_test_database_url(TEST_ADMIN_URL)
     conn = await asyncpg.connect(TEST_ADMIN_URL)
     try:
         await conn.execute(f"DROP DATABASE IF EXISTS {DATABASE_NAME} WITH (FORCE)")
@@ -186,6 +222,7 @@ async def _drop_database() -> None:
 
 @pytest.fixture(scope="session")
 def test_database() -> TestDatabase:
+    _assert_local_test_database_url(TEST_DATABASE_URL)
     try:
         asyncio.run(_reset_database())
     except Exception:
