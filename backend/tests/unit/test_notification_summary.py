@@ -97,12 +97,28 @@ async def test_notification_summary_has_only_actionable_role_keys_and_counts(
     assert len(calls) == 1
     assert calls[0][1]["cooperative_id"] == current.cooperative_id
     assert calls[0][1]["user_id"] == current.user_id
+    assert calls[0][1]["can_payroll_post"] is (role == "treasurer")
+    assert calls[0][1]["can_payroll_sign_off"] is (role == "admin")
+    assert calls[0][1]["can_disbursement_authorize"] is (role == "admin")
+    assert calls[0][1]["can_disbursement_confirm"] is (role == "admin")
+    assert calls[0][1]["can_disbursement_record"] is (role == "treasurer")
+    assert calls[0][1]["can_approve_role_changes"] is (role == "admin")
+    assert calls[0][1]["can_loan_decide"] is (role == "committee")
+    assert calls[0][1]["can_repay_disputed_loans"] is (role == "treasurer")
+    query = " ".join(calls[0][0].lower().split())
+    assert "a.status = 'under_review'" in query
+    assert "coalesce(r.posted_by, r.imported_by) is distinct from :user_id" in query
+    assert "d.prepared_by is distinct from :user_id" in query
+    assert "d.authorized_by is distinct from :user_id" in query
+    assert "p.proposer_user_id is distinct from :user_id" in query
+    assert "p.target_user_id is distinct from :user_id" in query
 
 
 async def test_notification_summary_unions_actions_for_multiple_roles(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     current = _session("admin", "treasurer", "committee")
+    calls: list[dict[str, object]] = []
 
     class _Result:
         def mappings(self) -> _Result:
@@ -113,6 +129,7 @@ async def test_notification_summary_unions_actions_for_multiple_roles(
 
     class _Session:
         async def execute(self, statement: Any, params: dict[str, object]) -> _Result:
+            calls.append(params)
             return _Result()
 
     @asynccontextmanager
@@ -139,3 +156,17 @@ async def test_notification_summary_unions_actions_for_multiple_roles(
         "role_changes": {"awaiting_approval": 16},
         "loans": {"awaiting_decision": 17, "disputed_or_paused": 18},
     }
+    assert len(calls) == 1
+    assert all(
+        calls[0][key] is True
+        for key in (
+            "can_payroll_post",
+            "can_payroll_sign_off",
+            "can_disbursement_authorize",
+            "can_disbursement_confirm",
+            "can_disbursement_record",
+            "can_approve_role_changes",
+            "can_loan_decide",
+            "can_repay_disputed_loans",
+        )
+    )

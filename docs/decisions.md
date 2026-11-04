@@ -63,6 +63,8 @@ A cooperative with only one active admin cannot use maker-checker role changes: 
 
 Audit and role-change actor labels for their authorized readers use `Full Name (email)`, falling back to email when a name is absent. Disbursement and payroll actor labels show only the full name; an existing account without a name is `Unnamed user`, and a missing account is `Unknown user`. These responses retain the stored actor IDs and never expose email to roles without existing email access. Audit actor names are joined at read time; hash-chained `audit_logs` rows are never rewritten.
 
+Menu action badges count only items the current user can act on in sections their existing roles can open: treasurers see payroll posting, disbursement recording, and disputed/paused manual repayments; admins see payroll sign-off (excluding the poster or legacy importer), disbursement authorization/confirmation, and eligible role approvals; committee users see loan decisions; multi-role users receive the union of their eligible counts, with self-actions excluded.
+
 ## 3. Disputed or paused loans and repayments
 
 Loans that are disputed or marked deduction-paused must be excluded from automated payroll deductions and automated payroll posting. Repayment on such a loan is allowed only as a manual repayment posted by a treasurer, with a reason recorded in the audit/transaction record.
