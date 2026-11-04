@@ -11,6 +11,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from app.core.client_ip import resolve_client_ip
+from app.core.config import get_settings
 from app.core.db import transaction
 from app.core.errors import Conflict, CsrfFailure, Forbidden
 from app.core.security import csrf_matches, hash_csrf_token, hash_session_token, new_csrf_token
@@ -47,7 +49,13 @@ class RoleChangeProposalBody(BaseModel):
 
 
 def client_ip(request: Request) -> str | None:
-    return request.client.host if request.client is not None else None
+    settings = get_settings()
+    return resolve_client_ip(
+        peer=request.client.host if request.client is not None else None,
+        forwarded_for=request.headers.get("x-forwarded-for"),
+        real_ip=request.headers.get("x-real-ip"),
+        trusted_proxies=settings.trusted_proxy_ips,
+    )
 
 
 async def require_csrf(
