@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
 
     public_base_url: str = ""
+    sms_enabled: bool = False
     sms_gateway_url: str = ""
     sms_gateway_api_key: SecretStr = SecretStr("")
     sms_sender_id: str = ""

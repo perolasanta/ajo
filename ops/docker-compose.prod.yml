@@ -50,6 +50,12 @@ services:
     container_name: ajo-worker
     image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
     environment:
+      SMS_ENABLED: ${SMS_ENABLED:-false}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      SMS_GATEWAY_URL: ${SMS_GATEWAY_URL:-}
+      SMS_GATEWAY_API_KEY: ${SMS_GATEWAY_API_KEY:-}
+      SMS_SENDER_ID: ${SMS_SENDER_ID:-}
+      SMS_REQUEST_TIMEOUT_SECONDS: ${SMS_REQUEST_TIMEOUT_SECONDS:-10}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       GIT_SHA: ${GIT_SHA:-unknown}
