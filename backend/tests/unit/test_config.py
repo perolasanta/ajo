@@ -36,3 +36,15 @@ def test_production_disables_api_docs(monkeypatch: pytest.MonkeyPatch) -> None:
         assert app.redoc_url is None
     finally:
         get_settings.cache_clear()
+
+
+def test_default_pool_capacity_fits_neon_free_small_compute() -> None:
+    settings = Settings(_env_file=None, app_env="development")
+
+    assert (settings.db_pool_size, settings.db_max_overflow) == (10, 10)
+    api_and_worker_processes = 2 + 1
+    scheduler_connection = 1
+    available_connections = 104 - 7
+    assert (
+        settings.db_pool_size + settings.db_max_overflow
+    ) * api_and_worker_processes + scheduler_connection <= available_connections

@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     database_url_readonly: str = Field(default="")
 
     db_disable_prepared_cache: bool = True
-    db_pool_size: int = 5
-    db_max_overflow: int = 5
+    db_pool_size: int = Field(default=10, ge=1, le=10)
+    db_max_overflow: int = Field(default=10, ge=0, le=10)
 
     secret_key: str = "change-me"  # noqa: S105 (rejected in production by the validator below)
     encryption_key: str = ""

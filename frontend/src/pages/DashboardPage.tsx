@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Navigate } from "react-router-dom";
-import { ApiError, getDashboardCardCount, request } from "../api/client";
+import { ApiError, getDashboardSummary, request } from "../api/client";
 import { dashboardCards } from "../dashboardPolicy.mjs";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -45,13 +45,10 @@ export default function DashboardPage() {
   const dashboard = useQuery({
     queryKey: ["dashboard", roles],
     enabled: session.isSuccess,
-    queryFn: async () => {
-      const counts = await Promise.all(
-        cards.map(async (card) => [card.href, await getDashboardCardCount(card)] as const),
-      );
-      return new Map(counts);
-    },
+    queryFn: getDashboardSummary,
   });
+  const countForCard = (card: DashboardCard) =>
+    dashboard.data?.[card.source]?.[card.status] ?? 0;
 
   if (session.isPending) return <DashboardSkeleton />;
   if (session.isError || !session.data) return <Navigate to="/login" replace />;
@@ -76,14 +73,14 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader title="Dashboard" breadcrumb="Cooperative overview" />
-      {cards.every((card) => dashboard.data.get(card.href) === 0) && (
+      {cards.every((card) => countForCard(card) === 0) && (
         <div className="mb-4">
           <EmptyState title="Everything is up to date" detail="There are no items in the queues available to your role." />
         </div>
       )}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map((card) => (
-          <DashboardCard key={card.href} card={card} count={dashboard.data.get(card.href) ?? 0} />
+          <DashboardCard key={card.href} card={card} count={countForCard(card)} />
         ))}
       </div>
     </>
