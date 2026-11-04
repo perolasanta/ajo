@@ -22,6 +22,7 @@ SAFE_KEYS = {
     "event_id",
     "timestamp",
     "actor_id",
+    "actor_display_name",
     "actor_role",
     "action",
     "entity_type",
@@ -47,6 +48,8 @@ def _row() -> dict[str, Any]:
         "id": uuid.uuid4(),
         "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         "actor_user_id": uuid.uuid4(),
+        "actor_full_name": "Ada Admin",
+        "actor_email": "ada@example.test",
         "role": "admin",
         "action": "member_updated",
         "entity_type": "member",
@@ -69,11 +72,13 @@ def _row() -> dict[str, Any]:
 def test_audit_projection_has_exact_keys_and_safe_summary() -> None:
     projected = audit_api._audit_projection(_row())
     assert set(projected) == SAFE_KEYS
+    assert projected["actor_display_name"] == "Ada Admin (ada@example.test)"
+    assert projected["actor_id"] is not None
     assert projected["safe_summary"] == {"status": "active"}
     assert not any(
         any(
             secret in key.lower()
-            for secret in ("phone", "email", "salary", "account", "token", "otp", "password", "mfa")
+            for secret in ("phone", "salary", "account", "token", "otp", "password", "mfa")
         )
         for key in projected
     )
@@ -90,6 +95,16 @@ def test_audit_projection_drops_unbounded_values_and_boolean_counts() -> None:
     }
     projected = audit_api._audit_projection(row)
     assert projected["safe_summary"] == {"new_role": "admin"}
+
+
+def test_audit_actor_fallbacks_do_not_change_stored_actor_id() -> None:
+    row = _row()
+    row["actor_full_name"] = None
+    assert audit_api._audit_projection(row)["actor_display_name"] == "ada@example.test"
+    row["actor_email"] = None
+    assert audit_api._audit_projection(row)["actor_display_name"] == "Unknown user"
+    row["actor_user_id"] = None
+    assert audit_api._audit_projection(row)["actor_display_name"] == "System"
 
 
 @pytest.mark.parametrize("role", ["officer", "treasurer", "committee", "member"])
@@ -120,6 +135,7 @@ async def test_allowed_roles_get_exact_contract(role: str, monkeypatch: pytest.M
     body = response.json()
     assert set(body["items"][0]) == SAFE_KEYS
     assert body["items"][0]["safe_summary"] == {"status": "active"}
+    assert body["items"][0]["actor_display_name"] == "Ada Admin (ada@example.test)"
 
 
 def test_tenant_id_is_required_by_read_service_contract() -> None:

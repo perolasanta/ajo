@@ -43,10 +43,13 @@ def test_role_projections_are_exact_and_never_include_sensitive_columns() -> Non
         "bank_code": "001",
         "last4": "1234",
         "prepared_by": "p",
+        "prepared_by_name": "Prepared Staff",
         "authorized_by": "u",
+        "authorized_by_name": "Unnamed user",
         "transfer_reference": "R",
         "transfer_date": None,
         "confirmed_by": "c",
+        "confirmed_by_name": "Unknown user",
         "failure_reason": None,
         "reversal_reason": None,
         "created_at": "2026-01-01T00:00:00Z",
@@ -66,6 +69,12 @@ def test_role_projections_are_exact_and_never_include_sensitive_columns() -> Non
     treasurer = _disbursement_projection(values, "treasurer")
     auditor = _disbursement_projection(values, "auditor")
     assert set(admin) == set(treasurer)
+    for data in (admin, treasurer, auditor):
+        assert data["prepared_by"] == "p"
+        assert data["prepared_by_name"] == "Prepared Staff"
+        assert data["authorized_by_name"] == "Unnamed user"
+        assert data["confirmed_by_name"] == "Unknown user"
+        assert not any("email" in key for key in data)
     assert "bank_code" in admin and "last4" in admin
     assert "bank_code" not in auditor and "last4" not in auditor
     assert all(
@@ -78,6 +87,9 @@ def test_role_projections_are_exact_and_never_include_sensitive_columns() -> Non
     )
     domain_admin = _row(values, "admin")
     domain_auditor = _row(values, "auditor")
+    assert domain_admin["prepared_by_name"] == domain_auditor["prepared_by_name"] == "Prepared Staff"
+    assert domain_admin["authorized_by_name"] == domain_auditor["authorized_by_name"] == "Unnamed user"
+    assert domain_admin["confirmed_by_name"] == domain_auditor["confirmed_by_name"] == "Unknown user"
     assert "bank_code" in domain_admin and "last4" in domain_admin
     assert "bank_code" not in domain_auditor and "last4" not in domain_auditor
     assert not (
