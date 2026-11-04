@@ -25,9 +25,9 @@ function event(title, actor, value, evidence) {
  * @param {import("./api/schema").DisbursementRecord} item
  */
 export function eventsForDisbursement(item) {
-  const events = [event("Prepared", `User ${item.prepared_by}`, item.created_at)];
+  const events = [event("Prepared", item.prepared_by_name, item.created_at)];
   if (item.authorized_at && item.authorized_by)
-    events.push(event("Authorized", `User ${item.authorized_by}`, item.authorized_at));
+    events.push(event("Authorized", item.authorized_by_name ?? "Unknown user", item.authorized_at));
   if (item.transfer_recorded_at)
     events.push(
       event(
@@ -38,7 +38,7 @@ export function eventsForDisbursement(item) {
       ),
     );
   if (item.paid_at && item.confirmed_by)
-    events.push(event("Paid confirmed", `User ${item.confirmed_by}`, item.paid_at));
+    events.push(event("Paid confirmed", item.confirmed_by_name ?? "Unknown user", item.paid_at));
   if (item.failed_at)
     events.push(
       event("Transfer failed", "Treasurer", item.failed_at, item.failure_reason ?? undefined),

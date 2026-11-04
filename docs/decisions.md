@@ -23,8 +23,8 @@ Enforce these permissions server-side; hiding fields or navigation in the user i
 | Payroll operation | Allowed role(s) |
 |---|---|
 | `POST /payroll/runs` | Officer and treasurer |
-| `GET /payroll/runs` | Officer, treasurer, and admin; read-only, limited to run totals, counts, actor IDs, and timestamps |
-| `GET /payroll/runs/{run_id}` | Officer, treasurer, and admin; read-only, limited to persisted run totals, counts, actor IDs, timestamps, and persisted exception fields |
+| `GET /payroll/runs` | Officer, treasurer, and admin; read-only, limited to run totals, counts, actor IDs and name-only actor labels, and timestamps |
+| `GET /payroll/runs/{run_id}` | Officer, treasurer, and admin; read-only, limited to persisted run totals, counts, actor IDs and name-only actor labels, timestamps, and persisted exception fields |
 | `GET /payroll/runs/{run_id}/expected.csv` | Officer and treasurer |
 | `POST /payroll/runs/{run_id}/dry-run` | Officer and treasurer |
 | `POST /payroll/runs/{run_id}/import` | Officer and treasurer |
@@ -53,9 +53,15 @@ Removing the admin role is permitted only when at least one active admin will re
 
 A cooperative with only one active admin cannot use maker-checker role changes: proposal creation returns a clear conflict until a second admin exists. Until a second admin is provisioned operationally, role changes remain blocked. There is no self-approval or single-admin bypass in the application.
 
-`GET /staff` is admin-only, paginated, tenant-scoped, and returns only user ID, email, account status, roles, and creation time. `GET /role-change-proposals` is admin-only, paginated, tenant-scoped, and filters by `all`, `pending`, `approved`, `rejected`, `cancelled`, or `expired` (default `pending`). Its explicit response contains proposal/target/proposer IDs and emails, one role and action, the submitted reason, current status, and lifecycle timestamps/deciding admin ID; it never returns credentials, MFA material, or sessions. Pending proposals past their expiry time are presented as expired by the read projection without mutating the proposal.
+`GET /staff` is admin-only, paginated, tenant-scoped, and returns only user ID, email, optional full name, account status, roles, and creation time. `GET /role-change-proposals` is admin-only, paginated, tenant-scoped, and filters by `all`, `pending`, `approved`, `rejected`, `cancelled`, or `expired` (default `pending`). Its explicit response contains proposal/target/proposer IDs and emails, proposer and decider display labels, one role and action, the submitted reason, current status, and lifecycle timestamps/deciding admin ID; it never returns credentials, MFA material, or sessions. Pending proposals past their expiry time are presented as expired by the read projection without mutating the proposal.
 
 **Follow-up work:** staff invitations/provisioning through the staff-management UI; define role-combination and separation-of-duties rules.
+
+### 2a. Staff display names and actor labels
+
+`users.full_name` is nullable. Existing staff without a name display their email only on Staff, audit, and role-change views where the role already has email access. Staff provisioning remains service/CLI-only; its existing create paths may accept an optional `--full-name`/`full_name`. Admins may edit or clear the name of an existing user from the Staff page; this does not add invitations or account creation to the UI.
+
+Audit and role-change actor labels for their authorized readers use `Full Name (email)`, falling back to email when a name is absent. Disbursement and payroll actor labels show only the full name; an existing account without a name is `Unnamed user`, and a missing account is `Unknown user`. These responses retain the stored actor IDs and never expose email to roles without existing email access. Audit actor names are joined at read time; hash-chained `audit_logs` rows are never rewritten.
 
 ## 3. Disputed or paused loans and repayments
 

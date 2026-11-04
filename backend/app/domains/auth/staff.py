@@ -25,19 +25,25 @@ async def _create_staff_user_in_session(
     actor_role: str,
     channel: str,
     user_id: uuid.UUID | None = None,
+    full_name: str | None = None,
 ) -> uuid.UUID:
     normalized = email.strip().lower()
+    normalized_full_name = full_name.strip() if full_name is not None else None
+    normalized_full_name = normalized_full_name or None
     if "@" not in normalized or len(normalized) > 320 or not roles or set(roles) - VALID_ROLES:
         raise ValueError("staff email or roles are invalid")
+    if normalized_full_name is not None and len(normalized_full_name) > 200:
+        raise ValueError("staff full name is too long")
     new_id = user_id or uuid.uuid4()
     await session.execute(
-        text("""INSERT INTO users(id,cooperative_id,email,password_hash)
-      VALUES(:id,:cid,:email,:password_hash)"""),
+        text("""INSERT INTO users(id,cooperative_id,email,password_hash,full_name)
+      VALUES(:id,:cid,:email,:password_hash,:full_name)"""),
         {
             "id": new_id,
             "cid": cooperative_id,
             "email": normalized,
             "password_hash": hash_password(password),
+            "full_name": normalized_full_name,
         },
     )
     for role in sorted(set(roles)):
@@ -62,7 +68,12 @@ async def _create_staff_user_in_session(
 
 
 async def create_staff_user(
-    current: CurrentSession, *, email: str, password: str, roles: tuple[str, ...]
+    current: CurrentSession,
+    *,
+    email: str,
+    password: str,
+    roles: tuple[str, ...],
+    full_name: str | None = None,
 ) -> uuid.UUID:
     if "admin" not in current.roles:
         raise Forbidden("Administrator role required")
@@ -76,6 +87,7 @@ async def create_staff_user(
             actor_user_id=current.user_id,
             actor_role="admin",
             channel="api",
+            full_name=full_name,
         )
 
 

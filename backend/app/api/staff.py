@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.api.auth import current_session
+from app.api.auth import current_session, require_csrf
 from app.domains.auth import reads
 from app.domains.auth.reads import ProposalStatus
 from app.domains.auth.service import CurrentSession
@@ -19,6 +20,7 @@ router = APIRouter(tags=["staff"])
 class StaffResponse(BaseModel):
     user_id: str
     email: str
+    full_name: str | None
     status: Literal["active", "disabled"]
     roles: list[Literal["officer", "committee", "treasurer", "admin", "auditor"]]
     created_at: datetime
@@ -31,12 +33,23 @@ class StaffPageResponse(BaseModel):
     total: int
 
 
+class StaffNameBody(BaseModel):
+    full_name: str | None = Field(..., max_length=200)
+
+
+class StaffNameResponse(BaseModel):
+    user_id: str
+    full_name: str | None
+
+
 class RoleChangeProposalResponse(BaseModel):
     proposal_id: str
     target_user_id: str
     target_email: str | None
     proposer_user_id: str
     proposer_email: str | None
+    proposer_display_name: str
+    decided_by_display_name: str | None
     role: Literal["officer", "committee", "treasurer", "admin", "auditor"]
     action: Literal["add", "remove"]
     reason: str
@@ -61,6 +74,17 @@ async def list_staff(
     page_size: int = Query(default=25, ge=1, le=100),
 ) -> dict[str, object]:
     return await reads.list_staff(current, page=page, page_size=page_size)
+
+
+@router.patch(
+    "/staff/{user_id}", response_model=StaffNameResponse, dependencies=[Depends(require_csrf)]
+)
+async def update_staff_full_name(
+    user_id: uuid.UUID,
+    body: StaffNameBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, object]:
+    return await reads.update_staff_full_name(current, user_id, body.full_name)
 
 
 @router.get("/role-change-proposals", response_model=RoleChangeProposalPageResponse)

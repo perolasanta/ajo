@@ -44,10 +44,12 @@ def _session(role: str) -> CurrentSession:
 
 
 def _row() -> dict[str, Any]:
+    actor_id = uuid.uuid4()
     return {
         "id": uuid.uuid4(),
         "created_at": datetime(2026, 1, 1, tzinfo=UTC),
-        "actor_user_id": uuid.uuid4(),
+        "actor_user_id": actor_id,
+        "joined_actor_id": actor_id,
         "actor_full_name": "Ada Admin",
         "actor_email": "ada@example.test",
         "role": "admin",
@@ -102,7 +104,10 @@ def test_audit_actor_fallbacks_do_not_change_stored_actor_id() -> None:
     row["actor_full_name"] = None
     assert audit_api._audit_projection(row)["actor_display_name"] == "ada@example.test"
     row["actor_email"] = None
-    assert audit_api._audit_projection(row)["actor_display_name"] == "Unknown user"
+    row["joined_actor_id"] = None
+    missing_user = audit_api._audit_projection(row)
+    assert missing_user["actor_display_name"] == "Unknown user"
+    assert missing_user["actor_id"] == str(row["actor_user_id"])
     row["actor_user_id"] = None
     assert audit_api._audit_projection(row)["actor_display_name"] == "System"
 

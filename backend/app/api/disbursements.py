@@ -34,10 +34,13 @@ class DisbursementReadBase(BaseModel):
     amount_kobo: int
     status: str
     prepared_by: str
+    prepared_by_name: str
     authorized_by: str | None
+    authorized_by_name: str | None
     transfer_reference: str | None
     transfer_date: date | None
     confirmed_by: str | None
+    confirmed_by_name: str | None
     failure_reason: str | None
     reversal_reason: str | None
     created_at: datetime
@@ -95,10 +98,13 @@ _BASE_FIELDS = {
     "amount_kobo",
     "status",
     "prepared_by",
+    "prepared_by_name",
     "authorized_by",
+    "authorized_by_name",
     "transfer_reference",
     "transfer_date",
     "confirmed_by",
+    "confirmed_by_name",
     "failure_reason",
     "reversal_reason",
     "created_at",

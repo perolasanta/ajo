@@ -23,6 +23,7 @@ class AuditEventResponse(BaseModel):
     event_id: str
     timestamp: datetime
     actor_id: str | None
+    actor_display_name: str
     actor_role: str | None
     action: str
     entity_type: str

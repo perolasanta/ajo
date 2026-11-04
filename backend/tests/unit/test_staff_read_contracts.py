@@ -33,6 +33,7 @@ def _app(role: str) -> FastAPI:
     install_error_handlers(app)
     app.include_router(staff_api.router)
     app.dependency_overrides[staff_api.current_session] = lambda: _session(role)
+    app.dependency_overrides[staff_api.require_csrf] = lambda: None
     return app
 
 

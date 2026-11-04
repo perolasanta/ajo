@@ -77,6 +77,7 @@ async def test_admin_can_edit_existing_staff_name(test_database) -> None:
     )
     app = create_app()
     app.dependency_overrides[staff_api.current_session] = lambda: current
+    app.dependency_overrides[staff_api.require_csrf] = lambda: None
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="https://testserver"
     ) as client:

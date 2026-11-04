@@ -111,7 +111,9 @@ class PayrollRunSummaryResponse(_PayrollResponse):
     file_total_kobo: int | None
     counts: PayrollRunCountsResponse
     created_by: str
+    created_by_name: str
     posted_by: str | None
+    posted_by_name: str | None
     created_at: datetime
     imported_at: datetime | None
     posted_at: datetime | None
@@ -150,8 +152,11 @@ class PayrollRunDetailResponse(_PayrollResponse):
     counts: PayrollRunCountsResponse
     component_totals_kobo: PayrollComponentTotalsResponse
     created_by: str
+    created_by_name: str
     imported_by: str | None
+    imported_by_name: str | None
     posted_by: str | None
+    posted_by_name: str | None
     created_at: datetime
     imported_at: datetime | None
     posted_at: datetime | None
