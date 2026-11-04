@@ -7,7 +7,6 @@ from sqlalchemy import text
 from app.core.db import transaction
 from app.domains.auth.service import CurrentSession
 
-
 _ACTION_COUNTS_SQL = text(
     """
     SELECT
@@ -164,9 +163,7 @@ async def get_action_counts(current: CurrentSession) -> dict[str, dict[str, int]
         "can_repay_disputed_loans": "treasurer" in roles,
     }
     async with transaction(current.cooperative_id) as session:
-        row = (
-            await session.execute(_ACTION_COUNTS_SQL, params)
-        ).mappings().one()
+        row = (await session.execute(_ACTION_COUNTS_SQL, params)).mappings().one()
 
     summary: dict[str, dict[str, int]] = {}
     if "treasurer" in roles:
@@ -178,17 +175,9 @@ async def get_action_counts(current: CurrentSession) -> dict[str, dict[str, int]
             row["payroll_awaiting_sign_off"]
         )
         disbursements = summary.setdefault("disbursements", {})
-        disbursements["awaiting_authorization"] = int(
-            row["disbursement_awaiting_authorization"]
-        )
-        disbursements["awaiting_confirmation"] = int(
-            row["disbursement_awaiting_confirmation"]
-        )
-        summary["role_changes"] = {
-            "awaiting_approval": int(row["role_changes_awaiting_approval"])
-        }
+        disbursements["awaiting_authorization"] = int(row["disbursement_awaiting_authorization"])
+        disbursements["awaiting_confirmation"] = int(row["disbursement_awaiting_confirmation"])
+        summary["role_changes"] = {"awaiting_approval": int(row["role_changes_awaiting_approval"])}
     if "committee" in roles:
-        summary.setdefault("loans", {})["awaiting_decision"] = int(
-            row["loans_awaiting_decision"]
-        )
+        summary.setdefault("loans", {})["awaiting_decision"] = int(row["loans_awaiting_decision"])
     return summary

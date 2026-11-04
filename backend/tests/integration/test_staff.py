@@ -1,19 +1,27 @@
 from __future__ import annotations
+
 import uuid
+
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
+
 from app.api import staff as staff_api
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.domains.auth.service import CurrentSession
 from app.main import create_app
 from tests.conftest import create_tenant
+
 pytestmark = pytest.mark.db
+
+
 @pytest.fixture(autouse=True)
 async def reset_engine():
     await dispose_engine()
     yield
     await dispose_engine()
+
+
 async def test_admin_lists_seeded_staff_with_roles(test_database) -> None:
     conn = await asyncpg.connect(asyncpg_dsn(test_database.app_url))
     try:

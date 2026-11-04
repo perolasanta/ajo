@@ -5,7 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
-from app.domains.auth.service import CurrentSession, current_session
+from app.api.auth import current_session
+from app.domains.auth.service import CurrentSession
 from app.domains.notifications import reads
 
 router = APIRouter(tags=["notifications"])

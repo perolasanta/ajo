@@ -68,7 +68,11 @@ def _session(seed: TenantSeed, role: str) -> CurrentSession:
         ("loan dashboard cards", "officer", "/api/v1/loan-applications?status=under_review"),
         ("loan dashboard cards", "admin", "/api/v1/loan-applications?status=under_review"),
         ("loan dashboard cards", "treasurer", "/api/v1/loan-applications?status=under_review"),
-        ("disbursement dashboard cards", "admin", "/api/v1/disbursements?status=pending_authorization"),
+        (
+            "disbursement dashboard cards",
+            "admin",
+            "/api/v1/disbursements?status=pending_authorization",
+        ),
         ("disbursement dashboard cards", "treasurer", "/api/v1/disbursements?status=authorized"),
         ("disbursement list", "admin", "/api/v1/disbursements"),
         ("disbursement list", "treasurer", "/api/v1/disbursements"),
@@ -99,11 +103,12 @@ async def test_screen_read_endpoint_is_available_to_matrix_role_without_csrf(
 
     response = await client.get(path)
 
-    assert response.status_code == 200, f"{screen} for {role}: {response.status_code} {response.text}"
+    assert response.status_code == 200, (
+        f"{screen} for {role}: {response.status_code} {response.text}"
+    )
     if screen == "staff selector":
         assert any(
-            item["user_id"] == str(selected["current"].user_id)
-            for item in response.json()["items"]
+            item["user_id"] == str(selected["current"].user_id) for item in response.json()["items"]
         )
     if screen == "new-loan member picker":
         assert any(item["id"] == str(seed.member_id) for item in response.json())
@@ -126,7 +131,9 @@ async def test_member_detail_endpoint_is_available_to_officer_for_new_loan_form(
 
     response = await client.get(f"/api/v1/members/{seed.member_id}")
 
-    assert response.status_code == 200, f"new-loan member detail: {response.status_code} {response.text}"
+    assert response.status_code == 200, (
+        f"new-loan member detail: {response.status_code} {response.text}"
+    )
 
 
 async def test_officer_loan_detail_endpoint_returns_snapshot_for_detail_screen(

@@ -73,7 +73,9 @@ def _safe_summary(summary: object) -> dict[str, str | int | None]:
             safe[key] = value
         elif key == "decision" and isinstance(value, str) and value in SAFE_DECISION_VALUES:
             safe[key] = value
-        elif key in {"old_role", "new_role"} and isinstance(value, str) and value in SAFE_ROLE_VALUES:
+        elif (
+            key in {"old_role", "new_role"} and isinstance(value, str) and value in SAFE_ROLE_VALUES
+        ):
             safe[key] = value
         elif (
             key == "count"

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import os
 import uuid
-from contextvars import ContextVar, Token
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any

@@ -39,7 +39,9 @@ def _app(role: str) -> FastAPI:
 
 @pytest.mark.parametrize("role", ["officer", "auditor", "treasurer", "committee"])
 async def test_staff_and_proposal_reads_reject_non_admin(role: str) -> None:
-    async with AsyncClient(transport=ASGITransport(app=_app(role)), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app(role)), base_url="http://test"
+    ) as client:
         staff = await client.get("/staff")
         proposals = await client.get("/role-change-proposals")
         edit = await client.patch(f"/staff/{uuid.uuid4()}", json={"full_name": "Not allowed"})
@@ -58,15 +60,17 @@ async def test_admin_read_responses_have_only_documented_fields(
 
     async def list_staff(*args: object, **kwargs: object) -> dict[str, object]:
         return {
-            "items": [{
-                "user_id": staff_id,
-                "email": "officer@example.test",
-                "full_name": "Officer One",
-                "status": "active",
-                "roles": ["officer"],
-                "created_at": created_at,
-                "password_hash": "must never be returned",
-            }],
+            "items": [
+                {
+                    "user_id": staff_id,
+                    "email": "officer@example.test",
+                    "full_name": "Officer One",
+                    "status": "active",
+                    "roles": ["officer"],
+                    "created_at": created_at,
+                    "password_hash": "must never be returned",
+                }
+            ],
             "page": 1,
             "page_size": 25,
             "total": 1,
@@ -74,24 +78,26 @@ async def test_admin_read_responses_have_only_documented_fields(
 
     async def list_proposals(*args: object, **kwargs: object) -> dict[str, object]:
         return {
-            "items": [{
-                "proposal_id": proposal_id,
-                "target_user_id": staff_id,
-                "target_email": "officer@example.test",
-                "proposer_user_id": proposer_id,
-                "proposer_email": "admin@example.test",
-                "proposer_display_name": "Admin One (admin@example.test)",
-                "decided_by_display_name": "Admin Two (second@example.test)",
-                "role": "treasurer",
-                "action": "add",
-                "reason": "Role rotation",
-                "status": "approved",
-                "created_at": created_at,
-                "expires_at": created_at,
-                "decided_at": created_at,
-                "decided_by": str(uuid.uuid4()),
-                "session_token": "must never be returned",
-            }],
+            "items": [
+                {
+                    "proposal_id": proposal_id,
+                    "target_user_id": staff_id,
+                    "target_email": "officer@example.test",
+                    "proposer_user_id": proposer_id,
+                    "proposer_email": "admin@example.test",
+                    "proposer_display_name": "Admin One (admin@example.test)",
+                    "decided_by_display_name": "Admin Two (second@example.test)",
+                    "role": "treasurer",
+                    "action": "add",
+                    "reason": "Role rotation",
+                    "status": "approved",
+                    "created_at": created_at,
+                    "expires_at": created_at,
+                    "decided_at": created_at,
+                    "decided_by": str(uuid.uuid4()),
+                    "session_token": "must never be returned",
+                }
+            ],
             "page": 1,
             "page_size": 25,
             "total": 1,
@@ -99,25 +105,45 @@ async def test_admin_read_responses_have_only_documented_fields(
 
     monkeypatch.setattr(staff_api.reads, "list_staff", list_staff)
     monkeypatch.setattr(staff_api.reads, "list_role_change_proposals", list_proposals)
-    async with AsyncClient(transport=ASGITransport(app=_app("admin")), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app("admin")), base_url="http://test"
+    ) as client:
         staff = await client.get("/staff")
         proposals = await client.get("/role-change-proposals?status=pending")
 
     assert staff.status_code == proposals.status_code == 200
     assert set(staff.json()["items"][0]) == {
-        "user_id", "email", "full_name", "status", "roles", "created_at"
+        "user_id",
+        "email",
+        "full_name",
+        "status",
+        "roles",
+        "created_at",
     }
     assert set(proposals.json()["items"][0]) == {
-        "proposal_id", "target_user_id", "target_email", "proposer_user_id",
-        "proposer_email", "proposer_display_name", "decided_by_display_name",
-        "role", "action", "reason", "status", "created_at",
-        "expires_at", "decided_at", "decided_by",
+        "proposal_id",
+        "target_user_id",
+        "target_email",
+        "proposer_user_id",
+        "proposer_email",
+        "proposer_display_name",
+        "decided_by_display_name",
+        "role",
+        "action",
+        "reason",
+        "status",
+        "created_at",
+        "expires_at",
+        "decided_at",
+        "decided_by",
     }
     assert "password_hash" not in staff.json()["items"][0]
     assert "session_token" not in proposals.json()["items"][0]
     assert staff.json()["items"][0]["full_name"] == "Officer One"
     assert proposals.json()["items"][0]["proposer_display_name"] == "Admin One (admin@example.test)"
-    assert proposals.json()["items"][0]["decided_by_display_name"] == "Admin Two (second@example.test)"
+    assert (
+        proposals.json()["items"][0]["decided_by_display_name"] == "Admin Two (second@example.test)"
+    )
 
 
 async def test_admin_can_edit_existing_staff_full_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -131,10 +157,10 @@ async def test_admin_can_edit_existing_staff_full_name(monkeypatch: pytest.Monke
         calls.append((target_user_id, full_name))
         return {"user_id": str(target_user_id), "full_name": full_name}
 
-    monkeypatch.setattr(
-        staff_api.reads, "update_staff_full_name", update_full_name, raising=False
-    )
-    async with AsyncClient(transport=ASGITransport(app=_app("admin")), base_url="http://test") as client:
+    monkeypatch.setattr(staff_api.reads, "update_staff_full_name", update_full_name, raising=False)
+    async with AsyncClient(
+        transport=ASGITransport(app=_app("admin")), base_url="http://test"
+    ) as client:
         response = await client.patch(f"/staff/{user_id}", json={"full_name": "Officer One"})
     assert response.status_code == 200
     assert response.json() == {"user_id": str(user_id), "full_name": "Officer One"}
@@ -142,6 +168,8 @@ async def test_admin_can_edit_existing_staff_full_name(monkeypatch: pytest.Monke
 
 
 async def test_proposal_status_filter_is_validated() -> None:
-    async with AsyncClient(transport=ASGITransport(app=_app("admin")), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app("admin")), base_url="http://test"
+    ) as client:
         response = await client.get("/role-change-proposals?status=secret")
     assert response.status_code == 422
