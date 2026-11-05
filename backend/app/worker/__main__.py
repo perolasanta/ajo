@@ -15,6 +15,12 @@ from app.worker.sender import HttpSmsSender
 async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
+    log = structlog.get_logger("worker")
+    if not settings.sms_enabled:
+        log.info("sms_delivery_disabled")
+        await asyncio.Event().wait()
+        return
+
     public_url = urlsplit(settings.public_base_url)
     if public_url.scheme not in {"http", "https"} or not public_url.netloc:
         raise RuntimeError("PUBLIC_BASE_URL must be an absolute HTTP URL")
@@ -30,7 +36,6 @@ async def main() -> None:
     if settings.app_env != "development" and public_url.scheme != "https":
         raise RuntimeError("PUBLIC_BASE_URL must use HTTPS outside development")
     sender = HttpSmsSender(settings)
-    log = structlog.get_logger("worker")
     log.info("outbox_worker_started")
     try:
         await check_application_role(settings.database_url)

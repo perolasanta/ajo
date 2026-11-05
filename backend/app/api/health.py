@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core.config import get_settings
@@ -15,10 +16,11 @@ async def liveness() -> dict[str, str]:
 
 
 @router.get("/health/db")
-async def readiness() -> dict[str, str]:
+async def readiness() -> dict[str, str] | JSONResponse:
     """Database reachable through the pooled connection as the app role."""
-    async with connection() as conn:
-        row = (
-            await conn.execute(text("SELECT current_user, current_setting('server_version')"))
-        ).one()
-    return {"status": "ok", "db_user": row[0], "server_version": row[1]}
+    try:
+        async with connection() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse({"status": "not ok"}, status_code=503)
+    return {"status": "ok"}
