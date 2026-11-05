@@ -2,6 +2,7 @@ import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, ensureCsrf, request } from "../api/client";
+import { DEFAULT_LANDING_PATH } from "../navigation.js";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
@@ -52,7 +53,7 @@ export default function LoginPage() {
         setEnrollment({ uri: setup.provisioning_uri, secret });
         setStage("enroll");
       } else if (data.mfa_required) setStage("verify");
-      else navigate("/members", { replace: true });
+      else navigate(DEFAULT_LANDING_PATH, { replace: true });
     } catch {
       setError("We couldn’t sign you in with those details.");
     }
@@ -65,7 +66,7 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
       });
-      navigate("/members", { replace: true });
+      navigate(DEFAULT_LANDING_PATH, { replace: true });
     } catch {
       setError("We couldn’t sign you in with those details.");
     }

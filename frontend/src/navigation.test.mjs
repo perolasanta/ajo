@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { disbursementRoles, visibleNavigation } from "./navigation.js";
+import {
+  ACCESS_DENIED_NOTICE,
+  DEFAULT_LANDING_PATH,
+  disbursementRoles,
+  getRouteDecision,
+  navigation,
+  visibleNavigation,
+} from "./navigation.js";
 import { canDecideLoans, canSeeDestinationAccount, canSubmitLoans } from "./loanPolicy.mjs";
 import {
   canAuthorizeDisbursement,
@@ -19,6 +26,47 @@ const cases = [
   ["admin", true],
   ["committee", false],
 ];
+
+const documentedRoles = ["officer", "committee", "treasurer", "admin", "auditor"];
+
+for (const role of documentedRoles) {
+  test(`${role} lands on Dashboard from root and unknown routes`, () => {
+    assert.equal(DEFAULT_LANDING_PATH, "/dashboard");
+    assert.deepEqual(getRouteDecision([role], "/"), {
+      allowed: false,
+      redirectTo: "/dashboard",
+    });
+    assert.deepEqual(getRouteDecision([role], "/not-a-route"), {
+      allowed: false,
+      redirectTo: "/dashboard",
+    });
+    assert.equal(getRouteDecision([role], "/dashboard").allowed, true);
+  });
+
+  test(`${role} only sees navigation paths it can open`, () => {
+    for (const item of visibleNavigation([role])) {
+      assert.equal(getRouteDecision([role], item.path).allowed, true, item.path);
+    }
+  });
+
+  for (const item of navigation.filter((item) => !item.roles.includes(role))) {
+    test(`${role} is redirected from forbidden ${item.path} with a notice`, () => {
+      assert.deepEqual(getRouteDecision([role], item.path), {
+        allowed: false,
+        redirectTo: "/dashboard",
+        notice: ACCESS_DENIED_NOTICE,
+      });
+    });
+  }
+}
+
+test("loan creation is limited to roles that may submit applications", () => {
+  assert.equal(getRouteDecision(["officer"], "/loans/new").allowed, true);
+  assert.equal(getRouteDecision(["admin"], "/loans/new").allowed, true);
+  for (const role of ["committee", "treasurer", "auditor"]) {
+    assert.equal(getRouteDecision([role], "/loans/new").notice, ACCESS_DENIED_NOTICE);
+  }
+});
 
 for (const [role, expected] of cases) {
   test(`${role} ${expected ? "sees" : "does not see"} Members navigation`, () => {
