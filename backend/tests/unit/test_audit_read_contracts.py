@@ -151,9 +151,7 @@ async def test_allowed_roles_get_exact_contract(role: str, monkeypatch: pytest.M
     items = body["items"]
     assert len(items) == 3
     assert all(set(item) == SAFE_KEYS for item in items)
-    assert [item["actor_id"] for item in items] == [
-        str(row["actor_user_id"]) for row in rows
-    ]
+    assert [item["actor_id"] for item in items] == [str(row["actor_user_id"]) for row in rows]
     assert [item["actor_display_name"] for item in items] == [
         "Ada Admin (ada@example.test)",
         "unnamed@example.test",

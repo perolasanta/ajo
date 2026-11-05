@@ -15,6 +15,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 import asyncpg
 import pytest
 from cryptography.fernet import Fernet
+from hypothesis import settings
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import NullPool
 
@@ -232,10 +233,8 @@ def test_database() -> TestDatabase:
     asyncio.run(_drop_database())
 
 
-@pytest.fixture(scope="session", autouse=True)
-def hypothesis_profiles() -> None:
-    from hypothesis import settings
-
-    settings.register_profile("default", max_examples=25, deadline=None)
-    settings.register_profile("ci", max_examples=200, deadline=None)
-    settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
+# @given captures its settings while test modules are imported, before fixtures run.
+# Load both profiles now so database-backed Hypothesis tests never inherit the 200ms default.
+settings.register_profile("default", max_examples=25, deadline=None)
+settings.register_profile("ci", max_examples=200, deadline=None)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))

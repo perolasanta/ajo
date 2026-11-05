@@ -85,6 +85,10 @@ async def test_audit_actor_display_name_is_joined_at_read_time(
             text("UPDATE users SET full_name = :name WHERE cooperative_id = :cid AND id = :uid"),
             {"name": "Audit Admin", "cid": current.cooperative_id, "uid": current.user_id},
         )
+        actor_email = await session.scalar(
+            text("SELECT email FROM users WHERE cooperative_id = :cid AND id = :uid"),
+            {"cid": current.cooperative_id, "uid": current.user_id},
+        )
     page = await list_audit_events(current, action="audit_name_test")
     items = page["items"]
     assert isinstance(items, list)
@@ -94,4 +98,4 @@ async def test_audit_actor_display_name_is_joined_at_read_time(
     assert item["actor_full_name"] == "Audit Admin"
     projected = audit_projection(item)
     assert projected["actor_id"] == str(current.user_id)
-    assert projected["actor_display_name"] == f"Audit Admin ({current.email})"
+    assert projected["actor_display_name"] == f"Audit Admin ({actor_email})"

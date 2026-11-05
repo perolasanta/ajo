@@ -15,7 +15,7 @@ async def liveness() -> dict[str, str]:
     return {"status": "ok", "env": s.app_env, "version": s.git_sha}
 
 
-@router.get("/health/db")
+@router.get("/health/db", response_model=None)
 async def readiness() -> dict[str, str] | JSONResponse:
     """Database reachable through the pooled connection as the app role."""
     try:
