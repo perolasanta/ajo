@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = Field(default=15, gt=0)
     login_rate_limit_attempts: int = Field(default=20, gt=0)
     login_rate_limit_window_minutes: int = Field(default=5, gt=0)
+    trusted_proxy_ips: str = ""
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     whatsapp_app_secret: str = ""
@@ -43,6 +44,7 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
 
     public_base_url: str = ""
+    sms_enabled: bool = False
     sms_gateway_url: str = ""
     sms_gateway_api_key: SecretStr = SecretStr("")
     sms_sender_id: str = ""

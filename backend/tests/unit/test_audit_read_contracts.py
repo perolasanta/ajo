@@ -116,31 +116,48 @@ def test_audit_actor_fallbacks_do_not_change_stored_actor_id() -> None:
 async def test_other_roles_receive_403(role: str, monkeypatch: pytest.MonkeyPatch) -> None:
     app = FastAPI()
     install_error_handlers(app)
-    app.include_router(audit_api.router)
+    app.include_router(audit_api.router, prefix="/api/v1")
     app.dependency_overrides[audit_api.current_session] = lambda: _session(role)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/audit-events")
+        response = await client.get("/api/v1/audit-events")
     assert response.status_code == 403
+    assert "email" not in response.text.lower()
 
 
 @pytest.mark.parametrize("role", ["admin", "auditor"])
 async def test_allowed_roles_get_exact_contract(role: str, monkeypatch: pytest.MonkeyPatch) -> None:
     app = FastAPI()
     install_error_handlers(app)
-    app.include_router(audit_api.router)
+    app.include_router(audit_api.router, prefix="/api/v1")
     app.dependency_overrides[audit_api.current_session] = lambda: _session(role)
+    named_user = _row()
+    unnamed_user = _row()
+    unnamed_user["actor_full_name"] = None
+    unnamed_user["actor_email"] = "unnamed@example.test"
+    missing_user = _row()
+    missing_user["joined_actor_id"] = None
+    missing_user["actor_full_name"] = None
+    missing_user["actor_email"] = None
+    rows = [named_user, unnamed_user, missing_user]
 
     async def stub(*args: object, **kwargs: object) -> dict[str, object]:
-        return {"items": [_row()], "page": 1, "page_size": 25, "total": 1}
+        return {"items": rows, "page": 1, "page_size": 25, "total": len(rows)}
 
     monkeypatch.setattr(audit_api.reads, "list_audit_events", stub)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/audit-events")
+        response = await client.get("/api/v1/audit-events")
     assert response.status_code == 200
     body = response.json()
-    assert set(body["items"][0]) == SAFE_KEYS
-    assert body["items"][0]["safe_summary"] == {"status": "active"}
-    assert body["items"][0]["actor_display_name"] == "Ada Admin (ada@example.test)"
+    items = body["items"]
+    assert len(items) == 3
+    assert all(set(item) == SAFE_KEYS for item in items)
+    assert [item["actor_id"] for item in items] == [str(row["actor_user_id"]) for row in rows]
+    assert [item["actor_display_name"] for item in items] == [
+        "Ada Admin (ada@example.test)",
+        "unnamed@example.test",
+        "Unknown user",
+    ]
+    assert items[0]["safe_summary"] == {"status": "active"}
 
 
 def test_tenant_id_is_required_by_read_service_contract() -> None:

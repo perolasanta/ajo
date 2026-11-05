@@ -122,3 +122,8 @@ test("disbursement actions respect role, workflow state and maker-checker separa
   assert.equal(canReverseDisbursement(["admin"], "admin-2", paid), true);
   assert.equal(canReverseDisbursement(["admin"], "admin-1", paid), false);
 });
+
+test("auditor does not see Payroll navigation", () => {
+  const names = visibleNavigation(["auditor"]).map((item) => item.name);
+  assert.equal(names.includes("Payroll"), false);
+});
