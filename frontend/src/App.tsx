@@ -3,9 +3,23 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Menu, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
+import {
+  Link,
+  Navigate,
+  NavLink,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { getNotificationSummary, request } from "./api/client";
-import { visibleNavigation } from "./navigation";
+import {
+  ACCESS_DENIED_NOTICE,
+  DEFAULT_LANDING_PATH,
+  getRouteDecision,
+  visibleNavigation,
+} from "./navigation";
 import { canViewPayroll } from "./payrollPolicy.mjs";
 import type { MemberListItem, NotificationSummary } from "./api/schema";
 import { Avatar } from "./ui/Avatar";
@@ -105,7 +119,10 @@ function Shell({
   notificationSummary?: NotificationSummary;
 }) {
   const [drawer, setDrawer] = useState(false);
+  const location = useLocation();
   const links = visibleNavigation(session.roles);
+  const locationState = location.state as { notice?: string } | null;
+  const notice = locationState?.notice === ACCESS_DENIED_NOTICE ? locationState.notice : undefined;
   const userName = session.email
     .split("@")[0]
     .replace(/\b\w/g, (character) => character.toUpperCase());
@@ -208,7 +225,14 @@ function Shell({
           </Link>
           <UserMenu session={session} onLogout={onLogout} />
         </header>
-        <main className="mx-auto min-w-0 max-w-[1200px] p-4 sm:p-6">{children}</main>
+        <main className="mx-auto min-w-0 max-w-[1200px] p-4 sm:p-6">
+          {notice && (
+            <p role="status" className="mb-4 rounded-control bg-amber-50 p-3 text-sm text-amber-950">
+              {notice}
+            </p>
+          )}
+          {children}
+        </main>
       </div>
     </div>
   );
@@ -241,6 +265,7 @@ function UserMenu({ session, onLogout }: { session: Session; onLogout?: () => vo
 
 function ProtectedShell() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const session = useQuery({
     queryKey: ["session"],
@@ -266,6 +291,16 @@ function ProtectedShell() {
   if (session.isError || !session.data) return <Navigate to="/login" replace />;
   if (!session.data.roles.some((role) => role !== "member"))
     return <main className="p-8">Your account does not have officer access.</main>;
+  const routeDecision = getRouteDecision(session.data.roles, location.pathname);
+  if (!routeDecision.allowed) {
+    return (
+      <Navigate
+        to={routeDecision.redirectTo}
+        replace
+        state={routeDecision.notice ? { notice: routeDecision.notice } : undefined}
+      />
+    );
+  }
   const logout = async () => {
     try {
       await request("/auth/logout", { method: "POST" });
@@ -299,16 +334,6 @@ function PayrollGate() {
   return <Outlet />;
 }
 
-function ComingSoon() {
-  return (
-    <section className="max-w-lg">
-      <h1 className="font-serif text-[32px] font-semibold tracking-[-0.035em]">Coming soon</h1>
-      <p className="mt-2 text-sm text-muted">
-        This workspace is being prepared. Members is available now.
-      </p>
-    </section>
-  );
-}
 function DesignShell() {
   return (
     <Shell
@@ -348,6 +373,7 @@ function ResponsiveReview() {
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<Navigate to={DEFAULT_LANDING_PATH} replace />} />
       <Route
         path="/login"
         element={
@@ -392,9 +418,8 @@ export default function App() {
         </Route>
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/staff" element={<StaffPage />} />
-        <Route path="/:feature" element={<ComingSoon />} />
       </Route>
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to={DEFAULT_LANDING_PATH} replace />} />
     </Routes>
   );
 }
