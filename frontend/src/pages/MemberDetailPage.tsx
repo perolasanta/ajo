@@ -12,6 +12,7 @@ import { DateTime, Money } from "../ui/Format";
 import { WhyPopover } from "../ui/Overlay";
 import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
+import { canSeeMemberFinancialActions } from "../memberFinancialPolicy.js";
 
 type Session = { roles: string[] };
 
@@ -51,15 +52,22 @@ export default function MemberDetailPage() {
   const member = detail.data;
   const canCreateBindingCode =
     session.data?.roles.some((role) => role === "admin" || role === "officer") ?? false;
+  const canSeeFinancialActions = canSeeMemberFinancialActions(session.data?.roles ?? []);
 
   return (
     <>
       <PageHeader title={member.full_name} breadcrumb={`Members / ${member.full_name}`}>
         <div className="flex flex-wrap items-center gap-2">
           {member.status && <Badge>{member.status}</Badge>}
-          <Button variant="secondary" disabled title="Member actions are not available yet.">
-            Actions coming soon
-          </Button>
+          {canSeeFinancialActions && (
+            <Button
+              variant="secondary"
+              disabled
+              title="Member financial actions are not available yet."
+            >
+              Financial actions coming soon
+            </Button>
+          )}
         </div>
       </PageHeader>
       <p className="-mt-4 mb-6 text-sm text-muted">

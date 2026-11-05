@@ -11,7 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.db import asyncpg_dsn, dispose_engine
-from app.core.errors import Conflict
+from app.core.errors import Conflict, Forbidden
 from app.domains.auth.service import CurrentSession
 from app.domains.members import service
 from app.domains.members.bank_accounts import add_bank_account
@@ -36,8 +36,13 @@ async def db(test_database) -> asyncpg.Connection:
     await conn.close()
 
 
-async def setup_tenant(conn: asyncpg.Connection):
-    seed = await create_tenant(conn, name="Member test", slug_prefix="member", include_member=True)
+async def setup_tenant(
+    conn: asyncpg.Connection,
+    roles: tuple[str, ...] = ("officer", "treasurer"),
+):
+    seed = await create_tenant(
+        conn, name="Member test", slug_prefix="member", roles=roles, include_member=True
+    )
     cid, uid, other = seed.cooperative_id, seed.user_ids[0], seed.user_ids[1]
     ids = {}
     for code, name, account_type in (
@@ -90,12 +95,39 @@ async def test_withdrawal_beyond_available_rejected(db: asyncpg.Connection) -> N
 
 
 async def test_same_user_withdrawal_approval_rejected(db: asyncpg.Connection) -> None:
-    cid, uid, _, mid, _ = await setup_tenant(db)
-    posted = session(cid, uid)
+    cid, _, treasurer, mid, _ = await setup_tenant(db)
+    posted = session(cid, treasurer, "treasurer")
     await service.record_contribution(posted, mid, "savings", 1000, "same-approval-contribution")
     request_id = await service.request_withdrawal(posted, mid, 1000, "same-approval-request")
     with pytest.raises(Conflict, match="different user"):
-        await service.approve_withdrawal(session(cid, uid, "admin"), request_id)
+        await service.approve_withdrawal(posted, request_id)
+
+
+async def test_officer_cannot_approve_withdrawal_requested_by_another_officer(
+    db: asyncpg.Connection,
+) -> None:
+    cid, officer_approver, requester, mid, _ = await setup_tenant(db, roles=("officer", "officer"))
+    await service.record_contribution(
+        session(cid, officer_approver), mid, "savings", 1000, "officer-approval-contribution"
+    )
+    request_id = await service.request_withdrawal(
+        session(cid, requester), mid, 500, "officer-approval-request"
+    )
+
+    with pytest.raises(Forbidden) as error:
+        await service.approve_withdrawal(session(cid, officer_approver, "officer"), request_id)
+    assert error.value.status_code == 403
+
+
+async def test_admin_cannot_approve_withdrawal(db: asyncpg.Connection) -> None:
+    cid, requester, admin, mid, _ = await setup_tenant(db, roles=("officer", "admin"))
+    posted = session(cid, requester, "officer")
+    await service.record_contribution(posted, mid, "savings", 1000, "admin-approval-contribution")
+    request_id = await service.request_withdrawal(posted, mid, 500, "admin-approval-request")
+
+    with pytest.raises(Forbidden) as error:
+        await service.approve_withdrawal(session(cid, admin, "admin"), request_id)
+    assert error.value.status_code == 403
 
 
 async def test_concurrent_withdrawal_approvals_cannot_overdraw_member_savings(

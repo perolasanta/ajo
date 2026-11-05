@@ -18,6 +18,19 @@ Enforce these permissions server-side; hiding fields or navigation in the user i
 | **committee** | `id`, `member_no`, and `full_name` only on both member endpoints. No contact, bank-account, salary, or balance data. **Committee loan-summary TODO:** define the fields before implementing committee loan review. |
 | **auditor** | Read-only. `GET /members`: `id`, `member_no`, `full_name`, `status`, `joined_on`. `GET /members/{member_id}`: those fields plus balances (`savings_kobo`, `shares_kobo`, `dues_paid_kobo`, `locked_kobo`, `available_kobo`). Omit contacts, `staff_no`, employer, bank accounts, and salary fields; no financial posting. |
 
+## 1a. Member contribution and withdrawal writes
+
+Enforce these write permissions in the member service; API and UI visibility are not authorization. Admins are read-only for all four actions below. Committee and auditor have no access. A multi-role user acts only through a role permitted for the action; role combinations never bypass actor-ID separation.
+
+| Action | Allowed role(s) |
+|---|---|
+| Record a contribution | Officer, treasurer |
+| Request a withdrawal on a member's behalf | Officer, treasurer |
+| Approve a withdrawal request | Treasurer only |
+| Post the withdrawal ledger entry | Treasurer only, in the same operation as approval (not a separate stage) |
+
+The person who requested a withdrawal can never approve it, even when they hold multiple roles. Members cannot request withdrawals in the app yet. Do not add a separate posting stage now. Follow-up: consider withdrawal posting as a distinct step, possibly committee approval followed by treasurer posting.
+
 ## 1b. Payroll access and reporting
 
 | Payroll operation | Allowed role(s) |

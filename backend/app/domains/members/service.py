@@ -26,6 +26,13 @@ def encrypt_account_number(account_number: str) -> str:
     return _fernet().encrypt(digits.encode()).decode("ascii")
 
 
+def _financial_actor_role(current: CurrentSession, allowed_roles: tuple[str, ...]) -> str:
+    for role in allowed_roles:
+        if role in current.roles:
+            return role
+    raise Forbidden("Role is not permitted for this financial action")
+
+
 async def record_contribution(
     current: CurrentSession,
     member_id: uuid.UUID,
@@ -33,8 +40,7 @@ async def record_contribution(
     amount_kobo: int,
     idempotency_key: str,
 ) -> uuid.UUID:
-    if not set(current.roles).intersection({"officer", "treasurer", "admin"}):
-        raise Forbidden("Officer, treasurer or admin role required")
+    actor_role = _financial_actor_role(current, ("treasurer", "officer"))
     if kind not in {"savings", "shares", "dues"} or amount_kobo <= 0:
         raise ValueError("contribution is invalid")
     if not idempotency_key.strip():
@@ -129,9 +135,9 @@ async def record_contribution(
             session,
             cooperative_id=current.cooperative_id,
             actor_user_id=current.user_id,
-            role=current.roles[0] if current.roles else None,
             action="member_contribution_recorded",
             entity_type="journal_entry",
+            role=actor_role,
             entity_id=str(entry),
             summary={"kind": kind, "amount_kobo": amount_kobo, "member_id": str(member_id)},
             channel="api",
@@ -171,8 +177,7 @@ async def member_balances(cooperative_id: uuid.UUID, member_id: uuid.UUID) -> di
 async def request_withdrawal(
     current: CurrentSession, member_id: uuid.UUID, amount_kobo: int, idempotency_key: str
 ) -> uuid.UUID:
-    if not set(current.roles).intersection({"officer", "treasurer", "admin"}):
-        raise Forbidden("Officer, treasurer or admin role required")
+    actor_role = _financial_actor_role(current, ("treasurer", "officer"))
     if amount_kobo <= 0:
         raise ValueError("amount must be positive")
     if not idempotency_key.strip():
@@ -247,9 +252,9 @@ async def request_withdrawal(
             session,
             cooperative_id=current.cooperative_id,
             actor_user_id=current.user_id,
-            role=current.roles[0] if current.roles else None,
             action="withdrawal_requested",
             entity_type="withdrawal_request",
+            role=actor_role,
             entity_id=str(request_id),
             summary={"amount_kobo": amount_kobo, "member_id": str(member_id)},
             channel="api",
@@ -259,8 +264,9 @@ async def request_withdrawal(
 
 
 async def approve_withdrawal(current: CurrentSession, request_id: uuid.UUID) -> uuid.UUID:
-    if current.user_id is None or not set(current.roles).intersection({"treasurer", "admin"}):
-        raise Forbidden("Treasurer or admin role required")
+    if current.user_id is None:
+        raise Forbidden("Treasurer role required")
+    actor_role = _financial_actor_role(current, ("treasurer",))
     async with transaction(current.cooperative_id) as session:
         row = (
             await session.execute(
@@ -356,9 +362,9 @@ async def approve_withdrawal(current: CurrentSession, request_id: uuid.UUID) -> 
             session,
             cooperative_id=current.cooperative_id,
             actor_user_id=current.user_id,
-            role=current.roles[0],
             action="withdrawal_approved",
             entity_type="withdrawal_request",
+            role=actor_role,
             entity_id=str(request_id),
             summary={"amount_kobo": int(row.amount_kobo)},
             channel="api",
