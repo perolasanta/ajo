@@ -7,7 +7,7 @@ import { Field } from "../ui/Field";
 import { DateTime, Money } from "../ui/Format";
 import { EmptyState, Skeleton, Stepper, Toast } from "../ui/Feedback";
 import { Input } from "../ui/Input";
-import { ConfirmDialog, Dialog, Popover, Tooltip, WhyPopover } from "../ui/Overlay";
+import { ConfirmDialog, Popover, Tooltip, WhyPopover } from "../ui/Overlay";
 import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
 import { ResponsiveTable, type ResponsiveColumn } from "../ui/Table";
@@ -99,14 +99,6 @@ export default function DesignPage() {
                 <p className="font-medium">Evidence</p>
                 <p className="mt-1 text-muted">This action is recorded in the audit log.</p>
               </Popover>
-
-              <Dialog
-                title="Record contribution"
-                description="This will create a ledger entry."
-                trigger={<Button size="sm">Open dialog</Button>}
-              >
-                <p className="text-sm text-muted">Dialog content is keyboard accessible.</p>
-              </Dialog>
 
               <ConfirmDialog
                 title="Reverse repayment"
