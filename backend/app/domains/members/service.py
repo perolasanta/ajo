@@ -26,9 +26,7 @@ def encrypt_account_number(account_number: str) -> str:
     return _fernet().encrypt(digits.encode()).decode("ascii")
 
 
-def _financial_actor_role(
-    current: CurrentSession, allowed_roles: tuple[str, ...]
-) -> str:
+def _financial_actor_role(current: CurrentSession, allowed_roles: tuple[str, ...]) -> str:
     for role in allowed_roles:
         if role in current.roles:
             return role
