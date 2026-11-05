@@ -32,9 +32,9 @@ DISBURSEMENT_STATUSES = {
     "cancelled",
 }
 ALL_ROWS = [
-    {"source": "loans", "status": status, "count": 1} for status in sorted(LOAN_STATUSES)
+    {"source": "loans", "status": status, "total": 1} for status in sorted(LOAN_STATUSES)
 ] + [
-    {"source": "disbursements", "status": status, "count": 2}
+    {"source": "disbursements", "status": status, "total": 2}
     for status in sorted(DISBURSEMENT_STATUSES)
 ]
 

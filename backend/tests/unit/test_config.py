@@ -38,7 +38,11 @@ def test_production_disables_api_docs(monkeypatch: pytest.MonkeyPatch) -> None:
         get_settings.cache_clear()
 
 
-def test_default_pool_capacity_fits_neon_free_small_compute() -> None:
+def test_default_pool_capacity_fits_neon_free_small_compute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DB_POOL_SIZE", raising=False)
+    monkeypatch.delenv("DB_MAX_OVERFLOW", raising=False)
     settings = Settings(_env_file=None, app_env="development")
 
     assert (settings.db_pool_size, settings.db_max_overflow) == (10, 10)
