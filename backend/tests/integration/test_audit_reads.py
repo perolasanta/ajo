@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.db import transaction
-from app.domains.audit.reads import list_audit_events
+from app.domains.audit.reads import audit_projection, list_audit_events
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
 from tests.conftest import create_tenant
@@ -68,10 +68,6 @@ async def test_audit_actor_display_name_is_joined_at_read_time(
 ) -> None:
     current = audit_reader_tenant
     async with transaction(current.cooperative_id) as session:
-        await session.execute(
-            text("UPDATE users SET full_name = :name WHERE cooperative_id = :cid AND id = :uid"),
-            {"name": "Audit Admin", "cid": current.cooperative_id, "uid": current.user_id},
-        )
         await append_audit(
             session,
             cooperative_id=current.cooperative_id,
@@ -84,8 +80,18 @@ async def test_audit_actor_display_name_is_joined_at_read_time(
             channel="pytest",
             ip=None,
         )
+    async with transaction(current.cooperative_id) as session:
+        await session.execute(
+            text("UPDATE users SET full_name = :name WHERE cooperative_id = :cid AND id = :uid"),
+            {"name": "Audit Admin", "cid": current.cooperative_id, "uid": current.user_id},
+        )
     page = await list_audit_events(current, action="audit_name_test")
-    item = page["items"][0]
-    assert item["actor_id"] == str(current.user_id)
-    assert item["actor_display_name"].startswith("Audit Admin (")
-    assert item["actor_display_name"].endswith(")")
+    items = page["items"]
+    assert isinstance(items, list)
+    item = items[0]
+    assert isinstance(item, dict)
+    assert item["actor_user_id"] == current.user_id
+    assert item["actor_full_name"] == "Audit Admin"
+    projected = audit_projection(item)
+    assert projected["actor_id"] == str(current.user_id)
+    assert projected["actor_display_name"] == f"Audit Admin ({current.email})"
