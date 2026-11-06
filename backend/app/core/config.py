@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     sms_gateway_url: str = ""
     sms_gateway_api_key: SecretStr = SecretStr("")
     sms_sender_id: str = ""
+    email_enabled: bool = False
+    brevo_api_key: SecretStr = SecretStr("")
+    email_from_address: str = ""
+    email_from_name: str = ""
     sms_request_timeout_seconds: float = Field(default=10.0, gt=0)
     outbox_poll_interval_seconds: float = Field(default=2.0, gt=0)
     outbox_claim_lease_seconds: int = Field(default=120, gt=0)

@@ -181,3 +181,55 @@ def test_enabled_email_sender_requires_all_configuration(
 
     with pytest.raises(RuntimeError, match=error_message):
         BrevoEmailSender(settings)
+
+
+@pytest.mark.asyncio
+async def test_notifications_dead_lists_staff_user_id_without_email_address(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from app import cli as app_cli
+
+    cooperative_id = uuid.uuid4()
+    recipient_id = uuid.uuid4()
+    notification_id = uuid.uuid4()
+
+    class FakeResult:
+        def all(self) -> list[Any]:
+            return [
+                type(
+                    "DeadNotification",
+                    (),
+                    {
+                        "id": notification_id,
+                        "member_id": None,
+                        "recipient_user_id": recipient_id,
+                        "kind": "payroll_sign_off",
+                        "attempts": 4,
+                        "created_at": "created",
+                        "next_attempt_at": "next",
+                        "sent_at": None,
+                    },
+                )()
+            ]
+
+    class FakeSession:
+        async def execute(self, statement: Any, params: dict[str, Any]) -> FakeResult:
+            assert "recipient_user_id" in str(statement)
+            return FakeResult()
+
+    @asynccontextmanager
+    async def fake_transaction(*args: Any, **kwargs: Any) -> Any:
+        yield FakeSession()
+
+    async def fake_resolve_slug(slug: str) -> tuple[uuid.UUID, str]:
+        assert slug == "example"
+        return cooperative_id, slug
+
+    monkeypatch.setattr(app_cli, "transaction", fake_transaction)
+    monkeypatch.setattr(app_cli, "resolve_tenant_slug", fake_resolve_slug)
+
+    assert await app_cli.list_dead_notifications("example") == 0
+    output = capsys.readouterr().out
+    assert str(recipient_id) in output
+    assert str(notification_id) in output
+    assert "private.person@example.test" not in output

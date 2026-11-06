@@ -122,8 +122,8 @@ async def enqueue_action_notifications(
                 "recipient_user_id": recipient.user_id,
                 "kind": event_type,
                 "entity_id": entity_id,
-                "channel": None,
-                "template_version": None,
+                "channel": "email",
+                "template_version": "v1",
                 "payload": payload,
             },
         )

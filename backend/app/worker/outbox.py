@@ -7,6 +7,7 @@ import hmac
 import math
 import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,16 +18,18 @@ from sqlalchemy import text
 from app.core.config import Settings, get_settings
 from app.core.db import connection, transaction
 from app.domains.notifications.outbox import decrypt_payload
-from app.worker.sender import SmsSender
+from app.worker.email_sender import PermanentEmailDeliveryError, build_action_email
 
 _E164 = re.compile(r"^\+[1-9][0-9]{7,14}$")
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @dataclass(frozen=True)
 class ClaimedNotification:
     id: uuid.UUID
     cooperative_id: uuid.UUID
-    member_id: uuid.UUID
+    member_id: uuid.UUID | None
+    recipient_user_id: uuid.UUID | None
     kind: str
     channel: str
     template_version: str
@@ -49,27 +52,31 @@ def retry_delay_seconds(attempt: int, settings: Settings) -> int:
     return min(delay_seconds, max_seconds)
 
 
-async def _claim_next(cooperative_id: uuid.UUID, settings: Settings) -> ClaimedNotification | None:
+async def _claim_next(
+    cooperative_id: uuid.UUID, settings: Settings, channels: list[str]
+) -> ClaimedNotification | None:
     claim_token = uuid.uuid4()
     async with transaction(cooperative_id) as session:
         await session.execute(
             text("""UPDATE notifications SET status='failed',claimed_at=NULL,claim_token=NULL,
               last_error_code='worker_crash_limit'
-              WHERE cooperative_id=:cid AND status='processing'
+              WHERE cooperative_id=:cid AND status='processing' AND channel = ANY(:channels)
                 AND claimed_at <= now()-make_interval(secs => :lease_seconds)
                 AND attempts >= :max_attempts"""),
             {
                 "cid": cooperative_id,
                 "lease_seconds": settings.outbox_claim_lease_seconds,
                 "max_attempts": settings.outbox_max_attempts,
+                "channels": channels,
             },
         )
         row = (
             (
                 await session.execute(
-                    text("""SELECT id,cooperative_id,member_id,kind,channel,template_version,
+                    text("""SELECT id,cooperative_id,member_id,recipient_user_id,kind,channel,template_version,
                   payload_encrypted,attempts FROM notifications
-                  WHERE cooperative_id=:cid AND attempts < :max_attempts AND channel IS NOT NULL
+                  WHERE cooperative_id=:cid AND attempts < :max_attempts
+                    AND channel = ANY(:channels)
                     AND ((status='pending' AND next_attempt_at<=now()) OR
                       (status='processing' AND claimed_at<=now()-make_interval(secs => :lease_seconds)))
                   ORDER BY next_attempt_at,created_at
@@ -78,6 +85,7 @@ async def _claim_next(cooperative_id: uuid.UUID, settings: Settings) -> ClaimedN
                         "cid": cooperative_id,
                         "lease_seconds": settings.outbox_claim_lease_seconds,
                         "max_attempts": settings.outbox_max_attempts,
+                        "channels": channels,
                     },
                 )
             )
@@ -102,6 +110,7 @@ async def _claim_next(cooperative_id: uuid.UUID, settings: Settings) -> ClaimedN
             id=row["id"],
             cooperative_id=row["cooperative_id"],
             member_id=row["member_id"],
+            recipient_user_id=row["recipient_user_id"],
             kind=row["kind"],
             channel=row["channel"],
             template_version=row["template_version"],
@@ -151,6 +160,8 @@ async def _consent_is_current(
 async def _destination(claim: ClaimedNotification, payload: dict[str, Any]) -> str:
     destination = payload.get("destination")
     if destination is None and claim.kind == "confirmation_request":
+        if claim.member_id is None:
+            raise PermanentDeliveryError("invalid_sms_recipient_reference")
         async with transaction(claim.cooperative_id) as session:
             destination = (
                 await session.execute(
@@ -163,6 +174,30 @@ async def _destination(claim: ClaimedNotification, payload: dict[str, Any]) -> s
     if not isinstance(destination, str) or not _E164.fullmatch(destination):
         raise PermanentDeliveryError("invalid_sms_destination")
     return destination
+
+
+async def _email_destination(claim: ClaimedNotification) -> str:
+    if claim.recipient_user_id is None:
+        raise PermanentDeliveryError("invalid_email_recipient_reference")
+    async with transaction(claim.cooperative_id) as session:
+        destination = (
+            await session.execute(
+                text("SELECT email FROM users WHERE cooperative_id=:cid AND id=:user_id"),
+                {"cid": claim.cooperative_id, "user_id": claim.recipient_user_id},
+            )
+        ).scalar_one_or_none()
+    if not isinstance(destination, str) or not _EMAIL.fullmatch(destination):
+        raise PermanentDeliveryError("invalid_email_destination")
+    return destination
+
+
+def _masked_recipient_fields(channel: str, recipient: str | None) -> dict[str, str]:
+    if channel != "email" or recipient is None:
+        return {}
+    if not _EMAIL.fullmatch(recipient):
+        return {"recipient": "***"}
+    local_part, domain = recipient.rsplit("@", 1)
+    return {"recipient": f"{local_part[0]}***@{domain}"}
 
 
 async def _message(claim: ClaimedNotification, payload: dict[str, Any], settings: Settings) -> str:
@@ -258,13 +293,16 @@ async def _finish_failure(
 
 
 async def process_next_notification(
-    cooperative_id: uuid.UUID, sender: SmsSender, settings: Settings | None = None
+    cooperative_id: uuid.UUID,
+    senders: Mapping[str, Any],
+    settings: Settings | None = None,
 ) -> bool:
     current_settings = settings or get_settings()
-    claim = await _claim_next(cooperative_id, current_settings)
+    claim = await _claim_next(cooperative_id, current_settings, list(senders))
     if claim is None:
         return False
     log = structlog.get_logger("outbox")
+    recipient: str | None = None
     try:
         if claim.payload_encrypted is None:
             raise PermanentDeliveryError("notification_payload_missing")
@@ -272,12 +310,34 @@ async def process_next_notification(
             payload = decrypt_payload(claim.payload_encrypted)
         except ValueError as exc:
             raise PermanentDeliveryError("notification_payload_invalid") from exc
-        if not await _consent_is_current(claim, payload, current_settings):
-            await _finish_expired(claim)
-            return True
-        destination = await _destination(claim, payload)
-        message = await _message(claim, payload, current_settings)
-        await sender.send(destination, message)
+        if claim.channel == "sms":
+            if not await _consent_is_current(claim, payload, current_settings):
+                await _finish_expired(claim)
+                return True
+            recipient = await _destination(claim, payload)
+            sms_message = await _message(claim, payload, current_settings)
+            await senders["sms"].send(recipient, sms_message)
+        elif claim.channel == "email":
+            recipient = await _email_destination(claim)
+            email_message = build_action_email(claim.kind, payload, current_settings)
+            await senders["email"].send(
+                recipient,
+                email_message.subject,
+                email_message.text,
+                email_message.html,
+            )
+        else:
+            raise PermanentDeliveryError("unsupported_notification_channel")
+    except PermanentEmailDeliveryError as exc:
+        await _finish_failure(claim, current_settings, exc.code, permanent=True)
+        log.warning(
+            "notification_dead_lettered",
+            cooperative_id=str(cooperative_id),
+            notification_id=str(claim.id),
+            kind=claim.kind,
+            error_code=exc.code,
+            **_masked_recipient_fields(claim.channel, recipient),
+        )
     except PermanentDeliveryError as exc:
         await _finish_failure(claim, current_settings, exc.code, permanent=True)
         log.warning(
@@ -286,6 +346,7 @@ async def process_next_notification(
             notification_id=str(claim.id),
             kind=claim.kind,
             error_code=exc.code,
+            **_masked_recipient_fields(claim.channel, recipient),
         )
     except Exception as exc:
         error_code = type(exc).__name__
@@ -297,6 +358,7 @@ async def process_next_notification(
             kind=claim.kind,
             attempt=claim.attempts,
             error_code=error_code,
+            **_masked_recipient_fields(claim.channel, recipient),
         )
     else:
         await _finish_sent(claim)
@@ -305,6 +367,7 @@ async def process_next_notification(
             cooperative_id=str(cooperative_id),
             notification_id=str(claim.id),
             kind=claim.kind,
+            **_masked_recipient_fields(claim.channel, recipient),
         )
     return True
 
@@ -319,7 +382,7 @@ async def active_cooperative_ids() -> list[uuid.UUID]:
         return list(result.scalars().all())
 
 
-async def run_forever(sender: SmsSender, settings: Settings | None = None) -> None:
+async def run_forever(senders: Mapping[str, Any], settings: Settings | None = None) -> None:
     current_settings = settings or get_settings()
     log = structlog.get_logger("outbox")
     while True:
@@ -334,7 +397,7 @@ async def run_forever(sender: SmsSender, settings: Settings | None = None) -> No
             for _ in range(current_settings.outbox_batch_size_per_tenant):
                 try:
                     did_process = await process_next_notification(
-                        cooperative_id, sender, current_settings
+                        cooperative_id, senders, current_settings
                     )
                 except Exception as exc:
                     log.warning(

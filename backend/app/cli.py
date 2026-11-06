@@ -95,7 +95,7 @@ async def list_dead_notifications(slug: str) -> int:
         rows = (
             await session.execute(
                 text(
-                    """SELECT id, member_id, kind, attempts, created_at,
+                    """SELECT id, member_id, recipient_user_id, kind, attempts, created_at,
                               next_attempt_at, sent_at
                          FROM notifications
                         WHERE cooperative_id = :cid AND status = 'failed'
@@ -108,14 +108,16 @@ async def list_dead_notifications(slug: str) -> int:
         print("No dead-lettered notifications.")
         return 0
     header = (
-        f"{'id':36}  {'member_id':36}  {'kind':20}  {'attempts':>8}  "
+        f"{'id':36}  {'member_id':36}  {'recipient_user_id':36}  "
+        f"{'kind':20}  {'attempts':>8}  "
         f"{'created_at':25}  {'next_attempt_at':25}  {'sent_at':25}"
     )
     print(header)
     for row in rows:
         sent = "" if row.sent_at is None else str(row.sent_at)
         print(
-            f"{str(row.id):36}  {str(row.member_id):36}  {str(row.kind):20}  "
+            f"{str(row.id):36}  {str(row.member_id):36}  "
+            f"{str(row.recipient_user_id):36}  {str(row.kind):20}  "
             f"{int(row.attempts):>8}  {str(row.created_at):25}  "
             f"{str(row.next_attempt_at):25}  {sent:25}"
         )
