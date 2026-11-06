@@ -298,7 +298,9 @@ async def process_next_notification(
     settings: Settings | None = None,
 ) -> bool:
     current_settings = settings or get_settings()
-    claim = await _claim_next(cooperative_id, current_settings, list(senders))
+    # Claim disabled email rows too so they can be dead-lettered with an explicit reason.
+    channels = sorted(set(senders) | {"email"})
+    claim = await _claim_next(cooperative_id, current_settings, channels)
     if claim is None:
         return False
     log = structlog.get_logger("outbox")
@@ -318,6 +320,8 @@ async def process_next_notification(
             sms_message = await _message(claim, payload, current_settings)
             await senders["sms"].send(recipient, sms_message)
         elif claim.channel == "email":
+            if "email" not in senders:
+                raise PermanentEmailDeliveryError("email_delivery_disabled")
             recipient = await _email_destination(claim)
             email_message = build_action_email(claim.kind, payload, current_settings)
             await senders["email"].send(

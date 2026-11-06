@@ -233,3 +233,106 @@ async def test_notifications_dead_lists_staff_user_id_without_email_address(
     assert str(recipient_id) in output
     assert str(notification_id) in output
     assert "private.person@example.test" not in output
+
+
+@pytest.mark.asyncio
+async def test_sms_mapping_delivers_otp_and_disabled_email_dead_letters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cooperative_id = uuid.uuid4()
+    sms_claim = ClaimedNotification(
+        id=uuid.uuid4(),
+        cooperative_id=cooperative_id,
+        member_id=uuid.uuid4(),
+        recipient_user_id=None,
+        kind="confirmation_otp",
+        channel="sms",
+        template_version="v1",
+        payload_encrypted="encrypted-sms",
+        attempts=1,
+        claim_token=uuid.uuid4(),
+    )
+    email_claim = ClaimedNotification(
+        id=uuid.uuid4(),
+        cooperative_id=cooperative_id,
+        member_id=None,
+        recipient_user_id=uuid.uuid4(),
+        kind="payroll_sign_off",
+        channel="email",
+        template_version="v1",
+        payload_encrypted="encrypted-email",
+        attempts=1,
+        claim_token=uuid.uuid4(),
+    )
+    claims = [sms_claim, email_claim]
+    claim_channels: list[list[str]] = []
+    failure: dict[str, Any] = {}
+    sent_sms: list[tuple[str, str]] = []
+
+    class FakeSmsGateway:
+        async def send(self, destination: str, message: str) -> None:
+            sent_sms.append((destination, message))
+
+    class Logger:
+        def info(self, event: str, **kwargs: Any) -> None:
+            return None
+
+        def warning(self, event: str, **kwargs: Any) -> None:
+            failure["log_event"] = event
+            failure.update(kwargs)
+
+    async def claim_next(
+        tenant_id: uuid.UUID, settings: Settings, channels: list[str]
+    ) -> ClaimedNotification:
+        claim_channels.append(channels)
+        return claims.pop(0)
+
+    async def finish_failure(
+        claim: ClaimedNotification,
+        settings: Settings,
+        error_code: str,
+        *,
+        permanent: bool,
+    ) -> None:
+        failure.update(status="failed" if permanent else "pending", error_code=error_code)
+
+    monkeypatch.setattr(notification_worker, "_claim_next", claim_next)
+    monkeypatch.setattr(notification_worker, "_consent_is_current", lambda *args: _true())
+    monkeypatch.setattr(notification_worker, "_destination", lambda *args: _value("+2348030000001"))
+    monkeypatch.setattr(notification_worker, "_message", lambda *args: _value("Ajo code: 123456"))
+    monkeypatch.setattr(
+        notification_worker, "_email_destination", lambda *args: _value("staff@example.test")
+    )
+    monkeypatch.setattr(notification_worker, "_finish_sent", lambda *args: _done())
+    monkeypatch.setattr(notification_worker, "_finish_failure", finish_failure)
+    monkeypatch.setattr(
+        notification_worker,
+        "decrypt_payload",
+        lambda value: {"section": "Payroll", "url": "https://ajo.example.test/payroll"},
+    )
+    monkeypatch.setattr(
+        notification_worker.structlog, "get_logger", lambda *args, **kwargs: Logger()
+    )
+    settings = Settings(_env_file=None, app_env="development", email_enabled=False)
+    senders = {"sms": FakeSmsGateway()}
+
+    assert await notification_worker.process_next_notification(cooperative_id, senders, settings)
+    assert sent_sms == [("+2348030000001", "Ajo code: 123456")]
+    assert await notification_worker.process_next_notification(cooperative_id, senders, settings)
+    assert failure["status"] == "failed"
+    assert failure["error_code"] == "email_delivery_disabled"
+    assert failure["log_event"] == "notification_dead_lettered"
+    assert "sms" in claim_channels[0]
+    assert "email" in claim_channels[1]
+
+
+async def _true() -> bool:
+    return True
+
+
+async def _value(value: str) -> str:
+    return value
+
+
+async def _done() -> None:
+    return None

@@ -87,3 +87,52 @@ async def test_enabled_email_requires_brevo_settings_before_database(monkeypatch
 
     with pytest.raises(RuntimeError, match="BREVO_API_KEY"):
         await worker_main.main()
+
+
+@pytest.mark.parametrize("email_enabled", [False, True])
+@pytest.mark.asyncio
+async def test_worker_entrypoint_maps_senders_by_enabled_channel(
+    monkeypatch, email_enabled: bool
+) -> None:
+    settings = Settings(
+        app_env="development",
+        sms_enabled=True,
+        email_enabled=email_enabled,
+        public_base_url="https://ajo.example.test",
+        sms_gateway_url="https://gateway.example.test/messages",
+        sms_gateway_api_key="test-key",
+        brevo_api_key="test-key",
+        email_from_address="noreply@example.test",
+        email_from_name="Ajo",
+    )
+    captured: dict[str, object] = {}
+
+    class FakeSender:
+        async def aclose(self) -> None:
+            return None
+
+    async def stop_after_mapping(senders, current_settings) -> None:
+        captured["senders"] = senders
+        raise RuntimeError("stop after mapping")
+
+    async def no_database_check(database_url: str) -> None:
+        return None
+
+    async def no_dispose() -> None:
+        return None
+
+    monkeypatch.setattr(worker_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(worker_main, "configure_logging", lambda level: None)
+    monkeypatch.setattr(worker_main, "HttpSmsSender", lambda current_settings: FakeSender())
+    monkeypatch.setattr(worker_main, "BrevoEmailSender", lambda current_settings: FakeSender())
+    monkeypatch.setattr(worker_main, "check_application_role", no_database_check)
+    monkeypatch.setattr(worker_main, "run_forever", stop_after_mapping)
+    monkeypatch.setattr(worker_main, "dispose_engine", no_dispose)
+
+    with pytest.raises(RuntimeError, match="stop after mapping"):
+        await worker_main.main()
+
+    senders = captured["senders"]
+    assert isinstance(senders, dict)
+    assert "sms" in senders
+    assert ("email" in senders) is email_enabled
