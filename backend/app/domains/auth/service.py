@@ -30,6 +30,7 @@ from app.core.security import (
     verify_totp,
 )
 from app.domains.audit.service import append_audit
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 
 GENERIC_LOGIN_ERROR = "Invalid credentials or sign-in unavailable"
 SESSION_COOKIE_SEPARATOR = "~"
@@ -1137,6 +1138,9 @@ async def propose_role_change(
             action=action,
             reason=reason,
             ip=ip,
+        )
+        await enqueue_action_notifications_safely(
+            session, current.cooperative_id, "role_change_approval", proposal_id
         )
     return proposal_id
 

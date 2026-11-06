@@ -20,6 +20,7 @@ from app.core.errors import Conflict, Forbidden, NotFound, UnprocessableEntity
 from app.core.time import payroll_period
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 from app.domains.repayments.service import post_repayment
 
 MAX_PAYROLL_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -802,6 +803,7 @@ async def post_run(current: CurrentSession, run_id: uuid.UUID) -> int:
             ),
             {"cid": cid, "id": run_id, "actor": current.user_id},
         )
+        await enqueue_action_notifications_safely(session, cid, "payroll_sign_off", run_id)
     return posted
 
 
