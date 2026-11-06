@@ -69,7 +69,7 @@ async def _claim_next(cooperative_id: uuid.UUID, settings: Settings) -> ClaimedN
                 await session.execute(
                     text("""SELECT id,cooperative_id,member_id,kind,channel,template_version,
                   payload_encrypted,attempts FROM notifications
-                  WHERE cooperative_id=:cid AND attempts < :max_attempts
+                  WHERE cooperative_id=:cid AND attempts < :max_attempts AND channel IS NOT NULL
                     AND ((status='pending' AND next_attempt_at<=now()) OR
                       (status='processing' AND claimed_at<=now()-make_interval(secs => :lease_seconds)))
                   ORDER BY next_attempt_at,created_at

@@ -38,7 +38,9 @@ def test_each_event_uses_role_union_and_excludes_requester(
         event_type, excluded_user_ids={requester}, roles_by_user=roles
     )
 
-    expected = {single_role, multiple_roles} if allowed_role in roles[multiple_roles] else {single_role}
+    expected = (
+        {single_role, multiple_roles} if allowed_role in roles[multiple_roles] else {single_role}
+    )
     assert set(recipients) == expected
     assert len(recipients) == len(expected)
     assert requester not in recipients
@@ -98,6 +100,11 @@ async def test_enqueue_is_deduplicated_per_recipient_event_entity(
         "get_eligible_action_recipients",
         lambda *args, **kwargs: _resolved(recipients),
     )
+    monkeypatch.setattr(
+        notification_outbox,
+        "get_settings",
+        lambda: Settings(app_env="development", public_base_url="https://ajo.example.test"),
+    )
     payloads: list[dict[str, Any]] = []
 
     def capture_payload(payload: dict[str, Any]) -> str:
@@ -131,7 +138,9 @@ async def test_enqueue_is_deduplicated_per_recipient_event_entity(
 
     assert {key[1] for key in session.rows} == set(recipient_ids)
     assert len(session.rows) == len(recipient_ids)
-    assert all(key[0] == cooperative_id and key[2:] == (event_type, entity_id) for key in session.rows)
+    assert all(
+        key[0] == cooperative_id and key[2:] == (event_type, entity_id) for key in session.rows
+    )
     assert requester not in {key[1] for key in session.rows}
     assert all(row["member_id"] is None and row["channel"] is None for row in session.rows.values())
     assert all(set(payload) == {"section", "url"} for payload in payloads)
