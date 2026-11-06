@@ -142,7 +142,10 @@ async def test_enqueue_is_deduplicated_per_recipient_event_entity(
         key[0] == cooperative_id and key[2:] == (event_type, entity_id) for key in session.rows
     )
     assert requester not in {key[1] for key in session.rows}
-    assert all(row["member_id"] is None and row["channel"] is None for row in session.rows.values())
+    assert all(
+        row["member_id"] is None and row["channel"] == "email" and row["template_version"] == "v1"
+        for row in session.rows.values()
+    )
     assert all(set(payload) == {"section", "url"} for payload in payloads)
 
 

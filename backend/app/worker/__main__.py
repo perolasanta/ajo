@@ -8,20 +8,13 @@ import structlog
 from app.core.config import get_settings
 from app.core.db import check_application_role, dispose_engine
 from app.core.logging import configure_logging
+from app.worker.email_sender import BrevoEmailSender
 from app.worker.outbox import run_forever
 from app.worker.sender import HttpSmsSender
 
 
-async def main() -> None:
-    settings = get_settings()
-    configure_logging(settings.log_level)
-    log = structlog.get_logger("worker")
-    if not settings.sms_enabled:
-        log.info("sms_delivery_disabled")
-        await asyncio.Event().wait()
-        return
-
-    public_url = urlsplit(settings.public_base_url)
+def _validate_public_url(public_base_url: str, app_env: str) -> None:
+    public_url = urlsplit(public_base_url)
     if public_url.scheme not in {"http", "https"} or not public_url.netloc:
         raise RuntimeError("PUBLIC_BASE_URL must be an absolute HTTP URL")
     if (
@@ -33,15 +26,38 @@ async def main() -> None:
         raise RuntimeError(
             "PUBLIC_BASE_URL must not contain credentials, query data, or a fragment"
         )
-    if settings.app_env != "development" and public_url.scheme != "https":
+    if app_env != "development" and public_url.scheme != "https":
         raise RuntimeError("PUBLIC_BASE_URL must use HTTPS outside development")
-    sender = HttpSmsSender(settings)
-    log.info("outbox_worker_started")
+
+
+async def main() -> None:
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    log = structlog.get_logger("worker")
+    senders: dict[str, HttpSmsSender | BrevoEmailSender] = {}
+
+    if settings.sms_enabled:
+        _validate_public_url(settings.public_base_url, settings.app_env)
+        senders["sms"] = HttpSmsSender(settings)
+    else:
+        log.info("sms_delivery_disabled")
+
+    if settings.email_enabled:
+        senders["email"] = BrevoEmailSender(settings)
+    else:
+        log.info("email_delivery_disabled")
+
+    if not senders:
+        await asyncio.Event().wait()
+        return
+
+    log.info("outbox_worker_started", enabled_channels=sorted(senders))
     try:
         await check_application_role(settings.database_url)
-        await run_forever(sender, settings)
+        await run_forever(senders, settings)
     finally:
-        await sender.aclose()
+        for sender in senders.values():
+            await sender.aclose()
         await dispose_engine()
 
 

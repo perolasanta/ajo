@@ -594,7 +594,7 @@ async def test_outbox_worker_delivers_encrypted_confirmation_otp(
     gateway = FakeSmsGateway()
     expected_destination, expected_code = generated[0]
     for _ in range(100):
-        processed = await process_next_notification(cid, gateway, worker_settings)
+        processed = await process_next_notification(cid, {"sms": gateway}, worker_settings)
         if any(
             destination == expected_destination and expected_code in message
             for destination, message in gateway.sent
