@@ -23,7 +23,6 @@ services:
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       APP_NAME: ${APP_NAME:-ajo}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      GIT_SHA: ${GIT_SHA:-unknown}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DB_DISABLE_PREPARED_CACHE: ${DB_DISABLE_PREPARED_CACHE:-true}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
@@ -63,7 +62,6 @@ services:
       SMS_REQUEST_TIMEOUT_SECONDS: ${SMS_REQUEST_TIMEOUT_SECONDS:-10}
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      GIT_SHA: ${GIT_SHA:-unknown}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DB_DISABLE_PREPARED_CACHE: ${DB_DISABLE_PREPARED_CACHE:-true}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
@@ -88,7 +86,6 @@ services:
     environment:
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      GIT_SHA: ${GIT_SHA:-unknown}
       DATABASE_URL_SCHEDULER: ${DATABASE_URL_SCHEDULER:?DATABASE_URL_SCHEDULER is required}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
@@ -106,6 +103,7 @@ services:
     cpus: 0.25
     deploy:
       replicas: 1
+  # Run python -m app.cli create-cooperative and seed-demo through this service.
   migration:
     <<: *common
     image: ghcr.io/${AJO_IMAGE_OWNER}/ajo-backend:${AJO_TAG:-staging}
@@ -114,6 +112,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DATABASE_URL_DIRECT: ${DATABASE_URL_DIRECT:?DATABASE_URL_DIRECT is required for migrations}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
