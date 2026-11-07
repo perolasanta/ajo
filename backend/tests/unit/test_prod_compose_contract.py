@@ -47,6 +47,10 @@ class ProductionComposeContractTests(unittest.TestCase):
         self.assertIn("exec gunicorn", api)
         self.assertIn("/api/v1/health/db", api)
 
+    def test_api_receives_public_base_url_for_action_notification_links(self) -> None:
+        api = service_block(COMPOSE.read_text(), "api")
+        self.assertIn("PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}", api)
+
     def test_worker_and_scheduler_have_healthchecks(self) -> None:
         for service in ("worker", "scheduler"):
             with self.subTest(service=service):

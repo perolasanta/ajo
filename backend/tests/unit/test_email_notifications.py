@@ -171,7 +171,10 @@ async def test_enqueue_failure_is_swallowed_inside_savepoint(
             return self.nested
 
     async def fail_enqueue(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError("outbox unavailable")
+        raise RuntimeError(
+            "db rejected 'Ada Lovelace' user@example.test "
+            "id 550e8400-e29b-41d4-a716-446655440000 amount ₦123,000"
+        )
 
     monkeypatch.setattr(notification_outbox, "enqueue_action_notifications", fail_enqueue)
     session = FakeSession()
@@ -186,12 +189,25 @@ async def test_enqueue_failure_is_swallowed_inside_savepoint(
     assert len(caplog.records) == 1
     record = caplog.records[0]
     assert record.levelno == logging.ERROR
-    assert record.getMessage() == "action_notification_enqueue_failed"
+    assert record.getMessage() == (
+        f"action_notification_enqueue_failed event_type=payroll_sign_off entity_id={entity_id} "
+        "exception_class=RuntimeError exception_message="
+        "db rejected [redacted-value] [redacted-address] id [redacted-id] "
+        "amount [redacted-amount]"
+    )
     assert record.event_type == "payroll_sign_off"
     assert record.entity_id == str(entity_id)
     assert record.exception_class == "RuntimeError"
+    assert record.exception_message == (
+        "db rejected [redacted-value] [redacted-address] id [redacted-id] amount [redacted-amount]"
+    )
     assert "error_code" not in record.__dict__
-    assert "outbox unavailable" not in caplog.text
+    assert "Ada Lovelace" not in caplog.text
+    assert "user@example.test" not in caplog.text
+    assert "550e8400-e29b-41d4-a716-446655440000" not in caplog.text
+    assert "₦123,000" not in caplog.text
+    assert len(notification_outbox._safe_exception_message(RuntimeError("x" * 250))) == 200
+    assert notification_outbox._safe_exception_message(RuntimeError()) == ""
 
 
 async def _resolved(

@@ -667,7 +667,7 @@ async def test_notification_domain_queries_accept_null_optional_entity_filter(
 
 
 async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(
-    db: asyncpg.Connection,
+    db: asyncpg.Connection, caplog: pytest.LogCaptureFixture
 ) -> None:
     cid, users, _ = await setup_payroll_fixture(db, extra_admins=1)
     officer_id, treasurer_id, first_admin_id, second_admin_id = (
@@ -687,6 +687,15 @@ async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(
     )
 
     assert await service.post_run(session(cid, treasurer_id, "treasurer"), run_id) == 1
+    enqueue_errors = [
+        record
+        for record in caplog.records
+        if record.name == "app.domains.notifications.outbox"
+        and record.getMessage().startswith("action_notification_enqueue_failed")
+    ]
+    assert not enqueue_errors, [
+        (record.exception_class, record.exception_message) for record in enqueue_errors
+    ]
     posted_run = await db.fetchrow(
         "SELECT status,posted_by,imported_by,signed_off_at FROM payroll_runs WHERE cooperative_id=$1 AND id=$2",
         cid,
@@ -705,7 +714,7 @@ async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(
         rows = (
             (
                 await session_db.execute(
-                    text("""SELECT recipient_user_id,kind,entity_id,status
+                    text("""SELECT recipient_user_id,kind,entity_id,channel,status
                   FROM notifications WHERE cooperative_id=:cid AND entity_id=:run_id
                     AND kind='payroll_sign_off'"""),
                     {"cid": cid, "run_id": run_id},
@@ -716,7 +725,17 @@ async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(
         )
 
     assert len(rows) == 2
-    assert {(row["recipient_user_id"], row["status"]) for row in rows} == {
-        (first_admin_id, "pending"),
-        (second_admin_id, "pending"),
+    assert {
+        (
+            row["recipient_user_id"],
+            row["kind"],
+            row["entity_id"],
+            row["channel"],
+            row["status"],
+        )
+        for row in rows
+    } == {
+        (first_admin_id, "payroll_sign_off", run_id, "email", "pending"),
+        (second_admin_id, "payroll_sign_off", run_id, "email", "pending"),
     }
+    assert treasurer_id not in {row["recipient_user_id"] for row in rows}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 from urllib.parse import urlsplit
@@ -16,6 +17,52 @@ from app.core.config import Settings, get_settings
 from app.domains.notifications import eligibility
 
 logger = logging.getLogger(__name__)
+
+_EMAIL_IN_MESSAGE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_UUID_IN_MESSAGE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
+_PHONE_IN_MESSAGE = re.compile(r"(?<!\w)\+?\d[\d\s().-]{7,}\d(?!\w)")
+_CURRENCY_AMOUNT_IN_MESSAGE = re.compile(r"(?:[₦$€£]\s*\d[\d,]*(?:\.\d{1,2})?)")
+_QUOTED_VALUE_IN_MESSAGE = re.compile(r"(['\"])(.*?)\1")
+_SAFE_SQL_IDENTIFIERS = {
+    "notifications",
+    "notification_templates",
+    "recipient_user_id",
+    "entity_id",
+    "cooperative_id",
+    "member_id",
+    "kind",
+    "channel",
+    "template_version",
+    "status",
+    "users",
+    "user_roles",
+}
+
+
+def _safe_exception_message(exc: Exception) -> str:
+    """Return a short driver-level diagnostic with likely business data redacted."""
+    try:
+        cause = getattr(exc, "orig", exc)
+        lines = str(cause).splitlines()
+        message = (lines[0] if lines else "")[:200]
+
+        def redact_quoted_value(match: re.Match[str]) -> str:
+            value = match.group(2)
+            if value in _SAFE_SQL_IDENTIFIERS or value.startswith("notifications_"):
+                return match.group(0)
+            return "[redacted-value]"
+
+        message = _QUOTED_VALUE_IN_MESSAGE.sub(redact_quoted_value, message)
+        message = _EMAIL_IN_MESSAGE.sub("[redacted-address]", message)
+        message = _UUID_IN_MESSAGE.sub("[redacted-id]", message)
+        message = _PHONE_IN_MESSAGE.sub("[redacted-phone]", message)
+        message = _CURRENCY_AMOUNT_IN_MESSAGE.sub("[redacted-amount]", message)
+        return message[:200]
+    except Exception:
+        return "[unavailable]"
 
 
 def encrypt_payload(payload: dict[str, Any]) -> str:
@@ -140,11 +187,19 @@ async def enqueue_action_notifications_safely(
         async with session.begin_nested():
             await enqueue_action_notifications(session, cooperative_id, event_type, entity_id)
     except Exception as exc:
+        exception_class = type(exc).__name__
+        exception_message = _safe_exception_message(exc)
         logger.error(
-            "action_notification_enqueue_failed",
+            "action_notification_enqueue_failed "
+            "event_type=%s entity_id=%s exception_class=%s exception_message=%s",
+            event_type,
+            entity_id,
+            exception_class,
+            exception_message,
             extra={
                 "event_type": event_type,
                 "entity_id": str(entity_id),
-                "exception_class": type(exc).__name__,
+                "exception_class": exception_class,
+                "exception_message": exception_message,
             },
         )
