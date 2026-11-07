@@ -170,11 +170,13 @@ async def test_enqueue_failure_is_swallowed_inside_savepoint(
         def begin_nested(self) -> FakeNestedTransaction:
             return self.nested
 
+    raw_message_prefix = (
+        "db rejected 'Ada Lovelace' user@example.test "
+        "id 550e8400-e29b-41d4-a716-446655440000 amount ₦123,000 "
+    )
+
     async def fail_enqueue(*args: Any, **kwargs: Any) -> None:
-        raise RuntimeError(
-            "db rejected 'Ada Lovelace' user@example.test "
-            "id 550e8400-e29b-41d4-a716-446655440000 amount ₦123,000"
-        )
+        raise RuntimeError(raw_message_prefix + "x" * 250)
 
     monkeypatch.setattr(notification_outbox, "enqueue_action_notifications", fail_enqueue)
     session = FakeSession()
@@ -189,24 +191,25 @@ async def test_enqueue_failure_is_swallowed_inside_savepoint(
     assert len(caplog.records) == 1
     record = caplog.records[0]
     assert record.levelno == logging.ERROR
+    excerpt_prefix = (
+        "db rejected [redacted-value] [redacted-address] id [redacted-id] amount [redacted-amount] "
+    )
+    expected_excerpt = (excerpt_prefix + "x" * (200 - len(raw_message_prefix)))[:200]
     assert record.getMessage() == (
         f"action_notification_enqueue_failed event_type=payroll_sign_off entity_id={entity_id} "
-        "exception_class=RuntimeError exception_message="
-        "db rejected [redacted-value] [redacted-address] id [redacted-id] "
-        "amount [redacted-amount]"
+        f"exception_class=RuntimeError exception_message={expected_excerpt}"
     )
     assert record.event_type == "payroll_sign_off"
     assert record.entity_id == str(entity_id)
     assert record.exception_class == "RuntimeError"
-    assert record.exception_message == (
-        "db rejected [redacted-value] [redacted-address] id [redacted-id] amount [redacted-amount]"
-    )
+    assert record.exception_message == expected_excerpt
+    assert len(record.exception_message) <= 200
     assert "error_code" not in record.__dict__
     assert "Ada Lovelace" not in caplog.text
     assert "user@example.test" not in caplog.text
     assert "550e8400-e29b-41d4-a716-446655440000" not in caplog.text
     assert "₦123,000" not in caplog.text
-    assert len(notification_outbox._safe_exception_message(RuntimeError("x" * 250))) == 200
+    assert notification_outbox._safe_exception_message(RuntimeError("x" * 250)) == "x" * 200
     assert notification_outbox._safe_exception_message(RuntimeError()) == ""
 
 

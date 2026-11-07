@@ -9,6 +9,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+PAYROLL_SIGN_OFF = "payroll_sign_off"
+DISBURSEMENT_AUTHORIZATION = "disbursement_authorization"
+ROLE_CHANGE_APPROVAL = "role_change_approval"
+LOAN_DISPUTED = "loan_disputed"
+
 
 @dataclass(frozen=True)
 class ActionSpec:
@@ -25,16 +30,14 @@ class ActionRecipient:
 
 
 ACTION_SPECS = {
-    "payroll_sign_off": ActionSpec(frozenset({"admin"}), "Payroll", "/payroll/runs"),
-    "disbursement_authorization": ActionSpec(
-        frozenset({"admin"}), "Disbursements", "/disbursements"
-    ),
-    "role_change_approval": ActionSpec(frozenset({"admin"}), "Staff", "/staff"),
-    "loan_disputed": ActionSpec(frozenset({"treasurer"}), "Loans", "/loans"),
+    PAYROLL_SIGN_OFF: ActionSpec(frozenset({"admin"}), "Payroll", "/payroll/runs"),
+    DISBURSEMENT_AUTHORIZATION: ActionSpec(frozenset({"admin"}), "Disbursements", "/disbursements"),
+    ROLE_CHANGE_APPROVAL: ActionSpec(frozenset({"admin"}), "Staff", "/staff"),
+    LOAN_DISPUTED: ActionSpec(frozenset({"treasurer"}), "Loans", "/loans"),
 }
 
 _CANDIDATE_SQL = {
-    "payroll_sign_off": """
+    PAYROLL_SIGN_OFF: """
         SELECT r.id AS entity_id,
                ARRAY[coalesce(r.posted_by, r.imported_by)]::uuid[] AS excluded_user_ids
         FROM payroll_runs r
@@ -46,7 +49,7 @@ _CANDIDATE_SQL = {
               AND pi.classification<>'matched' AND pi.resolution_note IS NULL
           )
     """,
-    "disbursement_authorization": """
+    DISBURSEMENT_AUTHORIZATION: """
         SELECT d.id AS entity_id,
                array_remove(
                  ARRAY[d.prepared_by, a.submitted_by] || coalesce((
@@ -61,7 +64,7 @@ _CANDIDATE_SQL = {
         WHERE d.cooperative_id=:cooperative_id AND d.status='pending_authorization'
           AND (CAST(:entity_id AS uuid) IS NULL OR d.id=CAST(:entity_id AS uuid))
     """,
-    "role_change_approval": """
+    ROLE_CHANGE_APPROVAL: """
         SELECT p.id AS entity_id,
                ARRAY[p.proposer_user_id, p.target_user_id]::uuid[] AS excluded_user_ids
         FROM role_change_proposals p
@@ -92,7 +95,7 @@ _CANDIDATE_SQL = {
             )>1
           )
     """,
-    "loan_disputed": """
+    LOAN_DISPUTED: """
         SELECT l.id AS entity_id, ARRAY[]::uuid[] AS excluded_user_ids
         FROM loans l
         WHERE l.cooperative_id=:cooperative_id AND l.status='disputed'
@@ -142,7 +145,7 @@ async def get_action_candidates(
         raise ValueError(f"Unsupported action notification event: {event_type}")
     statement = (
         _DISPUTED_BADGE_SQL
-        if event_type == "loan_disputed" and include_paused_disputed
+        if event_type == LOAN_DISPUTED and include_paused_disputed
         else _CANDIDATE_SQL[event_type]
     )
     rows = await session.execute(

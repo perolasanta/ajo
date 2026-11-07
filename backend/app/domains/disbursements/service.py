@@ -14,6 +14,7 @@ from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
 from app.domains.loans.service import _effective_policy, _eligibility, _load_application, _today_wat
+from app.domains.notifications.eligibility import DISBURSEMENT_AUTHORIZATION
 from app.domains.notifications.outbox import enqueue_action_notifications_safely
 
 
@@ -208,7 +209,7 @@ async def prepare(current: CurrentSession, loan_id: uuid.UUID, ip: str | None) -
             ip=ip,
         )
         await enqueue_action_notifications_safely(
-            session, cid, "disbursement_authorization", disbursement_id
+            session, cid, DISBURSEMENT_AUTHORIZATION, disbursement_id
         )
     return disbursement_id
 

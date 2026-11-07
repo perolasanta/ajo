@@ -18,6 +18,7 @@ from app.core.db import transaction
 from app.core.errors import Conflict, NotFound, TooManyRequests
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import resolve_tenant_slug
+from app.domains.notifications.eligibility import LOAN_DISPUTED
 from app.domains.notifications.outbox import (
     enqueue_action_notifications_safely,
     enqueue_notification,
@@ -437,7 +438,7 @@ async def decide(slug: str, token: str, decision: str, ip: str, user_agent: str)
                     {"cid": cid, "id": row["loan_id"]},
                 )
                 await enqueue_action_notifications_safely(
-                    session, cid, "loan_disputed", row["loan_id"]
+                    session, cid, LOAN_DISPUTED, row["loan_id"]
                 )
             await session.execute(
                 text(
