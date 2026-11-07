@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     login_rate_limit_attempts: int = Field(default=20, gt=0)
     login_rate_limit_window_minutes: int = Field(default=5, gt=0)
     trusted_proxy_ips: str = ""
+    telegram_enabled: bool = False
+    telegram_bot_username: str = ""
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     whatsapp_app_secret: str = ""

@@ -21,6 +21,7 @@ from app.api import (
     policies,
     repayments,
     staff,
+    telegram,
 )
 from app.core.config import get_settings
 from app.core.db import (
@@ -99,6 +100,8 @@ def create_app() -> FastAPI:
     app.include_router(repayments.router, prefix="/api/v1")
     app.include_router(payroll.router, prefix="/api/v1")
     app.include_router(staff.router, prefix="/api/v1")
+    app.include_router(telegram.router, prefix="/api/v1")
+    app.include_router(telegram.webhook_router)
     return app
 
 
