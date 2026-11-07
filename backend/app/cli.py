@@ -16,12 +16,14 @@ from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.config import get_settings
 from app.core.db import make_engine, transaction
 from app.domains.audit.service import verify_audit_chain
 from app.domains.auth.service import resolve_tenant_slug
 from app.domains.auth.staff import _create_staff_user_in_session
 from app.domains.ledger.chart import create_default_chart
 from app.seed_demo import seed_demo
+from app.worker.telegram_sender import set_telegram_webhook
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -140,10 +142,18 @@ def _parser() -> argparse.ArgumentParser:
         "--yes-fake-data", action="store_true", help="confirm seeding of fictional demo data"
     )
     subparsers.add_parser("notifications-dead").add_argument("--slug", required=True)
+    subparsers.add_parser("telegram-set-webhook")
     return parser
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if args.command == "telegram-set-webhook":
+        try:
+            ok = await set_telegram_webhook(get_settings())
+        except Exception:
+            ok = False
+        print("ok" if ok else "failed")
+        return 0 if ok else 1
     if args.command == "create-cooperative":
         temporary_password = await create_cooperative(
             args.slug, args.name, args.admin_email, args.full_name

@@ -1,6 +1,7 @@
 """Persistent notification outbox worker entry point."""
 
 import asyncio
+from typing import Any
 from urllib.parse import urlsplit
 
 import structlog
@@ -11,6 +12,7 @@ from app.core.logging import configure_logging
 from app.worker.email_sender import BrevoEmailSender
 from app.worker.outbox import run_forever
 from app.worker.sender import HttpSmsSender
+from app.worker.telegram_sender import HttpTelegramSender
 
 
 def _validate_public_url(public_base_url: str, app_env: str) -> None:
@@ -34,7 +36,7 @@ async def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
     log = structlog.get_logger("worker")
-    senders: dict[str, HttpSmsSender | BrevoEmailSender] = {}
+    senders: dict[str, Any] = {}
 
     if settings.sms_enabled:
         _validate_public_url(settings.public_base_url, settings.app_env)
@@ -47,9 +49,10 @@ async def main() -> None:
     else:
         log.info("email_delivery_disabled")
 
-    if not senders:
-        await asyncio.Event().wait()
-        return
+    if settings.telegram_enabled:
+        senders["telegram"] = HttpTelegramSender(settings)
+    else:
+        log.info("telegram_delivery_disabled")
 
     log.info("outbox_worker_started", enabled_channels=sorted(senders))
     try:
