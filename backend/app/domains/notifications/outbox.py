@@ -139,8 +139,8 @@ async def enqueue_action_notifications_safely(
     try:
         async with session.begin_nested():
             await enqueue_action_notifications(session, cooperative_id, event_type, entity_id)
-    except Exception as exc:
-        logger.warning(
+    except Exception:
+        logger.error(
             "action_notification_enqueue_failed",
-            extra={"event_type": event_type, "error_code": type(exc).__name__},
+            extra={"event_type": event_type, "entity_id": str(entity_id)},
         )
