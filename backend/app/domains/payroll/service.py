@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import hmac
 import io
 import json
 import uuid
@@ -906,3 +907,145 @@ async def sign_off(
         for row in report["exceptions"]
     )
     return output.getvalue().encode(), json.dumps(report, sort_keys=True, default=str).encode()
+
+
+async def add_resolution_note(
+    current: CurrentSession,
+    run_id: uuid.UUID,
+    item_id: uuid.UUID,
+    note: str,
+    idempotency_key: str,
+) -> bool:
+    role = _role(current, {"treasurer"})
+    normalized_note = note.strip()
+    if not 10 <= len(normalized_note) <= 500:
+        raise UnprocessableEntity("Resolution notes must be 10 to 500 characters after trimming")
+    normalized_key = idempotency_key.strip()
+    if not 1 <= len(normalized_key) <= 200:
+        raise UnprocessableEntity("A valid Idempotency-Key header is required")
+
+    cid = current.cooperative_id
+    request_payload = json.dumps(
+        {
+            "operation": "payroll_item_resolution",
+            "run_id": str(run_id),
+            "item_id": str(item_id),
+            "note": normalized_note,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    async with transaction(cid) as session:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 17026))"),
+            {"key": f"{cid}:payroll-item-resolution:{normalized_key}"},
+        )
+        request_hash = await session.scalar(
+            text("SELECT canonical_request_hash(CAST(:payload AS jsonb))"),
+            {"payload": request_payload},
+        )
+        run = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id,status FROM payroll_runs "
+                        "WHERE cooperative_id=:cid AND id=:run FOR UPDATE"
+                    ),
+                    {"cid": cid, "run": run_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if run is None:
+            raise NotFound("Payroll run not found")
+        if run["status"] != "posted":
+            raise Conflict("Payroll run must be posted and not signed off to resolve exceptions")
+
+        existing = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT request_hash FROM payroll_item_resolution_idempotency "
+                        "WHERE cooperative_id=:cid AND idempotency_key=:key"
+                    ),
+                    {"cid": cid, "key": normalized_key},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["request_hash"]), bytes(request_hash)):
+                raise Conflict("Idempotency key was reused with a different payload")
+            return True
+
+        item = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id,classification,resolution_note FROM payroll_items "
+                        "WHERE cooperative_id=:cid AND run_id=:run AND id=:item FOR UPDATE"
+                    ),
+                    {"cid": cid, "run": run_id, "item": item_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if item is None:
+            raise NotFound("Payroll exception not found")
+        if item["classification"] == "matched":
+            raise Conflict("Matched payroll items do not accept resolution notes")
+        if item["resolution_note"] is not None:
+            raise Conflict("This payroll exception already has a resolution note")
+
+        updated = await session.execute(
+            text(
+                "UPDATE payroll_items SET resolution_note=:note,resolved_by=:actor,resolved_at=now() "
+                "WHERE cooperative_id=:cid AND run_id=:run AND id=:item "
+                "AND classification<>'matched' AND resolution_note IS NULL "
+                "RETURNING resolved_at"
+            ),
+            {
+                "cid": cid,
+                "run": run_id,
+                "item": item_id,
+                "note": normalized_note,
+                "actor": current.user_id,
+            },
+        )
+        if updated.mappings().one_or_none() is None:
+            raise Conflict("This payroll exception has already been resolved")
+
+        await session.execute(
+            text(
+                "INSERT INTO payroll_item_resolution_idempotency "
+                "(cooperative_id,idempotency_key,request_hash,item_id) "
+                "VALUES(:cid,:key,:request_hash,:item)"
+            ),
+            {"cid": cid, "key": normalized_key, "request_hash": request_hash, "item": item_id},
+        )
+        await append_audit(
+            session,
+            cooperative_id=cid,
+            actor_user_id=current.user_id,
+            role=role,
+            action="payroll_exception_resolved",
+            entity_type="payroll_item",
+            entity_id=str(item_id),
+            summary={"run_id": str(run_id)},
+            channel="api",
+            ip=None,
+        )
+        unresolved = await session.scalar(
+            text(
+                "SELECT EXISTS(SELECT 1 FROM payroll_items "
+                "WHERE cooperative_id=:cid AND run_id=:run "
+                "AND classification<>'matched' AND resolution_note IS NULL)"
+            ),
+            {"cid": cid, "run": run_id},
+        )
+        if not unresolved:
+            await enqueue_action_notifications_safely(session, cid, PAYROLL_SIGN_OFF, run_id)
+    return True

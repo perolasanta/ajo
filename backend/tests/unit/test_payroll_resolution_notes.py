@@ -62,6 +62,7 @@ class _ResolutionSession:
         existing_note: str | None = None,
         unresolved_after: bool = False,
         existing_request: dict[str, Any] | None = None,
+        run_exists: bool = True,
     ) -> None:
         self.cooperative_id = cooperative_id
         self.status = status
@@ -72,6 +73,7 @@ class _ResolutionSession:
         self.unresolved_after = unresolved_after
         self.existing_requests: dict[str, dict[str, Any]] = {}
         self.initial_request = existing_request
+        self.run_exists = run_exists
         self.resolution_at = "2026-11-07T00:00:00Z"
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -86,13 +88,13 @@ class _ResolutionSession:
                     "posted_by": uuid.uuid4(),
                     "imported_by": None,
                 }
-                if params.get("cid") == self.cooperative_id
+                if params.get("cid") == self.cooperative_id and self.run_exists
                 else None
             )
         if "payroll_item_resolution_idempotency" in sql and sql.startswith("select"):
             return _Result(self.existing_requests.get(str(params.get("key")), self.initial_request))
         if "payroll_items" in sql and sql.startswith("select"):
-            item_id = params.get("item_id", ITEM_ID)
+            item_id = params.get("item", ITEM_ID)
             return _Result(
                 {
                     "id": item_id,
@@ -103,13 +105,13 @@ class _ResolutionSession:
                 else None
             )
         if sql.startswith("update payroll_items"):
-            self.notes[params["item_id"]] = params["note"]
+            self.notes[params["item"]] = params["note"]
             self.resolution_at = "2026-11-07T00:00:00Z"
             return _Result({"resolved_at": self.resolution_at})
         if sql.startswith("insert into payroll_item_resolution_idempotency"):
             self.existing_requests[str(params["key"])] = {
                 "request_hash": params["request_hash"],
-                "item_id": params["item_id"],
+                "item_id": params["item"],
             }
         return _Result()
 
@@ -140,8 +142,10 @@ def test_resolution_route_requires_csrf_and_idempotency_header() -> None:
         None,
     )
     assert route is not None
-    assert any(dependency.call is payroll_api.require_csrf for dependency in route.dependencies)
-    assert "Idempotency-Key" in str(route.dependant.header_params)
+    assert any(
+        dependency.call is payroll_api.require_csrf for dependency in route.dependant.dependencies
+    )
+    assert route.dependant.header_params[0].alias == "Idempotency-Key"
 
 
 @pytest.mark.parametrize("role", ["admin", "officer", "committee", "auditor"])
@@ -244,7 +248,7 @@ async def test_resolution_is_tenant_scoped_and_missing_foreign_run_is_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     current = _session("treasurer")
-    fake = _ResolutionSession(uuid.uuid4())
+    fake = _ResolutionSession(current.cooperative_id, run_exists=False)
     monkeypatch.setattr(payroll_service, "transaction", lambda cid: _transaction_for(fake, cid))
     with pytest.raises(NotFound):
         await payroll_service.add_resolution_note(current, RUN_ID, ITEM_ID, NOTE, IDEMPOTENCY_KEY)
@@ -259,8 +263,13 @@ async def test_same_idempotency_key_replays_but_different_payload_conflicts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     current = _session("treasurer")
-    fake = _ResolutionSession(current.cooperative_id)
+    fake = _ResolutionSession(current.cooperative_id, unresolved_after=True)
+
+    async def audit(session: Any, **kwargs: Any) -> None:
+        return None
+
     monkeypatch.setattr(payroll_service, "transaction", lambda cid: _transaction_for(fake, cid))
+    monkeypatch.setattr(payroll_service, "append_audit", audit)
     assert await payroll_service.add_resolution_note(
         current, RUN_ID, ITEM_ID, NOTE, IDEMPOTENCY_KEY
     )
