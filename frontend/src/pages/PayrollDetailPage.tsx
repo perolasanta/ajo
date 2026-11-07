@@ -4,6 +4,7 @@ import { useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   ApiError,
+  addPayrollResolutionNote,
   downloadExpectedPayrollCSV,
   dryRunPayrollFile,
   getPayrollRun,
@@ -14,6 +15,7 @@ import {
 } from "../api/client";
 import type { PayrollDryRunResponse } from "../api/schema";
 import {
+  canResolvePayrollException,
   payrollFileSha256,
   nairaInputToKobo,
   payrollRunActions,
@@ -57,6 +59,76 @@ function downloadBase64Report(encoded: string, filename: string, mediaType: stri
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function ResolutionNoteForm({ runId, itemId }: { runId: string; itemId: string }) {
+  const queryClient = useQueryClient();
+  const [note, setNote] = useState("");
+  const requestForNote = useRef<{ note: string; key: string } | null>(null);
+  const mutation = useMutation({
+    mutationFn: () => {
+      const normalizedNote = note.trim();
+      let requestForCurrentNote = requestForNote.current;
+      if (requestForCurrentNote?.note !== normalizedNote) {
+        requestForCurrentNote = { note: normalizedNote, key: crypto.randomUUID() };
+        requestForNote.current = requestForCurrentNote;
+      }
+      return addPayrollResolutionNote(runId, itemId, normalizedNote, requestForCurrentNote.key);
+    },
+    onSuccess: async () => {
+      setNote("");
+      requestForNote.current = null;
+      await queryClient.invalidateQueries({ queryKey: ["payroll-run", runId] });
+      await queryClient.invalidateQueries({ queryKey: ["payroll-runs"] });
+    },
+  });
+  const trimmedLength = note.trim().length;
+  const helpId = `resolution-note-help-${itemId}`;
+
+  return (
+    <form
+      className="mt-4 space-y-2 border-t border-border pt-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        mutation.mutate();
+      }}
+    >
+      <label className="block text-sm font-medium" htmlFor={`resolution-note-${itemId}`}>
+        Add resolution note
+      </label>
+      <textarea
+        id={`resolution-note-${itemId}`}
+        className="min-h-24 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm"
+        rows={3}
+        minLength={10}
+        maxLength={500}
+        value={note}
+        disabled={mutation.isPending}
+        aria-describedby={helpId}
+        aria-invalid={trimmedLength > 0 && trimmedLength < 10}
+        onChange={(event) => {
+          setNote(event.target.value);
+          mutation.reset();
+        }}
+      />
+      <p id={helpId} className="text-xs text-muted">
+        10–500 characters after trimming. {trimmedLength}/500 characters.
+      </p>
+      {trimmedLength > 0 && trimmedLength < 10 && (
+        <p className="text-sm text-danger" role="alert">
+          Enter at least 10 characters after trimming.
+        </p>
+      )}
+      {mutation.isError && (
+        <p className="text-sm text-danger" role="alert">
+          {errorMessage(mutation.error, "Unable to add the resolution note.")}
+        </p>
+      )}
+      <Button type="submit" disabled={trimmedLength < 10} loading={mutation.isPending}>
+        Add resolution note
+      </Button>
+    </form>
+  );
 }
 
 export default function PayrollDetailPage() {
@@ -563,11 +635,8 @@ export default function PayrollDetailPage() {
           <p className="mt-4 text-sm text-muted">No persisted payroll exceptions.</p>
         ) : (
           <div className="mt-4 space-y-3">
-            {data.exceptions.map((exception, index) => (
-              <article
-                key={`${exception.staff_no_raw}-${exception.classification}-${index}`}
-                className="rounded-control border border-border p-3"
-              >
+            {data.exceptions.map((exception) => (
+              <article key={exception.item_id} className="rounded-control border border-border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="break-all font-medium">{exception.staff_no_raw}</p>
                   <Badge status={exception.classification} />
@@ -590,9 +659,20 @@ export default function PayrollDetailPage() {
                     </div>
                   )}
                 </dl>
+                {exception.resolution_note === null &&
+                  (canResolvePayrollException(session.data.roles, data.status) ? (
+                    <ResolutionNoteForm runId={data.run_id} itemId={exception.item_id} />
+                  ) : (
+                    <p className="mt-3 text-sm text-muted">Resolution note not yet added.</p>
+                  ))}
               </article>
             ))}
           </div>
+        )}
+        {data.status === "posted" && unresolvedExceptions.length === 0 && (
+          <p className="mt-4 text-sm font-medium text-success" role="status">
+            All exceptions resolved: waiting for admin sign-off
+          </p>
         )}
       </section>
 

@@ -376,7 +376,7 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
             (
                 await session.execute(
                     text(
-                        """SELECT staff_no_raw,classification,actual_kobo,resolution_note
+                        """SELECT id,staff_no_raw,classification,actual_kobo,resolution_note
                           FROM payroll_items WHERE cooperative_id=:cid AND run_id=:id
                             AND classification<>'matched'
                           ORDER BY created_at,id"""
@@ -399,6 +399,7 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
         )
         exceptions.append(
             {
+                "item_id": str(exception["id"]),
                 "staff_no_raw": safe["staff_no_raw"],
                 "classification": safe["classification"],
                 "actual_kobo": (

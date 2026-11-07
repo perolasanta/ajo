@@ -137,6 +137,7 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             "signed_off_at": None,
             "exceptions": [
                 {
+                    "item_id": PROFILE_ID,
                     "staff_no_raw": "S-2",
                     "classification": "short",
                     "actual_kobo": 90,
@@ -333,6 +334,7 @@ def test_payroll_run_detail_has_exact_safe_persisted_fields() -> None:
     assert payload["posted_by_name"] == "Payroll Poster"
     assert payload["imported_by_name"] == "Unnamed user"
     assert set(payload["exceptions"][0]) == {
+        "item_id",
         "staff_no_raw",
         "classification",
         "actual_kobo",
@@ -434,7 +436,7 @@ async def test_payroll_run_detail_response_contract_is_identical_for_read_roles(
                 return _Result(row=run)
             if "count(*) FILTER" in query:
                 return _Result(row=totals)
-            return _Result(rows=sample["exceptions"])
+            return _Result(rows=[{**item, "id": item["item_id"]} for item in sample["exceptions"]])
 
     @asynccontextmanager
     async def _transaction(cooperative_id: uuid.UUID) -> Any:

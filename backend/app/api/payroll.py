@@ -141,6 +141,7 @@ class PayrollRunListResponse(_PayrollResponse):
 
 
 class PayrollRunExceptionResponse(_PayrollResponse):
+    item_id: str
     staff_no_raw: str
     classification: str
     actual_kobo: int | None

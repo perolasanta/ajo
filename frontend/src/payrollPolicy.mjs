@@ -9,6 +9,10 @@ export function canCreatePayrollRun(roles = []) {
   return roles.includes("officer") || roles.includes("treasurer");
 }
 
+export function canResolvePayrollException(roles = [], status) {
+  return roles.includes("treasurer") && status === "posted";
+}
+
 export function payrollListState({ isPending, isError, data }) {
   if (isPending) return "loading";
   if (isError) return "error";

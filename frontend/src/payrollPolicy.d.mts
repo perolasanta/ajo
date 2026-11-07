@@ -1,6 +1,7 @@
 export const payrollReadRoles: string[];
 export function canViewPayroll(roles?: string[]): boolean;
 export function canCreatePayrollRun(roles?: string[]): boolean;
+export function canResolvePayrollException(roles: string[], status: string): boolean;
 export function payrollListState(query: {
   isPending: boolean;
   isError: boolean;

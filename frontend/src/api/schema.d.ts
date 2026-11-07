@@ -185,11 +185,14 @@ export type PayrollRunPage = {
 };
 
 export type PayrollRunException = {
+  item_id: string;
   staff_no_raw: string;
   classification: string;
   actual_kobo: number | null;
   resolution_note: string | null;
 };
+
+export type PayrollResolutionResponse = { resolved: boolean };
 
 export type PayrollRunDetail = {
   run_id: string;
@@ -370,6 +373,16 @@ export interface paths {
         content: { "application/json": { bank_receipt_total_kobo: number } };
       };
       responses: { 200: { content: { "application/json": PayrollSignOffResponse } } };
+    };
+  };
+  "/payroll/runs/{run_id}/items/{item_id}/resolution": {
+    post: {
+      parameters: {
+        path: { run_id: string; item_id: string };
+        header: { "Idempotency-Key": string };
+      };
+      requestBody: { content: { "application/json": { note: string } } };
+      responses: { 200: { content: { "application/json": PayrollResolutionResponse } } };
     };
   };
   "/members": {
