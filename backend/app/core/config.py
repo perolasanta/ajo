@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, model_validator
@@ -62,6 +63,29 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _production_guards(self) -> "Settings":
+        if self.app_env in {"staging", "production"}:
+            public_base_url = self.public_base_url
+            error = (
+                "PUBLIC_BASE_URL must be a valid absolute HTTPS URL without credentials, "
+                "query, or fragment in staging or production"
+            )
+            try:
+                parsed_url = urlsplit(public_base_url.rstrip("/"))
+                _ = parsed_url.port
+            except ValueError as exc:
+                raise ValueError(error) from exc
+            if (
+                not public_base_url
+                or public_base_url != public_base_url.strip()
+                or any(character.isspace() for character in public_base_url)
+                or parsed_url.scheme != "https"
+                or not parsed_url.netloc
+                or parsed_url.username is not None
+                or parsed_url.password is not None
+                or parsed_url.query
+                or parsed_url.fragment
+            ):
+                raise ValueError(error)
         if self.app_env == "production" and self.secret_key in ("", "change-me"):
             raise ValueError("SECRET_KEY must be set to a long random value in production")
         if self.encryption_key:

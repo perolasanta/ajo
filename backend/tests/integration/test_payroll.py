@@ -10,10 +10,13 @@ from datetime import date
 
 import asyncpg
 import pytest
+from sqlalchemy import text
 
-from app.core.db import asyncpg_dsn, dispose_engine
+from app.core.db import asyncpg_dsn, dispose_engine, transaction
 from app.core.errors import Conflict, Forbidden
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications import eligibility
+from app.domains.notifications.reads import get_action_counts
 from app.domains.payroll import service
 from app.domains.repayments.service import post_repayment
 from tests.conftest import create_tenant
@@ -43,13 +46,13 @@ def session(cid: uuid.UUID, uid: uuid.UUID, role: str) -> CurrentSession:
 
 
 async def setup_payroll_fixture(
-    db: asyncpg.Connection,
+    db: asyncpg.Connection, *, extra_admins: int = 0
 ) -> tuple[uuid.UUID, tuple[uuid.UUID, ...], list[tuple[uuid.UUID, uuid.UUID, str]]]:
     seed = await create_tenant(
         db,
         name="Payroll test",
         slug_prefix="payroll",
-        roles=("officer", "committee", "treasurer", "admin"),
+        roles=("officer", "committee", "treasurer", "admin") + ("admin",) * extra_admins,
     )
     cid, users = seed.cooperative_id, seed.user_ids
     policy_id, product_id = uuid.uuid4(), uuid.uuid4()
@@ -640,3 +643,99 @@ async def test_legacy_posted_run_falls_back_to_importer_for_signoff_separation(
 
     with pytest.raises(Conflict, match="different administrator"):
         await service.sign_off(session(cid, users[3], "admin"), run_id, 10)
+
+
+async def test_notification_domain_queries_accept_null_optional_entity_filter(
+    db: asyncpg.Connection,
+) -> None:
+    seed = await create_tenant(db, roles=("admin", "treasurer"))
+    cid, admin_id = seed.cooperative_id, seed.user_ids[0]
+
+    summary = await get_action_counts(session(cid, admin_id, "admin"))
+    assert summary["payroll"]["awaiting_sign_off"] == 0
+
+    async with transaction(cid) as session_db:
+        for event_type in eligibility.ACTION_SPECS:
+            candidates = await eligibility.get_action_candidates(
+                session_db, cid, event_type, entity_id=None
+            )
+            assert candidates == []
+        paused_candidates = await eligibility.get_action_candidates(
+            session_db, cid, "loan_disputed", entity_id=None, include_paused_disputed=True
+        )
+        assert paused_candidates == []
+
+
+async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(
+    db: asyncpg.Connection, caplog: pytest.LogCaptureFixture
+) -> None:
+    cid, users, _ = await setup_payroll_fixture(db, extra_admins=1)
+    officer_id, treasurer_id, first_admin_id, second_admin_id = (
+        users[0],
+        users[2],
+        users[3],
+        users[4],
+    )
+    profile_id = await service.create_profile(
+        session(cid, first_admin_id, "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, officer_id, "officer"), profile_id, 2099, 1)
+    payroll_csv = await service.export_expected(session(cid, officer_id, "officer"), run_id)
+    await service.import_file(
+        session(cid, treasurer_id, "treasurer"), run_id, payroll_csv, "payroll.csv"
+    )
+
+    assert await service.post_run(session(cid, treasurer_id, "treasurer"), run_id) == 1
+    enqueue_errors = [
+        record
+        for record in caplog.records
+        if record.name == "app.domains.notifications.outbox"
+        and record.getMessage().startswith("action_notification_enqueue_failed")
+    ]
+    assert not enqueue_errors, [
+        (record.exception_class, record.exception_message) for record in enqueue_errors
+    ]
+    posted_run = await db.fetchrow(
+        "SELECT status,posted_by,imported_by,signed_off_at FROM payroll_runs WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        run_id,
+    )
+    assert posted_run is not None
+    assert posted_run["status"] == "posted"
+    assert posted_run["posted_by"] == posted_run["imported_by"] == treasurer_id
+    assert posted_run["signed_off_at"] is None
+
+    for admin_id in (first_admin_id, second_admin_id):
+        summary = await get_action_counts(session(cid, admin_id, "admin"))
+        assert summary["payroll"]["awaiting_sign_off"] >= 1
+
+    async with transaction(cid) as session_db:
+        rows = (
+            (
+                await session_db.execute(
+                    text("""SELECT recipient_user_id,kind,entity_id,channel,status
+                  FROM notifications WHERE cooperative_id=:cid AND entity_id=:run_id
+                    AND kind='payroll_sign_off'"""),
+                    {"cid": cid, "run_id": run_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert len(rows) == 2
+    assert {
+        (
+            row["recipient_user_id"],
+            row["kind"],
+            row["entity_id"],
+            row["channel"],
+            row["status"],
+        )
+        for row in rows
+    } == {
+        (first_admin_id, "payroll_sign_off", run_id, "email", "pending"),
+        (second_admin_id, "payroll_sign_off", run_id, "email", "pending"),
+    }
+    assert treasurer_id not in {row["recipient_user_id"] for row in rows}

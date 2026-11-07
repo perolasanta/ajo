@@ -23,6 +23,7 @@ services:
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       APP_NAME: ${APP_NAME:-ajo}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DB_DISABLE_PREPARED_CACHE: ${DB_DISABLE_PREPARED_CACHE:-true}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
@@ -90,6 +91,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       DATABASE_URL_SCHEDULER: ${DATABASE_URL_SCHEDULER:?DATABASE_URL_SCHEDULER is required}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
@@ -116,6 +118,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:?APP_ENV is required}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       DATABASE_URL_DIRECT: ${DATABASE_URL_DIRECT:?DATABASE_URL_DIRECT is required for migrations}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}

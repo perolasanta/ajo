@@ -203,7 +203,7 @@ async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict
               FROM cooperative_policy_versions
              WHERE cooperative_id = :cid AND status = 'approved'
                AND effective_from <= :on_date
-               AND (effective_to IS NULL OR :on_date < effective_to)
+               AND (effective_to IS NULL OR CAST(:on_date AS date) < effective_to)
              ORDER BY effective_from DESC LIMIT 1
         """),
                     {"cid": cooperative_id, "on_date": on_date},

@@ -88,7 +88,7 @@ async def get_action_counts(current: CurrentSession) -> dict[str, dict[str, int]
                 session,
                 current.cooperative_id,
                 event_type,
-                include_paused_disputed=(event_type == "loan_disputed"),
+                include_paused_disputed=(event_type == eligibility.LOAN_DISPUTED),
             )
             count = 0
             for candidate in candidates:
@@ -104,13 +104,19 @@ async def get_action_counts(current: CurrentSession) -> dict[str, dict[str, int]
     if "treasurer" in roles:
         summary["payroll"] = {"awaiting_posting": int(row["payroll_awaiting_posting"])}
         summary["disbursements"] = {"ready_to_record": int(row["disbursement_ready_to_record"])}
-        summary["loans"] = {"disputed_or_paused": action_counts["loan_disputed"]}
+        summary["loans"] = {"disputed_or_paused": action_counts[eligibility.LOAN_DISPUTED]}
     if "admin" in roles:
-        summary.setdefault("payroll", {})["awaiting_sign_off"] = action_counts["payroll_sign_off"]
+        summary.setdefault("payroll", {})["awaiting_sign_off"] = action_counts[
+            eligibility.PAYROLL_SIGN_OFF
+        ]
         disbursements = summary.setdefault("disbursements", {})
-        disbursements["awaiting_authorization"] = action_counts["disbursement_authorization"]
+        disbursements["awaiting_authorization"] = action_counts[
+            eligibility.DISBURSEMENT_AUTHORIZATION
+        ]
         disbursements["awaiting_confirmation"] = int(row["disbursement_awaiting_confirmation"])
-        summary["role_changes"] = {"awaiting_approval": action_counts["role_change_approval"]}
+        summary["role_changes"] = {
+            "awaiting_approval": action_counts[eligibility.ROLE_CHANGE_APPROVAL]
+        }
     if "committee" in roles:
         summary.setdefault("loans", {})["awaiting_decision"] = int(row["loans_awaiting_decision"])
     return summary
