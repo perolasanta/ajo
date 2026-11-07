@@ -137,6 +137,7 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             "signed_off_at": None,
             "exceptions": [
                 {
+                    "item_id": PROFILE_ID,
                     "staff_no_raw": "S-2",
                     "classification": "short",
                     "actual_kobo": 90,
@@ -333,6 +334,7 @@ def test_payroll_run_detail_has_exact_safe_persisted_fields() -> None:
     assert payload["posted_by_name"] == "Payroll Poster"
     assert payload["imported_by_name"] == "Unnamed user"
     assert set(payload["exceptions"][0]) == {
+        "item_id",
         "staff_no_raw",
         "classification",
         "actual_kobo",
@@ -434,7 +436,7 @@ async def test_payroll_run_detail_response_contract_is_identical_for_read_roles(
                 return _Result(row=run)
             if "count(*) FILTER" in query:
                 return _Result(row=totals)
-            return _Result(rows=sample["exceptions"])
+            return _Result(rows=[{**item, "id": item["item_id"]} for item in sample["exceptions"]])
 
     @asynccontextmanager
     async def _transaction(cooperative_id: uuid.UUID) -> Any:
@@ -505,11 +507,14 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
         "POST /payroll/profiles",
         "GET /payroll/profiles",
         "POST /payroll/runs/{run_id}/sign-off",
+        "POST /payroll/runs/{run_id}/items/{item_id}/resolution",
     ):
         assert path in decisions
     assert "read-only sign-off report for auditors" in decisions.lower()
-    assert "no application write path" in decisions.lower()
-    assert "500 characters" in decisions
+    assert "exactly one trimmed 10–500-character resolution note" in decisions
+    assert "same key and payload replay successfully" in decisions
+    assert "resolved_by" in decisions and "resolved_at" in decisions
+    assert "500-character cap" in decisions
     assert "personal and bank data" in decisions.lower()
     assert "Dry-run results are not persisted" in decisions
     assert "raw uploaded rows that were never imported" in decisions

@@ -45,6 +45,7 @@ The person who requested a withdrawal can never approve it, even when they hold 
 | `POST /payroll/profiles` | Admin only |
 | `GET /payroll/profiles` | Officer, treasurer, and admin; read-only, limited to profile ID, display name, configured column headers, and creation time |
 | `POST /payroll/runs/{run_id}/sign-off` | Admin only; the signer must differ from the poster, or the importer for a run posted before poster tracking |
+| `POST /payroll/runs/{run_id}/items/{item_id}/resolution` | Treasurer only; CSRF-protected; only for a non-matched item on a posted, not signed-off run |
 
 Committee and auditor roles have no payroll access. **TODO:** read-only sign-off report for auditors.
 
@@ -54,7 +55,7 @@ Dry-run results are not persisted. They remain in the current page session only;
 
 Payroll uploads must be CSV (`.csv`, `text/csv`) and are limited to 5 MiB (5 × 1024 × 1024 bytes) and 50,000 data rows. The server enforces the byte limit while streaming the request, independent of `Content-Length`; oversized requests return 413, non-CSV media types return 415, and files exceeding the row limit return 422.
 
-`payroll_items.resolution_note` currently has no application write path. Any future writer must validate its length and keep personal and bank data out. Exported resolution notes are capped at 500 characters.
+Each non-matched payroll item may receive exactly one trimmed 10–500-character resolution note; notes cannot be edited or deleted. Resolution writes require an `Idempotency-Key`: the same key and payload replay successfully, while reusing a key with a different payload conflicts. Store the author in `resolved_by` and the write time in `resolved_at`. Keep personal and bank data out of note text. Audit the actor, run, and item without including the note text; sign-off CSV exports retain the existing 500-character cap and formula-injection neutralization. A posted run awaits admin sign-off only after every non-matched item has a note. Enqueue sign-off action notifications for admins except the poster and importer, relying on the existing outbox deduplication key.
 
 ## 2. Staff role changes
 

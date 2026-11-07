@@ -5,8 +5,8 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.auth import current_session, require_csrf
 from app.core.errors import PayloadTooLarge, UnsupportedMediaType
@@ -31,6 +31,15 @@ class RunBody(BaseModel):
 
 class SignOffBody(BaseModel):
     bank_receipt_total_kobo: int = Field(ge=0)
+
+
+class ResolutionNoteBody(BaseModel):
+    note: str = Field(min_length=10, max_length=500)
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def trim_note(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class _PayrollResponse(BaseModel):
@@ -93,6 +102,10 @@ class SignOffResponse(_PayrollResponse):
     json_base64: str
 
 
+class ResolutionNoteResponse(_PayrollResponse):
+    resolved: bool
+
+
 class PayrollRunCountsResponse(_PayrollResponse):
     matched: int
     short: int
@@ -128,6 +141,7 @@ class PayrollRunListResponse(_PayrollResponse):
 
 
 class PayrollRunExceptionResponse(_PayrollResponse):
+    item_id: str
     staff_no_raw: str
     classification: str
     actual_kobo: int | None
@@ -314,3 +328,19 @@ async def sign_off(
         "csv_base64": base64.b64encode(csv_report).decode(),
         "json_base64": base64.b64encode(json_report).decode(),
     }
+
+
+@router.post(
+    "/payroll/runs/{run_id}/items/{item_id}/resolution",
+    response_model=ResolutionNoteResponse,
+    dependencies=[Depends(require_csrf)],
+)
+async def add_resolution_note(
+    run_id: uuid.UUID,
+    item_id: uuid.UUID,
+    body: ResolutionNoteBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=200)],
+) -> dict[str, bool]:
+    await service.add_resolution_note(current, run_id, item_id, body.note, idempotency_key)
+    return {"resolved": True}

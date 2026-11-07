@@ -39,7 +39,7 @@ ACTION_SPECS = {
 _CANDIDATE_SQL = {
     PAYROLL_SIGN_OFF: """
         SELECT r.id AS entity_id,
-               ARRAY[coalesce(r.posted_by, r.imported_by)]::uuid[] AS excluded_user_ids
+               array_remove(ARRAY[r.posted_by, r.imported_by]::uuid[], NULL) AS excluded_user_ids
         FROM payroll_runs r
         WHERE r.cooperative_id=:cooperative_id AND r.status='posted'
           AND (CAST(:entity_id AS uuid) IS NULL OR r.id=CAST(:entity_id AS uuid))

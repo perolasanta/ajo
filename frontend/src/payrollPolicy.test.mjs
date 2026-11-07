@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   canViewPayroll,
   canCreatePayrollRun,
+  canResolvePayrollException,
   payrollListState,
   payrollReadRoles,
   payrollRunActions,
@@ -35,6 +36,16 @@ test("only officers and treasurers can create payroll runs", () => {
   assert.equal(canCreatePayrollRun(["treasurer"]), true);
   assert.equal(canCreatePayrollRun(["admin"]), false);
   assert.equal(canCreatePayrollRun(["committee"]), false);
+});
+
+test("only treasurers can resolve exceptions on posted payroll runs", () => {
+  assert.equal(canResolvePayrollException(["treasurer"], "posted"), true);
+  assert.equal(canResolvePayrollException(["admin"], "posted"), false);
+  assert.equal(canResolvePayrollException(["officer"], "posted"), false);
+  assert.equal(canResolvePayrollException(["committee"], "posted"), false);
+  assert.equal(canResolvePayrollException(["auditor"], "posted"), false);
+  assert.equal(canResolvePayrollException(["treasurer"], "imported"), false);
+  assert.equal(canResolvePayrollException(["treasurer"], "signed_off"), false);
 });
 
 test("payroll list exposes loading and error states", () => {

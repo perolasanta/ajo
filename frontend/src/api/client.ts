@@ -15,6 +15,7 @@ import type {
   PayrollPostResponse,
   PayrollRunDetail,
   PayrollRunPage,
+  PayrollResolutionResponse,
   PayrollSignOffResponse,
   RoleChangeProposalPage,
   StaffPage,
@@ -280,6 +281,22 @@ export async function getPayrollRun(runId: string): Promise<PayrollRunDetail> {
   return unwrap(await api.GET("/payroll/runs/{run_id}", { params: { path: { run_id: runId } } }));
 }
 
+export function addPayrollResolutionNote(
+  runId: string,
+  itemId: string,
+  note: string,
+  idempotencyKey: string,
+): Promise<PayrollResolutionResponse> {
+  return request<PayrollResolutionResponse>(
+    `/payroll/runs/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/resolution`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ note }),
+    },
+  );
+}
+
 export function createPayrollRun(body: {
   profile_id: string;
   period_year: number;
@@ -362,7 +379,10 @@ export async function getStaff(
   return request<StaffPage>(`/staff?${query.toString()}`);
 }
 
-export function updateStaffFullName(userId: string, fullName: string | null): Promise<{
+export function updateStaffFullName(
+  userId: string,
+  fullName: string | null,
+): Promise<{
   user_id: string;
   full_name: string | null;
 }> {
