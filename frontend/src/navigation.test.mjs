@@ -6,6 +6,9 @@ import {
   disbursementRoles,
   getRouteDecision,
   navigation,
+  formatMenuBadge,
+  menuButtonLabel,
+  totalVisibleActionCount,
   visibleNavigation,
 } from "./navigation.js";
 import { canDecideLoans, canSeeDestinationAccount, canSubmitLoans } from "./loanPolicy.mjs";
@@ -179,7 +182,65 @@ test("auditor does not see Payroll navigation", () => {
 test("Notifications is available to every staff role from the user menu, not the sidebar", () => {
   for (const role of ["officer", "committee", "treasurer", "admin", "auditor"]) {
     assert.equal(getRouteDecision([role], "/notifications").allowed, true, role);
-    assert.equal(visibleNavigation([role]).some((item) => item.path === "/notifications"), false);
+    assert.equal(
+      visibleNavigation([role]).some((item) => item.path === "/notifications"),
+      false,
+    );
   }
   assert.equal(getRouteDecision(["member"], "/notifications").allowed, false);
+});
+
+test("mobile menu total sums action counts across visible sections", () => {
+  const roles = ["admin", "treasurer", "committee"];
+  const total = totalVisibleActionCount(
+    visibleNavigation(roles),
+    {
+      payroll: { awaiting_posting: 2, awaiting_sign_off: 3 },
+      disbursements: { awaiting_authorization: 4, awaiting_confirmation: 5, ready_to_record: 6 },
+      role_changes: { awaiting_approval: 7 },
+      loans: { awaiting_decision: 8, disputed_or_paused: 9 },
+    },
+    roles,
+  );
+  assert.equal(total, 44);
+});
+
+test("mobile menu badge caps totals at 99+", () => {
+  const roles = ["treasurer"];
+  const total = totalVisibleActionCount(
+    visibleNavigation(roles),
+    {
+      payroll: { awaiting_posting: 100 },
+    },
+    roles,
+  );
+  assert.equal(formatMenuBadge(total), "99+");
+});
+
+test("mobile menu badge is hidden when total is zero", () => {
+  const roles = ["officer"];
+  const total = totalVisibleActionCount(visibleNavigation(roles), {}, roles);
+  assert.equal(total, 0);
+  assert.equal(formatMenuBadge(total), null);
+});
+
+test("mobile menu button label announces the current action total", () => {
+  assert.equal(menuButtonLabel(0), "Open navigation");
+  assert.equal(menuButtonLabel(1), "Menu, 1 item needs action");
+  assert.equal(menuButtonLabel(12), "Menu, 12 items need action");
+});
+
+test("mobile menu excludes counts for hidden or non-actionable sections", () => {
+  const roles = ["officer"];
+  const total = totalVisibleActionCount(
+    visibleNavigation(roles),
+    {
+      payroll: { awaiting_posting: 10, awaiting_sign_off: 20 },
+      disbursements: { awaiting_authorization: 30, awaiting_confirmation: 40 },
+      role_changes: { awaiting_approval: 50 },
+      loans: { awaiting_decision: 60, disputed_or_paused: 70 },
+    },
+    roles,
+  );
+  assert.equal(total, 0);
 });
