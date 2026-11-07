@@ -175,3 +175,11 @@ test("auditor does not see Payroll navigation", () => {
   const names = visibleNavigation(["auditor"]).map((item) => item.name);
   assert.equal(names.includes("Payroll"), false);
 });
+
+test("Notifications is available to every staff role from the user menu, not the sidebar", () => {
+  for (const role of ["officer", "committee", "treasurer", "admin", "auditor"]) {
+    assert.equal(getRouteDecision([role], "/notifications").allowed, true, role);
+    assert.equal(visibleNavigation([role]).some((item) => item.path === "/notifications"), false);
+  }
+  assert.equal(getRouteDecision(["member"], "/notifications").allowed, false);
+});

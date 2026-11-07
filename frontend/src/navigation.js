@@ -41,6 +41,14 @@ const routePatterns = [
 export function getRouteDecision(roles, pathname) {
   const path = pathname.split(/[?#]/, 1)[0].replace(/\/+$/, "") || "/";
   if (path === "/") return { allowed: false, redirectTo: DEFAULT_LANDING_PATH };
+  if (path === "/notifications") {
+    return {
+      allowed: ["officer", "committee", "treasurer", "admin", "auditor"].some((role) =>
+        roles.includes(role),
+      ),
+      redirectTo: DEFAULT_LANDING_PATH,
+    };
+  }
 
   const route = path === "/loans/new" ? null : routePatterns.find(([, pattern]) => pattern.test(path));
   const item = route && navigation.find((entry) => entry.path === route[0]);

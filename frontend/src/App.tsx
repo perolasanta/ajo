@@ -43,6 +43,7 @@ const PayrollDetailPage = lazy(() => import("./pages/PayrollDetailPage"));
 const AuditPage = lazy(() => import("./pages/AuditPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const StaffPage = lazy(() => import("./pages/StaffPage"));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
 
 const fakeMembers: MemberListItem[] = [
   {
@@ -168,6 +169,7 @@ function Shell({
           <p className="truncate text-sm font-medium text-white">{userName}</p>
           <p className="text-xs text-white/65">{session.roles[0] ?? "member"}</p>
         </div>
+        <UserMenu session={session} onLogout={onLogout} />
       </div>
       {onLogout && (
         <button
@@ -250,6 +252,9 @@ function UserMenu({ session, onLogout }: { session: Session; onLogout?: () => vo
           align="end"
           className="z-50 mt-2 w-48 rounded-card border border-border bg-surface p-1 shadow-lg"
         >
+          <DropdownMenu.Item asChild className="cursor-pointer rounded-control px-3 py-2 text-sm outline-none hover:bg-bg">
+            <Link to="/notifications">Notifications</Link>
+          </DropdownMenu.Item>
           <DropdownMenu.Item
             className="cursor-pointer rounded-control px-3 py-2 text-sm outline-none hover:bg-bg"
             onSelect={onLogout}
@@ -418,6 +423,7 @@ export default function App() {
         </Route>
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/staff" element={<StaffPage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
       </Route>
       <Route path="*" element={<Navigate to={DEFAULT_LANDING_PATH} replace />} />
     </Routes>
