@@ -12,6 +12,7 @@ import pytest
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 
+from app.api import account as account_api
 from app.api import auth as auth_api
 from app.core.errors import Forbidden, NotFound, TooManyRequests, UnprocessableEntity
 from app.domains.auth import service as auth_service
@@ -87,6 +88,7 @@ class _AccountSession:
             "password_hash": "existing-argon-hash",
             "failed_login_count": 0,
             "locked_until": None,
+            "status": "active",
         }
         self.sessions = sessions or []
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -151,21 +153,22 @@ def _wire_service(
 
 
 def test_me_routes_require_authenticated_session_and_csrf() -> None:
-    routes = {
-        (route.path, method): route
-        for route in create_app().routes
-        if isinstance(route, APIRoute)
-        for method in route.methods or ()
-    }
     expected = {
         ("/api/v1/me/password", "POST"),
         ("/api/v1/me/sessions", "GET"),
         ("/api/v1/me/sessions/{session_id}/revoke", "POST"),
         ("/api/v1/me/sessions/revoke-others", "POST"),
     }
-    assert expected <= set(routes)
-    for method, path in expected:
-        route = routes[(path, method)]
+    app_paths = set(create_app().openapi()["paths"])
+    assert {path for path, _method in expected} <= app_paths
+    routes = {
+        (route.path, method): route
+        for route in account_api.router.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods or ()
+    }
+    for path, method in expected:
+        route = routes[(path.removeprefix("/api/v1"), method)]
         dependencies = {dependency.call for dependency in route.dependant.dependencies}
         assert auth_api.current_session in dependencies
         if method == "POST":
@@ -242,7 +245,7 @@ async def test_password_change_hashes_new_password_and_preserves_current_session
     assert revocations
     sql, params = revocations[-1]
     assert "user_id" in sql and "cooperative_id" in sql and "<>" in sql
-    assert params.get("session_id") == SESSION_ID
+    assert params.get("current_session_id") == SESSION_ID
     assert audits and all(NEW_PASSWORD not in str(event) for event in audits)
 
 
@@ -295,8 +298,8 @@ async def test_session_list_is_a_safe_user_agent_summary_and_marks_current_devic
     _wire_service(monkeypatch, fake)
     items = await auth_service.list_sessions(_current())
     assert len(items) == 1
-    assert set(items[0]) == {"id", "device", "created_at", "last_seen_at", "is_current"}
-    assert items[0]["is_current"] is True
+    assert set(items[0]) == {"id", "device", "created_at", "last_seen_at", "this_device"}
+    assert items[0]["this_device"] is True
     assert "Chrome" in items[0]["device"]
     assert "203.0.113.77" not in str(items)
     assert "must-not-return" not in str(items)

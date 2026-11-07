@@ -13,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.db import connection, transaction
-from app.core.errors import Conflict, Forbidden, NotFound
+from app.core.errors import Conflict, Forbidden, NotFound, TooManyRequests, UnprocessableEntity
 from app.core.security import (
     decrypt_mfa_secret,
     encrypt_mfa_secret,
     hash_csrf_token,
+    hash_password,
     hash_session_token,
     new_csrf_token,
     new_recovery_codes,
@@ -933,6 +934,268 @@ async def logout(current: CurrentSession, ip: str | None, *, revoke_all: bool = 
             ip=ip,
             summary={},
         )
+
+
+COMMON_PASSWORDS = {
+    "password1234",
+    "password123456",
+    "qwertyuiop12",
+    "123456789012",
+    "letmein123456",
+    "iloveyou1234",
+}
+
+
+def validate_new_password(new_password: str, current_password: str, email: str) -> None:
+    if not 12 <= len(new_password) <= 128:
+        raise UnprocessableEntity("New password must be between 12 and 128 characters")
+    if new_password == current_password:
+        raise UnprocessableEntity("The new password must differ from the current password")
+    if new_password.casefold() == email.casefold():
+        raise UnprocessableEntity("The new password must differ from your email address")
+    if new_password.casefold() in COMMON_PASSWORDS:
+        raise UnprocessableEntity("Choose a less common password")
+
+
+async def change_password(
+    current: CurrentSession, current_password: str, new_password: str, ip: str | None
+) -> None:
+    """Change this user's password and revoke every other session."""
+    settings = get_settings()
+    request_key = rate_limit_key(
+        settings.secret_key,
+        current.slug,
+        current.email.strip().lower(),
+        _client_ip(ip),
+    )
+    blocked = False
+    incorrect = False
+    policy_error: UnprocessableEntity | None = None
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text(
+                """SELECT password_hash, failed_login_count, locked_until, status
+                     FROM users WHERE cooperative_id=:cooperative_id AND id=:user_id
+                     FOR UPDATE"""
+            ),
+            {"cooperative_id": current.cooperative_id, "user_id": current.user_id},
+        )
+        user = result.mappings().one_or_none()
+        if user is None or user["status"] != "active":
+            raise Forbidden("Authentication required")
+        now = datetime.now(UTC)
+        if (
+            user["locked_until"] is not None and user["locked_until"] > now
+        ) or await _is_rate_limited(session, request_key):
+            blocked = True
+            await _audit_auth(
+                session,
+                cooperative_id=current.cooperative_id,
+                actor_user_id=current.user_id,
+                role=_roles_text(list(current.roles)),
+                action="password_change_lockout",
+                ip=ip,
+                summary={},
+            )
+        elif not verify_password(user["password_hash"], current_password):
+            failed_count, request_locked_until = await _record_failed_attempt(
+                session, request_key, settings
+            )
+            user_failed_count = int(user["failed_login_count"]) + 1
+            user_locked = user_failed_count >= settings.login_max_attempts
+            await session.execute(
+                text(
+                    """UPDATE users SET failed_login_count=:failed_count,
+                           locked_until=CASE WHEN :locked
+                               THEN now()+make_interval(mins=>:lock_minutes)
+                               ELSE locked_until END
+                         WHERE cooperative_id=:cooperative_id AND id=:user_id"""
+                ),
+                {
+                    "failed_count": user_failed_count,
+                    "locked": user_locked,
+                    "lock_minutes": settings.login_lockout_minutes,
+                    "cooperative_id": current.cooperative_id,
+                    "user_id": current.user_id,
+                },
+            )
+            incorrect = True
+            lockout = (
+                user_locked
+                or request_locked_until is not None
+                or (failed_count >= settings.login_rate_limit_attempts)
+            )
+            await _audit_auth(
+                session,
+                cooperative_id=current.cooperative_id,
+                actor_user_id=current.user_id,
+                role=_roles_text(list(current.roles)),
+                action="password_change_lockout" if lockout else "password_change_failure",
+                ip=ip,
+                summary={},
+            )
+        else:
+            try:
+                validate_new_password(new_password, current_password, current.email)
+            except UnprocessableEntity as exc:
+                policy_error = exc
+            else:
+                await session.execute(
+                    text(
+                        "UPDATE users SET password_hash=:password_hash, failed_login_count=0, "
+                        "locked_until=NULL WHERE cooperative_id=:cooperative_id AND id=:user_id"
+                    ),
+                    {
+                        "password_hash": hash_password(new_password),
+                        "cooperative_id": current.cooperative_id,
+                        "user_id": current.user_id,
+                    },
+                )
+                await _clear_rate_limit(session, request_key)
+                await session.execute(
+                    text(
+                        "UPDATE user_sessions SET revoked_at=now() "
+                        "WHERE cooperative_id=:cooperative_id AND user_id=:user_id "
+                        "AND id<>:current_session_id AND revoked_at IS NULL"
+                    ),
+                    {
+                        "cooperative_id": current.cooperative_id,
+                        "user_id": current.user_id,
+                        "current_session_id": current.session_id,
+                    },
+                )
+                await _audit_auth(
+                    session,
+                    cooperative_id=current.cooperative_id,
+                    actor_user_id=current.user_id,
+                    role=_roles_text(list(current.roles)),
+                    action="password_changed",
+                    ip=ip,
+                    summary={},
+                )
+    if blocked:
+        raise TooManyRequests("Password change is temporarily locked")
+    if incorrect:
+        raise Forbidden("Current password is incorrect")
+    if policy_error is not None:
+        raise policy_error
+
+
+def summarize_user_agent(user_agent: str | None) -> str:
+    """Return a short browser/platform label without exposing the full user agent."""
+    value = (user_agent or "").lower()
+    if "edg/" in value:
+        browser = "Edge"
+    elif "opr/" in value or "opera" in value:
+        browser = "Opera"
+    elif "firefox/" in value:
+        browser = "Firefox"
+    elif "chrome/" in value or "chromium/" in value:
+        browser = "Chrome"
+    elif "safari/" in value:
+        browser = "Safari"
+    else:
+        browser = "Unknown browser"
+    if "ipad" in value:
+        device = "iPad"
+    elif "iphone" in value:
+        device = "iPhone"
+    elif "android" in value:
+        device = "Android"
+    elif "windows" in value:
+        device = "Windows"
+    elif "mac os" in value or "macintosh" in value:
+        device = "macOS"
+    elif "linux" in value:
+        device = "Linux"
+    else:
+        device = "unknown device"
+    return f"{browser} on {device}"
+
+
+async def list_sessions(current: CurrentSession) -> list[dict[str, Any]]:
+    settings = get_settings()
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text(
+                """SELECT id,user_agent,created_at,last_seen_at FROM user_sessions
+                     WHERE cooperative_id=:cooperative_id AND user_id=:user_id
+                       AND revoked_at IS NULL AND expires_at>now()
+                       AND last_seen_at>now()-make_interval(mins=>:idle_minutes)
+                       AND mfa_pending=false AND authenticated_at IS NOT NULL
+                     ORDER BY created_at DESC,id"""
+            ),
+            {
+                "cooperative_id": current.cooperative_id,
+                "user_id": current.user_id,
+                "idle_minutes": settings.session_idle_minutes,
+            },
+        )
+        rows = result.mappings().all()
+    return [
+        {
+            "id": str(row["id"]),
+            "device": summarize_user_agent(row["user_agent"]),
+            "created_at": row["created_at"],
+            "last_seen_at": row["last_seen_at"],
+            "this_device": row["id"] == current.session_id,
+        }
+        for row in rows
+    ]
+
+
+async def revoke_session(current: CurrentSession, session_id: uuid.UUID, ip: str | None) -> None:
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text(
+                """UPDATE user_sessions SET revoked_at=now() WHERE cooperative_id=:cooperative_id
+                     AND user_id=:user_id AND id=:session_id AND revoked_at IS NULL
+                     RETURNING id"""
+            ),
+            {
+                "cooperative_id": current.cooperative_id,
+                "user_id": current.user_id,
+                "session_id": session_id,
+            },
+        )
+        if result.scalar_one_or_none() is None:
+            raise NotFound("Session not found")
+        await _audit_auth(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            role=_roles_text(list(current.roles)),
+            action="session_revoked",
+            ip=ip,
+            summary={},
+        )
+
+
+async def revoke_other_sessions(current: CurrentSession, ip: str | None) -> int:
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text(
+                """UPDATE user_sessions SET revoked_at=now() WHERE cooperative_id=:cooperative_id
+                     AND user_id=:user_id AND id<>:current_session_id AND revoked_at IS NULL
+                     RETURNING id"""
+            ),
+            {
+                "cooperative_id": current.cooperative_id,
+                "user_id": current.user_id,
+                "current_session_id": current.session_id,
+            },
+        )
+        revoked = len(result.all())
+        await _audit_auth(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            role=_roles_text(list(current.roles)),
+            action="sessions_revoked_others",
+            ip=ip,
+            summary={"count": revoked},
+        )
+    return revoked
 
 
 async def _lock_cooperative_role_changes(session: AsyncSession, cooperative_id: uuid.UUID) -> None:
