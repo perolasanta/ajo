@@ -152,28 +152,42 @@ async def enqueue_action_notifications(
     )
     if not recipients:
         return
-    payload = encrypt_payload(build_action_payload(event_type, get_settings()))
+    settings = get_settings()
+    if not settings.email_enabled and not settings.telegram_enabled:
+        return
+    payload = encrypt_payload(build_action_payload(event_type, settings))
     for recipient in recipients:
-        await session.execute(
-            text("""INSERT INTO notifications
+        channels: list[str] = []
+        if settings.email_enabled:
+            channels.append("email")
+        if settings.telegram_enabled:
+            linked = await session.execute(
+                text("SELECT 1 FROM telegram_links WHERE cooperative_id=:cid AND user_id=:user_id"),
+                {"cid": cooperative_id, "user_id": recipient.user_id},
+            )
+            if linked.scalar_one_or_none() is not None:
+                channels.append("telegram")
+        for channel in channels:
+            await session.execute(
+                text("""INSERT INTO notifications
               (id,cooperative_id,member_id,recipient_user_id,kind,entity_id,
                channel,template_version,payload_encrypted)
               VALUES(:id,:cid,:member_id,:recipient_user_id,:kind,:entity_id,
                      :channel,:template_version,:payload)
-              ON CONFLICT (cooperative_id,recipient_user_id,kind,entity_id)
+              ON CONFLICT (cooperative_id,recipient_user_id,channel,kind,entity_id)
                 WHERE recipient_user_id IS NOT NULL DO NOTHING"""),
-            {
-                "id": uuid.uuid4(),
-                "cid": cooperative_id,
-                "member_id": None,
-                "recipient_user_id": recipient.user_id,
-                "kind": event_type,
-                "entity_id": entity_id,
-                "channel": "email",
-                "template_version": "v1",
-                "payload": payload,
-            },
-        )
+                {
+                    "id": uuid.uuid4(),
+                    "cid": cooperative_id,
+                    "member_id": None,
+                    "recipient_user_id": recipient.user_id,
+                    "kind": event_type,
+                    "entity_id": entity_id,
+                    "channel": channel,
+                    "template_version": "v1",
+                    "payload": payload,
+                },
+            )
 
 
 async def enqueue_action_notifications_safely(

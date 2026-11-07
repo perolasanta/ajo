@@ -104,7 +104,9 @@ async def test_enqueue_is_deduplicated_per_recipient_event_entity(
     monkeypatch.setattr(
         notification_outbox,
         "get_settings",
-        lambda: Settings(app_env="development", public_base_url="https://ajo.example.test"),
+        lambda: Settings(
+            app_env="development", email_enabled=True, public_base_url="https://ajo.example.test"
+        ),
     )
     payloads: list[dict[str, Any]] = []
 

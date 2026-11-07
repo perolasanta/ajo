@@ -17,8 +17,10 @@ from sqlalchemy import text
 
 from app.core.config import Settings, get_settings
 from app.core.db import connection, transaction
+from app.domains.notifications.eligibility import ACTION_SPECS
 from app.domains.notifications.outbox import decrypt_payload
 from app.worker.email_sender import PermanentEmailDeliveryError, build_action_email
+from app.worker.telegram_sender import TelegramRateLimited, TelegramRejected
 
 _E164 = re.compile(r"^\+[1-9][0-9]{7,14}$")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -191,6 +193,44 @@ async def _email_destination(claim: ClaimedNotification) -> str:
     return destination
 
 
+async def _telegram_destination(claim: ClaimedNotification) -> str:
+    if claim.recipient_user_id is None:
+        raise PermanentDeliveryError("invalid_telegram_recipient_reference")
+    async with transaction(claim.cooperative_id) as session:
+        destination = (
+            await session.execute(
+                text(
+                    "SELECT chat_id FROM telegram_links WHERE cooperative_id=:cid AND user_id=:user_id"
+                ),
+                {"cid": claim.cooperative_id, "user_id": claim.recipient_user_id},
+            )
+        ).scalar_one_or_none()
+    if not isinstance(destination, str) or not destination:
+        raise PermanentDeliveryError("telegram_link_missing")
+    return destination
+
+
+def _telegram_message(claim: ClaimedNotification, payload: dict[str, Any]) -> str:
+    section, link = payload.get("section"), payload.get("url")
+    parsed = urlsplit(link) if isinstance(link, str) else None
+    if (
+        claim.recipient_user_id is None
+        or set(payload) != {"section", "url"}
+        or not isinstance(section, str)
+        or claim.kind not in ACTION_SPECS
+        or section != ACTION_SPECS[claim.kind].section
+        or parsed is None
+        or parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise PermanentDeliveryError("invalid_telegram_action_payload")
+    return f"{section}: {link}"
+
+
 def _masked_recipient_fields(channel: str, recipient: str | None) -> dict[str, str]:
     if channel != "email" or recipient is None:
         return {}
@@ -270,10 +310,21 @@ async def _finish_expired(claim: ClaimedNotification) -> None:
 
 
 async def _finish_failure(
-    claim: ClaimedNotification, settings: Settings, error_code: str, *, permanent: bool
+    claim: ClaimedNotification,
+    settings: Settings,
+    error_code: str,
+    *,
+    permanent: bool,
+    retry_after: int | None = None,
 ) -> None:
     dead_letter = permanent or claim.attempts >= settings.outbox_max_attempts
-    delay = 0 if dead_letter else retry_delay_seconds(claim.attempts, settings)
+    delay = (
+        0
+        if dead_letter
+        else retry_after
+        if retry_after is not None
+        else retry_delay_seconds(claim.attempts, settings)
+    )
     async with transaction(claim.cooperative_id) as session:
         await session.execute(
             text("""UPDATE notifications SET status=:status,claimed_at=NULL,claim_token=NULL,
@@ -298,8 +349,8 @@ async def process_next_notification(
     settings: Settings | None = None,
 ) -> bool:
     current_settings = settings or get_settings()
-    # Claim disabled email rows too so they can be dead-lettered with an explicit reason.
-    channels = sorted(set(senders) | {"email"})
+    # Claim disabled channels too so they can be dead-lettered with an explicit reason.
+    channels = sorted(set(senders) | {"email", "telegram"})
     claim = await _claim_next(cooperative_id, current_settings, channels)
     if claim is None:
         return False
@@ -330,6 +381,12 @@ async def process_next_notification(
                 email_message.text,
                 email_message.html,
             )
+        elif claim.channel == "telegram":
+            sender = senders.get("telegram")
+            if sender is None:
+                raise PermanentDeliveryError("telegram_delivery_disabled")
+            recipient = await _telegram_destination(claim)
+            await sender.send(recipient, _telegram_message(claim, payload))
         else:
             raise PermanentDeliveryError("unsupported_notification_channel")
     except PermanentEmailDeliveryError as exc:
@@ -351,6 +408,43 @@ async def process_next_notification(
             kind=claim.kind,
             error_code=exc.code,
             **_masked_recipient_fields(claim.channel, recipient),
+        )
+    except TelegramRejected as exc:
+        if claim.recipient_user_id is not None:
+            async with transaction(claim.cooperative_id) as session:
+                await session.execute(
+                    text(
+                        "DELETE FROM telegram_links WHERE cooperative_id=:cid AND user_id=:user_id AND chat_id=:chat_id"
+                    ),
+                    {
+                        "cid": claim.cooperative_id,
+                        "user_id": claim.recipient_user_id,
+                        "chat_id": recipient,
+                    },
+                )
+        await _finish_failure(claim, current_settings, str(exc), permanent=True)
+        log.warning(
+            "notification_dead_lettered",
+            cooperative_id=str(cooperative_id),
+            notification_id=str(claim.id),
+            kind=claim.kind,
+            error_code=str(exc),
+        )
+    except TelegramRateLimited as exc:
+        await _finish_failure(
+            claim,
+            current_settings,
+            "telegram_rate_limited",
+            permanent=False,
+            retry_after=exc.retry_after,
+        )
+        log.warning(
+            "notification_delivery_failed",
+            cooperative_id=str(cooperative_id),
+            notification_id=str(claim.id),
+            kind=claim.kind,
+            attempt=claim.attempts,
+            error_code="telegram_rate_limited",
         )
     except Exception as exc:
         error_code = type(exc).__name__
