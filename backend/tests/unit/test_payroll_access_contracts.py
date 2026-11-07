@@ -507,11 +507,14 @@ def test_payroll_decision_1b_records_final_gates_and_resolution_note_policy() ->
         "POST /payroll/profiles",
         "GET /payroll/profiles",
         "POST /payroll/runs/{run_id}/sign-off",
+        "POST /payroll/runs/{run_id}/items/{item_id}/resolution",
     ):
         assert path in decisions
     assert "read-only sign-off report for auditors" in decisions.lower()
-    assert "no application write path" in decisions.lower()
-    assert "500 characters" in decisions
+    assert "exactly one trimmed 10–500-character resolution note" in decisions
+    assert "same key and payload replay successfully" in decisions
+    assert "resolved_by" in decisions and "resolved_at" in decisions
+    assert "500-character cap" in decisions
     assert "personal and bank data" in decisions.lower()
     assert "Dry-run results are not persisted" in decisions
     assert "raw uploaded rows that were never imported" in decisions
