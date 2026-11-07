@@ -104,6 +104,8 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             "created_at",
             "imported_at",
             "posted_at",
+            "signed_off_by",
+            "signed_off_by_name",
             "signed_off_at",
             "exceptions",
         },
@@ -111,7 +113,7 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             "run_id": RUN_ID,
             "period_year": 2026,
             "period_month": 10,
-            "status": "posted",
+            "status": "signed_off",
             "expected_total_kobo": 1200,
             "file_total_kobo": 1190,
             "bank_receipt_total_kobo": 1190,
@@ -134,7 +136,9 @@ JSON_RESPONSE_CONTRACTS: dict[tuple[str, str], tuple[set[str], dict[str, Any]]] 
             "created_at": "2026-10-01T10:00:00Z",
             "imported_at": "2026-10-02T10:00:00Z",
             "posted_at": "2026-10-03T10:00:00Z",
-            "signed_off_at": None,
+            "signed_off_by": PROFILE_ID,
+            "signed_off_by_name": "Payroll Signer",
+            "signed_off_at": "2026-10-04T12:00:00Z",
             "exceptions": [
                 {
                     "item_id": PROFILE_ID,
@@ -333,6 +337,7 @@ def test_payroll_run_detail_has_exact_safe_persisted_fields() -> None:
     assert set(payload["component_totals_kobo"]) == {"loan", "savings", "dues"}
     assert payload["posted_by_name"] == "Payroll Poster"
     assert payload["imported_by_name"] == "Unnamed user"
+    assert payload["signed_off_by_name"] == "Payroll Signer"
     assert set(payload["exceptions"][0]) == {
         "item_id",
         "staff_no_raw",
