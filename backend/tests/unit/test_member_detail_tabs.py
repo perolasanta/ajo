@@ -1,13 +1,14 @@
 """Failing contract tests for read-only member detail tabs."""
+
 from __future__ import annotations
 
 import uuid
 
 import pytest
 
+from app.core.errors import Forbidden
 from app.domains.auth.service import CurrentSession
 from app.domains.members import reads
-
 
 MEMBER_ID = uuid.uuid4()
 COOPERATIVE_ID = uuid.uuid4()
@@ -51,7 +52,7 @@ def test_statement_query_is_tenant_scoped_and_paginated() -> None:
 
 @pytest.mark.parametrize("role", ["committee", "member", "unknown"])
 def test_restricted_tabs_are_not_readable(role: str) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(Forbidden):
         reads.require_tab(role, "statement")
 
 

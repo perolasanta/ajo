@@ -8,6 +8,9 @@ import type {
   ReadyDisbursementLoanPage,
   MemberDetail,
   MemberListItem,
+  MemberStatementPage,
+  MemberLoanPage,
+  MemberActivityPage,
   NotificationSummary,
   DashboardSummary,
   PayrollDryRunResponse,
@@ -140,6 +143,39 @@ export async function getMember(memberId: string): Promise<MemberDetail> {
   return unwrap(
     await api.GET("/members/{member_id}", { params: { path: { member_id: memberId } } }),
   );
+}
+
+export function getMemberStatement(
+  memberId: string,
+  params: { page?: number; pageSize?: number } = {},
+): Promise<MemberStatementPage> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.pageSize ?? 25),
+  });
+  return request<MemberStatementPage>(`/members/${memberId}/statement?${query.toString()}`);
+}
+
+export function getMemberLoans(
+  memberId: string,
+  params: { page?: number; pageSize?: number } = {},
+): Promise<MemberLoanPage> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.pageSize ?? 25),
+  });
+  return request<MemberLoanPage>(`/members/${memberId}/loans?${query.toString()}`);
+}
+
+export function getMemberActivity(
+  memberId: string,
+  params: { page?: number; pageSize?: number } = {},
+): Promise<MemberActivityPage> {
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.pageSize ?? 25),
+  });
+  return request<MemberActivityPage>(`/members/${memberId}/activity?${query.toString()}`);
 }
 
 export async function getLoanApplications(

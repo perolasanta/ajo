@@ -16,6 +16,7 @@ export type MemberBalances = {
   dues_paid_kobo: number;
   locked_kobo: number;
   available_kobo: number;
+  active_loans_count?: number;
 };
 
 export type MemberBankAccount = {
@@ -31,6 +32,54 @@ export type MemberDetail = MemberListItem & {
   employer?: string | null;
   balances?: MemberBalances;
   bank_accounts?: MemberBankAccount[];
+};
+
+export type MemberStatementItem = {
+  id: string;
+  date: string;
+  type: string;
+  amount_kobo: number;
+  running_balance_kobo: number;
+};
+export type MemberStatementPage = {
+  items: MemberStatementItem[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+export type MemberLoanItem = {
+  application_id: string;
+  loan_id?: string | null;
+  application_status: string;
+  loan_status?: string | null;
+  principal_kobo: number;
+  outstanding_balance_kobo?: number | null;
+  next_installment_at?: string | null;
+  next_installment_amount_kobo?: number | null;
+  submitted_at: string;
+};
+export type MemberLoanPage = {
+  items: MemberLoanItem[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+export type MemberActivityItem = {
+  event_id: string;
+  timestamp: string;
+  actor_id: string | null;
+  actor_display_name: string;
+  actor_role: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  safe_summary: Record<string, string | number | null>;
+};
+export type MemberActivityPage = {
+  items: MemberActivityItem[];
+  page: number;
+  page_size: number;
+  total: number;
 };
 
 export type ConsentStatus = { kind: string; status: string };
@@ -395,6 +444,24 @@ export interface paths {
     get: {
       parameters: { path: { member_id: string } };
       responses: { 200: { content: { "application/json": MemberDetail } } };
+    };
+  };
+  "/members/{member_id}/statement": {
+    get: {
+      parameters?: { path: { member_id: string }; query?: { page?: number; page_size?: number } };
+      responses: { 200: { content: { "application/json": MemberStatementPage } } };
+    };
+  };
+  "/members/{member_id}/loans": {
+    get: {
+      parameters?: { path: { member_id: string }; query?: { page?: number; page_size?: number } };
+      responses: { 200: { content: { "application/json": MemberLoanPage } } };
+    };
+  };
+  "/members/{member_id}/activity": {
+    get: {
+      parameters?: { path: { member_id: string }; query?: { page?: number; page_size?: number } };
+      responses: { 200: { content: { "application/json": MemberActivityPage } } };
     };
   };
   "/loan-applications": {
