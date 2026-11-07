@@ -17,7 +17,11 @@ import { getNotificationSummary, request } from "./api/client";
 import {
   ACCESS_DENIED_NOTICE,
   DEFAULT_LANDING_PATH,
+  formatMenuBadge,
   getRouteDecision,
+  menuButtonLabel,
+  menuActionCount,
+  totalVisibleActionCount,
   visibleNavigation,
 } from "./navigation";
 import { canViewPayroll } from "./payrollPolicy.mjs";
@@ -84,30 +88,6 @@ function LoadingPage() {
   );
 }
 
-function menuActionCount(name: string, summary?: NotificationSummary): number {
-  if (name === "Payroll") {
-    return (
-      (summary?.payroll?.awaiting_posting ?? 0) +
-      (summary?.payroll?.awaiting_sign_off ?? 0)
-    );
-  }
-  if (name === "Disbursements") {
-    return (
-      (summary?.disbursements?.awaiting_authorization ?? 0) +
-      (summary?.disbursements?.awaiting_confirmation ?? 0) +
-      (summary?.disbursements?.ready_to_record ?? 0)
-    );
-  }
-  if (name === "Staff") return summary?.role_changes?.awaiting_approval ?? 0;
-  if (name === "Loans") {
-    return (
-      (summary?.loans?.awaiting_decision ?? 0) +
-      (summary?.loans?.disputed_or_paused ?? 0)
-    );
-  }
-  return 0;
-}
-
 function Shell({
   session,
   onLogout,
@@ -122,6 +102,8 @@ function Shell({
   const [drawer, setDrawer] = useState(false);
   const location = useLocation();
   const links = visibleNavigation(session.roles);
+  const totalActionCount = totalVisibleActionCount(links, notificationSummary, session.roles);
+  const menuLabel = menuButtonLabel(totalActionCount);
   const locationState = location.state as { notice?: string } | null;
   const notice = locationState?.notice === ACCESS_DENIED_NOTICE ? locationState.notice : undefined;
   const userName = session.email
@@ -140,7 +122,8 @@ function Shell({
       <p className="mt-2 text-xs text-white/65">Example Cooperative Society</p>
       <nav className="mt-8 space-y-1" aria-label="Main navigation">
         {links.map(({ name, path }) => {
-          const actionCount = menuActionCount(name, notificationSummary);
+          const actionCount = menuActionCount(name, notificationSummary, session.roles);
+          const badgeText = formatMenuBadge(actionCount);
           return (
             <NavLink
               key={path}
@@ -151,12 +134,12 @@ function Shell({
               }
             >
               <span>{name}</span>
-              {actionCount > 0 && (
+              {badgeText !== null && (
                 <span
                   aria-label={`${actionCount} action ${actionCount === 1 ? "item" : "items"}`}
                   className="ml-3 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#EBC26E] px-1.5 text-[11px] font-semibold leading-none text-[#15332E]"
                 >
-                  {actionCount > 99 ? "99+" : actionCount}
+                  {badgeText}
                 </span>
               )}
             </NavLink>
@@ -198,11 +181,19 @@ function Shell({
             <Dialog.Trigger asChild>
               <button
                 type="button"
-                className="grid size-11 place-items-center rounded-control"
-                aria-label="Open navigation"
+                className="relative grid size-11 place-items-center rounded-control"
+                aria-label={menuLabel}
                 aria-expanded={drawer}
               >
                 <Menu className="size-5" />
+                {totalActionCount > 0 && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -right-0.5 -top-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#EBC26E] px-1 text-[10px] font-semibold leading-none text-[#15332E] ring-2 ring-[#F2F2EC]"
+                  >
+                    {formatMenuBadge(totalActionCount)}
+                  </span>
+                )}
               </button>
             </Dialog.Trigger>
             <Dialog.Portal>
@@ -229,7 +220,10 @@ function Shell({
         </header>
         <main className="mx-auto min-w-0 max-w-[1200px] p-4 sm:p-6">
           {notice && (
-            <p role="status" className="mb-4 rounded-control bg-amber-50 p-3 text-sm text-amber-950">
+            <p
+              role="status"
+              className="mb-4 rounded-control bg-amber-50 p-3 text-sm text-amber-950"
+            >
               {notice}
             </p>
           )}
@@ -252,7 +246,10 @@ function UserMenu({ session, onLogout }: { session: Session; onLogout?: () => vo
           align="end"
           className="z-50 mt-2 w-48 rounded-card border border-border bg-surface p-1 shadow-lg"
         >
-          <DropdownMenu.Item asChild className="cursor-pointer rounded-control px-3 py-2 text-sm outline-none hover:bg-bg">
+          <DropdownMenu.Item
+            asChild
+            className="cursor-pointer rounded-control px-3 py-2 text-sm outline-none hover:bg-bg"
+          >
             <Link to="/notifications">Notifications</Link>
           </DropdownMenu.Item>
           <DropdownMenu.Item
