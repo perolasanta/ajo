@@ -189,6 +189,7 @@ async def test_enqueue_failure_is_swallowed_inside_savepoint(
     assert record.getMessage() == "action_notification_enqueue_failed"
     assert record.event_type == "payroll_sign_off"
     assert record.entity_id == str(entity_id)
+    assert record.exception_class == "RuntimeError"
     assert "error_code" not in record.__dict__
     assert "outbox unavailable" not in caplog.text
 

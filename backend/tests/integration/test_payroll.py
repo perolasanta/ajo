@@ -15,6 +15,7 @@ from sqlalchemy import text
 from app.core.db import asyncpg_dsn, dispose_engine, transaction
 from app.core.errors import Conflict, Forbidden
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications import eligibility
 from app.domains.notifications.reads import get_action_counts
 from app.domains.payroll import service
 from app.domains.repayments.service import post_repayment
@@ -642,6 +643,27 @@ async def test_legacy_posted_run_falls_back_to_importer_for_signoff_separation(
 
     with pytest.raises(Conflict, match="different administrator"):
         await service.sign_off(session(cid, users[3], "admin"), run_id, 10)
+
+
+async def test_notification_domain_queries_accept_null_optional_entity_filter(
+    db: asyncpg.Connection,
+) -> None:
+    seed = await create_tenant(db, roles=("admin", "treasurer"))
+    cid, admin_id = seed.cooperative_id, seed.user_ids[0]
+
+    summary = await get_action_counts(session(cid, admin_id, "admin"))
+    assert summary["payroll"]["awaiting_sign_off"] == 0
+
+    async with transaction(cid) as session_db:
+        for event_type in eligibility.ACTION_SPECS:
+            candidates = await eligibility.get_action_candidates(
+                session_db, cid, event_type, entity_id=None
+            )
+            assert candidates == []
+        paused_candidates = await eligibility.get_action_candidates(
+            session_db, cid, "loan_disputed", entity_id=None, include_paused_disputed=True
+        )
+        assert paused_candidates == []
 
 
 async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(

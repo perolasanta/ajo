@@ -39,7 +39,7 @@ _CANDIDATE_SQL = {
                ARRAY[coalesce(r.posted_by, r.imported_by)]::uuid[] AS excluded_user_ids
         FROM payroll_runs r
         WHERE r.cooperative_id=:cooperative_id AND r.status='posted'
-          AND (:entity_id IS NULL OR r.id=:entity_id)
+          AND (CAST(:entity_id AS uuid) IS NULL OR r.id=CAST(:entity_id AS uuid))
           AND NOT EXISTS (
             SELECT 1 FROM payroll_items pi
             WHERE pi.cooperative_id=r.cooperative_id AND pi.run_id=r.id
@@ -59,14 +59,15 @@ _CANDIDATE_SQL = {
         JOIN loans l ON l.cooperative_id=d.cooperative_id AND l.id=d.loan_id
         JOIN loan_applications a ON a.cooperative_id=l.cooperative_id AND a.id=l.application_id
         WHERE d.cooperative_id=:cooperative_id AND d.status='pending_authorization'
-          AND (:entity_id IS NULL OR d.id=:entity_id)
+          AND (CAST(:entity_id AS uuid) IS NULL OR d.id=CAST(:entity_id AS uuid))
     """,
     "role_change_approval": """
         SELECT p.id AS entity_id,
                ARRAY[p.proposer_user_id, p.target_user_id]::uuid[] AS excluded_user_ids
         FROM role_change_proposals p
         WHERE p.cooperative_id=:cooperative_id AND p.status='pending'
-          AND p.expires_at>now() AND (:entity_id IS NULL OR p.id=:entity_id)
+          AND p.expires_at>now()
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
           AND (
             (p.action='add' AND NOT EXISTS (
               SELECT 1 FROM user_roles ur
@@ -95,7 +96,7 @@ _CANDIDATE_SQL = {
         SELECT l.id AS entity_id, ARRAY[]::uuid[] AS excluded_user_ids
         FROM loans l
         WHERE l.cooperative_id=:cooperative_id AND l.status='disputed'
-          AND (:entity_id IS NULL OR l.id=:entity_id)
+          AND (CAST(:entity_id AS uuid) IS NULL OR l.id=CAST(:entity_id AS uuid))
     """,
 }
 
@@ -104,7 +105,7 @@ _DISPUTED_BADGE_SQL = """
     FROM loans l
     WHERE l.cooperative_id=:cooperative_id
       AND (l.status='disputed' OR (l.status='repaying' AND coalesce(l.deductions_paused,false)))
-      AND (:entity_id IS NULL OR l.id=:entity_id)
+      AND (CAST(:entity_id AS uuid) IS NULL OR l.id=CAST(:entity_id AS uuid))
 """
 
 
