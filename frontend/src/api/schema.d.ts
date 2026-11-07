@@ -211,6 +211,8 @@ export type PayrollRunDetail = {
   imported_by_name: string | null;
   posted_by: string | null;
   posted_by_name: string | null;
+  signed_off_by: string | null;
+  signed_off_by_name: string | null;
   created_at: string;
   imported_at: string | null;
   posted_at: string | null;

@@ -171,6 +171,8 @@ class PayrollRunDetailResponse(_PayrollResponse):
     imported_by_name: str | None
     posted_by: str | None
     posted_by_name: str | None
+    signed_off_by: str | None
+    signed_off_by_name: str | None
     created_at: datetime
     imported_at: datetime | None
     posted_at: datetime | None
