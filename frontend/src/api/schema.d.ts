@@ -37,6 +37,7 @@ export type MemberDetail = MemberListItem & {
 export type MemberStatementItem = {
   id: string;
   date: string;
+  recorded_at?: string | null;
   type: string;
   amount_kobo: number;
   running_balance_kobo: number;
