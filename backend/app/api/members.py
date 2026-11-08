@@ -249,6 +249,22 @@ class WithdrawalRejectBody(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class MemberWithdrawalRequestItem(_MemberResponse):
+    id: uuid.UUID
+    amount_kobo: int
+    status: str
+    created_at: datetime
+    requested_by: uuid.UUID
+    requester_name: str
+    reason: str
+    rejection_reason: str | None
+
+
+class MemberWithdrawalRequestPage(_MemberResponse):
+    items: list[MemberWithdrawalRequestItem]
+    current_user_id: str
+
+
 class ImportBody(BaseModel):
     csv_text: str
     confirm: bool = False
@@ -409,7 +425,7 @@ async def reject_withdrawal(
     return {"status": "rejected"}
 
 
-@router.get("/members/{member_id}/withdrawals")
+@router.get("/members/{member_id}/withdrawals", response_model=MemberWithdrawalRequestPage)
 async def member_withdrawals(
     member_id: uuid.UUID,
     current: Annotated[CurrentSession, Depends(current_session)],

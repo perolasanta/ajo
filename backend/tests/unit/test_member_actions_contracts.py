@@ -1,4 +1,5 @@
 """Failing contracts for member contribution and withdrawal actions."""
+
 from __future__ import annotations
 
 import uuid
