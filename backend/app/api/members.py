@@ -74,6 +74,7 @@ class MemberBalancesResponse(_MemberResponse):
 class MemberStatementItem(_MemberResponse):
     id: uuid.UUID
     date: date
+    recorded_at: datetime | None = None
     type: str
     amount_kobo: int
     running_balance_kobo: int

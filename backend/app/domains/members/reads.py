@@ -50,7 +50,7 @@ PUBLIC_TAB_FIELDS = frozenset(
 STATEMENT_QUERY = text(
     """
     WITH entries AS (
-      SELECT e.id, e.effective_date, e.posted_at, e.source_type, e.reverses_entry_id,
+      SELECT e.id, e.effective_date, e.posted_at, e.source_type, e.description, e.reverses_entry_id,
              SUM(CASE WHEN a.code <> 'bank' THEN l.credit_kobo - l.debit_kobo ELSE 0 END)::bigint
                AS amount_kobo
         FROM journal_entries e
@@ -58,7 +58,7 @@ STATEMENT_QUERY = text(
         JOIN accounts a ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
         JOIN members m ON m.cooperative_id=l.cooperative_id AND m.id=l.member_id
        WHERE e.cooperative_id=:cid AND l.cooperative_id=:cid AND l.member_id=:mid
-       GROUP BY e.id, e.effective_date, e.posted_at, e.source_type, e.reverses_entry_id
+       GROUP BY e.id, e.effective_date, e.posted_at, e.source_type, e.description, e.reverses_entry_id
     ), with_balance AS (
       SELECT *, SUM(amount_kobo) OVER (
           ORDER BY effective_date, posted_at, id
@@ -68,6 +68,9 @@ STATEMENT_QUERY = text(
       FROM entries
     )
     SELECT id, effective_date AS date,
+           CASE WHEN source_type='member_contribution'
+                  AND description LIKE 'Member % contribution · %'
+                THEN posted_at ELSE NULL END AS recorded_at,
            CASE
              WHEN reverses_entry_id IS NOT NULL OR source_type='reversal' THEN 'reversal'
              WHEN source_type IN ('contribution','member_contribution') THEN 'contribution'

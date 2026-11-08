@@ -1,5 +1,6 @@
 import { formatNaira } from "../lib";
 import { Tooltip } from "./Overlay";
+import { formatDateReceived, formatRecordedAt } from "../memberActionDates.mjs";
 export function Money({ kobo, className = "" }: { kobo: number; className?: string }) {
   return (
     <span
@@ -23,4 +24,13 @@ export function DateTime({ value }: { value: string | Date }) {
       <time dateTime={date.toISOString()}>{absolute} WAT</time>
     </Tooltip>
   );
+}
+
+export function DateReceived({ value }: { value: string }) {
+  return <time dateTime={value}>{formatDateReceived(value)}</time>;
+}
+
+export function RecordedAt({ value }: { value?: string | null }) {
+  if (!value) return <span>—</span>;
+  return <time dateTime={value}>{formatRecordedAt(value)}</time>;
 }
