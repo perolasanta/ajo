@@ -149,28 +149,37 @@ async def record_contribution(
 async def member_balances(cooperative_id: uuid.UUID, member_id: uuid.UUID) -> dict[str, int]:
     async with transaction(cooperative_id) as session:
         result = await session.execute(
-            text("""SELECT a.code,
-            coalesce(sum(l.credit_kobo-l.debit_kobo),0)::bigint AS amount
-          FROM journal_lines l JOIN accounts a
-            ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
-         WHERE l.cooperative_id=:cid AND l.member_id=:mid
-           AND a.code IN ('member_savings','member_shares','dues_income') GROUP BY a.code"""),
+            text("""WITH ledger AS (
+              SELECT a.code, coalesce(sum(l.credit_kobo-l.debit_kobo),0)::bigint AS amount
+                FROM journal_lines l JOIN accounts a
+                  ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
+               WHERE l.cooperative_id=:cid AND l.member_id=:mid
+                 AND a.code IN ('member_savings','member_shares','dues_income')
+               GROUP BY a.code
+            ), locks AS (
+              SELECT coalesce(sum(amount_kobo),0)::bigint AS amount
+                FROM savings_locks
+               WHERE cooperative_id=:cid AND member_id=:mid AND released_at IS NULL
+            )
+            SELECT COALESCE((SELECT amount FROM ledger WHERE code='member_savings'),0)::bigint AS savings,
+                   COALESCE((SELECT amount FROM ledger WHERE code='member_shares'),0)::bigint AS shares,
+                   COALESCE((SELECT amount FROM ledger WHERE code='dues_income'),0)::bigint AS dues,
+                   (SELECT amount FROM locks)::bigint AS locked,
+                   (SELECT count(*) FROM loans
+                     WHERE cooperative_id=:cid AND member_id=:mid
+                       AND status IN ('repaying','disbursed','ready_for_disbursement'))::int AS active_loans_count"""),
             {"cid": cooperative_id, "mid": member_id},
         )
-        amounts = {row.code: int(row.amount) for row in result}
-        locked = await session.execute(
-            text("""SELECT coalesce(sum(amount_kobo),0)::bigint
-          FROM savings_locks WHERE cooperative_id=:cid AND member_id=:mid AND released_at IS NULL"""),
-            {"cid": cooperative_id, "mid": member_id},
-        )
-        savings = amounts.get("member_savings", 0)
-        locked_amount = int(locked.scalar_one())
+        row = result.mappings().one()
+        savings = int(row["savings"])
+        locked_amount = int(row["locked"])
         return {
             "savings_kobo": savings,
-            "shares_kobo": amounts.get("member_shares", 0),
-            "dues_paid_kobo": amounts.get("dues_income", 0),
+            "shares_kobo": int(row["shares"]),
+            "dues_paid_kobo": int(row["dues"]),
             "locked_kobo": locked_amount,
             "available_kobo": savings - locked_amount,
+            "active_loans_count": int(row["active_loans_count"]),
         }
 
 

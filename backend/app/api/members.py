@@ -14,7 +14,7 @@ from app.api.auth import current_session, require_csrf
 from app.core.db import transaction
 from app.core.errors import Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
-from app.domains.members import service
+from app.domains.members import reads, service
 
 router = APIRouter(tags=["members"])
 
@@ -68,6 +68,60 @@ class MemberBalancesResponse(_MemberResponse):
     dues_paid_kobo: int
     locked_kobo: int
     available_kobo: int
+    active_loans_count: int | None = None
+
+
+class MemberStatementItem(_MemberResponse):
+    id: uuid.UUID
+    date: date
+    type: str
+    amount_kobo: int
+    running_balance_kobo: int
+
+
+class MemberStatementPage(_MemberResponse):
+    items: list[MemberStatementItem]
+    page: int
+    page_size: int
+    total: int
+
+
+class MemberLoanItem(_MemberResponse):
+    application_id: uuid.UUID
+    loan_id: uuid.UUID | None = None
+    application_status: str
+    loan_status: str | None = None
+    principal_kobo: int
+    outstanding_balance_kobo: int | None = None
+    next_installment_at: datetime | None = None
+    next_installment_amount_kobo: int | None = None
+    submitted_at: datetime
+
+
+class MemberLoanPage(_MemberResponse):
+    items: list[MemberLoanItem]
+    page: int
+    page_size: int
+    total: int
+
+
+class MemberActivityItem(_MemberResponse):
+    event_id: str
+    timestamp: datetime
+    actor_id: str | None
+    actor_display_name: str
+    actor_role: str | None
+    action: str
+    entity_type: str
+    entity_id: str | None
+    safe_summary: dict[str, str | int | None]
+
+
+class MemberActivityPage(_MemberResponse):
+    items: list[MemberActivityItem]
+    page: int
+    page_size: int
+    total: int
 
 
 class MemberBankAccountAdminOfficerResponse(_MemberResponse):
@@ -238,7 +292,11 @@ async def list_members(
         )
 
 
-@router.get("/members/{member_id}", response_model=MemberDetailResponse)
+@router.get(
+    "/members/{member_id}",
+    response_model=MemberDetailResponse,
+    response_model_exclude_unset=True,
+)
 async def member_detail(
     member_id: uuid.UUID, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> MemberDetailResponse:
@@ -262,6 +320,40 @@ async def member_detail(
         member["balances"] = await service.member_balances(current.cooperative_id, member_id)
     model = _detail_response_model(role)
     return cast(MemberDetailResponse, model.model_validate(member))
+
+
+@router.get("/members/{member_id}/statement", response_model=MemberStatementPage)
+async def member_statement(
+    member_id: uuid.UUID,
+    current: Annotated[CurrentSession, Depends(current_session)],
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+) -> dict[str, Any]:
+    return await reads.list_statement(current, member_id, page=page, page_size=page_size)
+
+
+@router.get(
+    "/members/{member_id}/loans",
+    response_model=MemberLoanPage,
+    response_model_exclude_unset=True,
+)
+async def member_loans(
+    member_id: uuid.UUID,
+    current: Annotated[CurrentSession, Depends(current_session)],
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+) -> dict[str, Any]:
+    return await reads.list_loans(current, member_id, page=page, page_size=page_size)
+
+
+@router.get("/members/{member_id}/activity", response_model=MemberActivityPage)
+async def member_activity(
+    member_id: uuid.UUID,
+    current: Annotated[CurrentSession, Depends(current_session)],
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+) -> dict[str, Any]:
+    return await reads.list_activity(current, member_id, page=page, page_size=page_size)
 
 
 @router.post("/members/contributions", dependencies=[Depends(require_csrf)])
