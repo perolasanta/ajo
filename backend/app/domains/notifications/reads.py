@@ -105,6 +105,9 @@ async def get_action_counts(current: CurrentSession) -> dict[str, dict[str, int]
         summary["payroll"] = {"awaiting_posting": int(row["payroll_awaiting_posting"])}
         summary["disbursements"] = {"ready_to_record": int(row["disbursement_ready_to_record"])}
         summary["loans"] = {"disputed_or_paused": action_counts[eligibility.LOAN_DISPUTED]}
+        summary["members"] = {
+            "withdrawals_awaiting_approval": action_counts[eligibility.WITHDRAWAL_APPROVAL]
+        }
     if "admin" in roles:
         summary.setdefault("payroll", {})["awaiting_sign_off"] = action_counts[
             eligibility.PAYROLL_SIGN_OFF

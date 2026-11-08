@@ -223,10 +223,17 @@ test("mobile menu total sums action counts across visible sections", () => {
       disbursements: { awaiting_authorization: 4, awaiting_confirmation: 5, ready_to_record: 6 },
       role_changes: { awaiting_approval: 7 },
       loans: { awaiting_decision: 8, disputed_or_paused: 9 },
+      members: { withdrawals_awaiting_approval: 1 },
     },
     roles,
   );
-  assert.equal(total, 44);
+  assert.equal(total, 45);
+});
+
+test("withdrawal action badges count only for treasurers", () => {
+  const summary = { members: { withdrawals_awaiting_approval: 3 } };
+  assert.equal(totalVisibleActionCount(visibleNavigation(["treasurer"]), summary, ["treasurer"]), 3);
+  assert.equal(totalVisibleActionCount(visibleNavigation(["officer"]), summary, ["officer"]), 0);
 });
 
 test("mobile menu badge caps totals at 99+", () => {

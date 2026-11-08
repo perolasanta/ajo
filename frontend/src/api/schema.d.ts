@@ -304,6 +304,7 @@ export type NotificationSummary = {
   };
   role_changes?: { awaiting_approval?: number };
   loans?: { awaiting_decision?: number; disputed_or_paused?: number };
+  members?: { withdrawals_awaiting_approval?: number };
 };
 
 export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "auditor";

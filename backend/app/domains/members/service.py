@@ -17,6 +17,8 @@ from app.core.errors import Conflict, Forbidden, NotFound
 from app.core.security import _fernet
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications.eligibility import WITHDRAWAL_APPROVAL
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 
 
 def encrypt_account_number(account_number: str) -> str:
@@ -39,9 +41,13 @@ async def record_contribution(
     kind: str,
     amount_kobo: int,
     idempotency_key: str,
+    *,
+    effective_date: date | None = None,
+    reference: str = "",
+    payment_method: str = "cash",
 ) -> uuid.UUID:
     actor_role = _financial_actor_role(current, ("treasurer", "officer"))
-    if kind not in {"savings", "shares", "dues"} or amount_kobo <= 0:
+    if kind not in {"savings", "shares", "dues"} or amount_kobo <= 0 or not payment_method.strip():
         raise ValueError("contribution is invalid")
     if not idempotency_key.strip():
         raise ValueError("idempotency key is required")
@@ -51,6 +57,9 @@ async def record_contribution(
             "member_id": str(member_id),
             "kind": kind,
             "amount_kobo": amount_kobo,
+            "effective_date": (effective_date or date.today()).isoformat(),
+            "reference": reference.strip(),
+            "payment_method": payment_method.strip(),
         }
         payload_json = json.dumps(request_payload, separators=(",", ":"))
         await session.execute(
@@ -100,9 +109,12 @@ async def record_contribution(
             CAST(:lines AS jsonb),CAST(:request_payload AS jsonb),NULL)"""),
                 {
                     "cid": current.cooperative_id,
-                    "effective": date.today(),
+                    "effective": effective_date or date.today(),
                     "member": member_id,
-                    "description": f"Member {kind} contribution",
+                    "description": (
+                        f"Member {kind} contribution · {payment_method.strip()}"
+                        + (f" · {reference.strip()}" if reference.strip() else "")
+                    ),
                     "actor": current.user_id,
                     "key": idempotency_key,
                     "request_payload": payload_json,
@@ -184,11 +196,16 @@ async def member_balances(cooperative_id: uuid.UUID, member_id: uuid.UUID) -> di
 
 
 async def request_withdrawal(
-    current: CurrentSession, member_id: uuid.UUID, amount_kobo: int, idempotency_key: str
+    current: CurrentSession,
+    member_id: uuid.UUID,
+    amount_kobo: int,
+    idempotency_key: str,
+    *,
+    reason: str = "Member withdrawal request",
 ) -> uuid.UUID:
     actor_role = _financial_actor_role(current, ("treasurer", "officer"))
-    if amount_kobo <= 0:
-        raise ValueError("amount must be positive")
+    if amount_kobo <= 0 or not reason.strip():
+        raise ValueError("amount and reason are required")
     if not idempotency_key.strip():
         raise ValueError("idempotency key is required")
     async with transaction(current.cooperative_id) as session:
@@ -197,6 +214,7 @@ async def request_withdrawal(
                 "operation": "withdrawal_request",
                 "member_id": str(member_id),
                 "amount_kobo": amount_kobo,
+                "reason": reason.strip(),
             },
             separators=(",", ":"),
         )
@@ -244,8 +262,8 @@ async def request_withdrawal(
             raise Conflict("Withdrawal exceeds available savings")
         result = await session.execute(
             text("""INSERT INTO withdrawal_requests
-          (cooperative_id,member_id,amount_kobo,idempotency_key,request_hash,requested_by)
-          VALUES (:cid,:mid,:amount,:key,:request_hash,:actor) RETURNING id"""),
+          (cooperative_id,member_id,amount_kobo,idempotency_key,request_hash,requested_by,reason)
+          VALUES (:cid,:mid,:amount,:key,:request_hash,:actor,:reason) RETURNING id"""),
             {
                 "cid": current.cooperative_id,
                 "mid": member_id,
@@ -253,6 +271,7 @@ async def request_withdrawal(
                 "key": idempotency_key,
                 "request_hash": request_hash,
                 "actor": current.user_id,
+                "reason": reason.strip(),
             },
         )
         request_id = result.scalar_one_or_none()
@@ -268,6 +287,9 @@ async def request_withdrawal(
             summary={"amount_kobo": amount_kobo, "member_id": str(member_id)},
             channel="api",
             ip=None,
+        )
+        await enqueue_action_notifications_safely(
+            session, current.cooperative_id, WITHDRAWAL_APPROVAL, request_id
         )
         return uuid.UUID(str(request_id))
 
@@ -380,6 +402,51 @@ async def approve_withdrawal(current: CurrentSession, request_id: uuid.UUID) -> 
             ip=None,
         )
         return uuid.UUID(str(entry))
+
+
+async def reject_withdrawal(current: CurrentSession, request_id: uuid.UUID, reason: str) -> None:
+    if current.user_id is None:
+        raise Forbidden("Treasurer role required")
+    actor_role = _financial_actor_role(current, ("treasurer",))
+    if not reason.strip():
+        raise ValueError("A rejection reason is required")
+    async with transaction(current.cooperative_id) as session:
+        row = (
+            await session.execute(
+                text("""SELECT requested_by,status FROM withdrawal_requests
+          WHERE cooperative_id=:cid AND id=:id FOR UPDATE"""),
+                {"cid": current.cooperative_id, "id": request_id},
+            )
+        ).one_or_none()
+        if row is None:
+            raise NotFound("Withdrawal request not found")
+        if row.requested_by == current.user_id:
+            raise Conflict("A different user must reject the withdrawal")
+        if row.status != "pending":
+            raise Conflict("Withdrawal request is no longer pending")
+        await session.execute(
+            text("""UPDATE withdrawal_requests SET status='rejected',
+          approved_by=:actor,rejection_reason=:reason,resolved_at=now()
+          WHERE cooperative_id=:cid AND id=:id"""),
+            {
+                "actor": current.user_id,
+                "reason": reason.strip(),
+                "cid": current.cooperative_id,
+                "id": request_id,
+            },
+        )
+        await append_audit(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            action="withdrawal_rejected",
+            entity_type="withdrawal_request",
+            role=actor_role,
+            entity_id=str(request_id),
+            summary={"reason": reason.strip()},
+            channel="api",
+            ip=None,
+        )
 
 
 def validate_member_csv(csv_text: str) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:

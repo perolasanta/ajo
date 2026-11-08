@@ -13,6 +13,7 @@ PAYROLL_SIGN_OFF = "payroll_sign_off"
 DISBURSEMENT_AUTHORIZATION = "disbursement_authorization"
 ROLE_CHANGE_APPROVAL = "role_change_approval"
 LOAN_DISPUTED = "loan_disputed"
+WITHDRAWAL_APPROVAL = "withdrawal_approval"
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ ACTION_SPECS = {
     DISBURSEMENT_AUTHORIZATION: ActionSpec(frozenset({"admin"}), "Disbursements", "/disbursements"),
     ROLE_CHANGE_APPROVAL: ActionSpec(frozenset({"admin"}), "Staff", "/staff"),
     LOAN_DISPUTED: ActionSpec(frozenset({"treasurer"}), "Loans", "/loans"),
+    WITHDRAWAL_APPROVAL: ActionSpec(frozenset({"treasurer"}), "Members", "/members"),
 }
 
 _CANDIDATE_SQL = {
@@ -100,6 +102,12 @@ _CANDIDATE_SQL = {
         FROM loans l
         WHERE l.cooperative_id=:cooperative_id AND l.status='disputed'
           AND (CAST(:entity_id AS uuid) IS NULL OR l.id=CAST(:entity_id AS uuid))
+    """,
+    WITHDRAWAL_APPROVAL: """
+        SELECT wr.id AS entity_id, ARRAY[wr.requested_by]::uuid[] AS excluded_user_ids
+        FROM withdrawal_requests wr
+        WHERE wr.cooperative_id=:cooperative_id AND wr.status='pending'
+          AND (CAST(:entity_id AS uuid) IS NULL OR wr.id=CAST(:entity_id AS uuid))
     """,
 }
 
