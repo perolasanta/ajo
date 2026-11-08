@@ -191,7 +191,22 @@ async def verify_mfa(body: CodeBody, request: Request) -> dict[str, object]:
 
 @router.get("/me")
 async def me(current: Annotated[CurrentSession, Depends(current_session)]) -> dict[str, object]:
-    return {"user_id": str(current.user_id), "email": current.email, "roles": list(current.roles)}
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text(
+                "SELECT full_name, mfa_enabled_at IS NOT NULL AS mfa_enabled "
+                "FROM users WHERE cooperative_id=:cooperative_id AND id=:user_id"
+            ),
+            {"cooperative_id": current.cooperative_id, "user_id": current.user_id},
+        )
+        row = result.mappings().one()
+    return {
+        "user_id": str(current.user_id),
+        "email": current.email,
+        "full_name": row["full_name"],
+        "roles": list(current.roles),
+        "mfa_enabled": bool(row["mfa_enabled"]),
+    }
 
 
 @router.post("/logout", dependencies=[Depends(require_csrf)])

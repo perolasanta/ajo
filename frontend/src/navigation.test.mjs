@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ACCESS_DENIED_NOTICE,
+  accountMenuBlocks,
   DEFAULT_LANDING_PATH,
   disbursementRoles,
   getRouteDecision,
@@ -179,15 +180,38 @@ test("auditor does not see Payroll navigation", () => {
   assert.equal(names.includes("Payroll"), false);
 });
 
-test("Notifications is available to every staff role from the user menu, not the sidebar", () => {
-  for (const role of ["officer", "committee", "treasurer", "admin", "auditor"]) {
-    assert.equal(getRouteDecision([role], "/notifications").allowed, true, role);
+test("the account footer has one profile block and falls back to email", () => {
+  const blocks = accountMenuBlocks({
+    full_name: " Aisha Bello ",
+    email: "aisha@example.test",
+    roles: ["admin", "treasurer"],
+  });
+  assert.equal(blocks.length, 1);
+  assert.deepEqual(blocks[0], {
+    path: "/account",
+    displayName: "Aisha Bello",
+    avatarName: "Aisha Bello",
+    email: "aisha@example.test",
+    roles: ["admin", "treasurer"],
+  });
+  assert.equal(
+    accountMenuBlocks({ full_name: null, email: "a@example.test", roles: [] })[0].displayName,
+    "a@example.test",
+  );
+});
+
+test("Account is outside role-gated navigation and Notifications redirects there", () => {
+  for (const role of ["officer", "committee", "treasurer", "admin", "auditor", "member"]) {
+    assert.deepEqual(getRouteDecision([role], "/account"), { allowed: true });
+    assert.deepEqual(getRouteDecision([role], "/notifications"), {
+      allowed: false,
+      redirectTo: "/account",
+    });
     assert.equal(
-      visibleNavigation([role]).some((item) => item.path === "/notifications"),
+      visibleNavigation([role]).some((item) => ["/account", "/notifications"].includes(item.path)),
       false,
     );
   }
-  assert.equal(getRouteDecision(["member"], "/notifications").allowed, false);
 });
 
 test("mobile menu total sums action counts across visible sections", () => {

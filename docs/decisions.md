@@ -176,3 +176,15 @@ Telegram links are personal staff settings, not role-gated navigation. A complet
 
 ## 12. Telegram action-alert delivery
 For each eligible staff recipient, enqueue one email row when `EMAIL_ENABLED` is true and one Telegram row when `TELEGRAM_ENABLED` is true and that user has a Telegram link. Recipient eligibility, role-union behavior and participant exclusions are shared across channels. Rows deduplicate independently by cooperative, recipient, channel, kind and entity so email cannot suppress Telegram. Telegram payloads contain exactly the section label and public link; chat ids are resolved from the tenant-scoped link at send time and never enter the outbox. Telegram 403 and chat-not-found responses dead-letter and remove only the current matching link; 429 responses retry after Telegram's `retry_after`. Delivery is best-effort through the existing outbox, so provider failures do not fail business actions. The worker registers Telegram only when enabled; disabled Telegram rows are dead-lettered with an explicit reason. `telegram-set-webhook` registers the public webhook URL and secret-token header without printing credentials.
+
+## 13. Account settings and staff sessions
+
+Every authenticated account may access `/account` independently of the role-gated business sections. The profile displays the current user's name, email and roles read-only; an administrator edits names from the Staff page. The page displays MFA status only and does not enroll MFA, disable it, or view/regenerate recovery codes. The legacy `/notifications` route redirects to `/account`, where the existing personal Telegram connect/disconnect controls live.
+
+Changing a password requires the current password and an MFA-complete session, is CSRF-protected, and uses the existing Argon2id hash. A new password is 12–128 characters, differs from the current password and the user's email, and is rejected if it matches the small built-in common-password denylist. Failed current-password attempts share login's account lockout and HMAC-keyed rate-limit policy. On success, revoke every other session while retaining the current session. Audit the password-change event without recording password values or other credentials.
+
+Session listing and revocation are self-service and tenant-scoped: a user may see and revoke only their own sessions. Session summaries contain a browser/device label derived from the user agent, creation time, last-seen time and a current-device flag; never return session tokens, raw user agents or full IP addresses. The account page may revoke one of the user's sessions or all other sessions.
+
+MFA enrollment continues to return the one-time recovery-code list from its existing API response. The current login UI does not display that response to the user. This decision does not change enrollment or recovery-code behavior.
+
+Payroll run detail displays the sign-off actor using the existing payroll name-only label rule: trimmed full name, `Unnamed user` for an existing unnamed user, and `Unknown user` when the user record is absent.

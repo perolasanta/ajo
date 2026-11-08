@@ -28,6 +28,19 @@ export function visibleNavigation(roles) {
   return navigation.filter((item) => item.roles.some((role) => roles.includes(role)));
 }
 
+export function accountMenuBlocks(session) {
+  const displayName = session.full_name?.trim() || session.email;
+  return [
+    {
+      path: "/account",
+      displayName,
+      avatarName: displayName,
+      email: session.email,
+      roles: session.roles,
+    },
+  ];
+}
+
 export function menuActionCount(name, summary, roles) {
   let count = 0;
   if (name === "Payroll") {
@@ -84,14 +97,8 @@ const routePatterns = [
 export function getRouteDecision(roles, pathname) {
   const path = pathname.split(/[?#]/, 1)[0].replace(/\/+$/, "") || "/";
   if (path === "/") return { allowed: false, redirectTo: DEFAULT_LANDING_PATH };
-  if (path === "/notifications") {
-    return {
-      allowed: ["officer", "committee", "treasurer", "admin", "auditor"].some((role) =>
-        roles.includes(role),
-      ),
-      redirectTo: DEFAULT_LANDING_PATH,
-    };
-  }
+  if (path === "/account") return { allowed: true };
+  if (path === "/notifications") return { allowed: false, redirectTo: "/account" };
 
   const route =
     path === "/loans/new" ? null : routePatterns.find(([, pattern]) => pattern.test(path));

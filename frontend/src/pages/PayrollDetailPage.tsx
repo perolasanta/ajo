@@ -1003,8 +1003,9 @@ export default function PayrollDetailPage() {
           )}
           {data.signed_off_at && (
             <div>
-              <dt>Signed off</dt>
+              <dt>Sign-off</dt>
               <dd className="mt-1 text-ink">
+                Signed off by {data.signed_off_by_name ?? "Unknown user"} on{" "}
                 <DateTime value={data.signed_off_at} />
               </dd>
             </div>

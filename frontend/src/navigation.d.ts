@@ -8,6 +8,18 @@ export type NavigationItem = {
 
 export const navigation: NavigationItem[];
 export function visibleNavigation(roles: string[]): NavigationItem[];
+export type AccountMenuBlock = {
+  path: string;
+  displayName: string;
+  avatarName: string;
+  email: string;
+  roles: string[];
+};
+export function accountMenuBlocks(session: {
+  full_name?: string | null;
+  email: string;
+  roles: string[];
+}): AccountMenuBlock[];
 export function menuActionCount(
   name: string,
   summary: NotificationSummary | undefined,

@@ -1,5 +1,4 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Menu, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -16,6 +15,7 @@ import {
 import { getNotificationSummary, request } from "./api/client";
 import {
   ACCESS_DENIED_NOTICE,
+  accountMenuBlocks,
   DEFAULT_LANDING_PATH,
   formatMenuBadge,
   getRouteDecision,
@@ -29,7 +29,13 @@ import type { MemberListItem, NotificationSummary } from "./api/schema";
 import { Avatar } from "./ui/Avatar";
 import { Skeleton } from "./ui/Feedback";
 
-type Session = { user_id: string; email: string; roles: string[] };
+type Session = {
+  user_id: string;
+  email: string;
+  full_name?: string | null;
+  roles: string[];
+  mfa_enabled?: boolean;
+};
 
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const MembersPage = lazy(() => import("./pages/MembersPage"));
@@ -47,7 +53,7 @@ const PayrollDetailPage = lazy(() => import("./pages/PayrollDetailPage"));
 const AuditPage = lazy(() => import("./pages/AuditPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const StaffPage = lazy(() => import("./pages/StaffPage"));
-const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
+const AccountPage = lazy(() => import("./pages/AccountPage"));
 
 const fakeMembers: MemberListItem[] = [
   {
@@ -106,9 +112,6 @@ function Shell({
   const menuLabel = menuButtonLabel(totalActionCount);
   const locationState = location.state as { notice?: string } | null;
   const notice = locationState?.notice === ACCESS_DENIED_NOTICE ? locationState.notice : undefined;
-  const userName = session.email
-    .split("@")[0]
-    .replace(/\b\w/g, (character) => character.toUpperCase());
   const closeDrawer = () => setDrawer(false);
   const navigationContent = (
     <>
@@ -146,14 +149,7 @@ function Shell({
           );
         })}
       </nav>
-      <div className="mt-auto flex items-center gap-3 border-t border-white/15 pt-4">
-        <Avatar name={userName} className="bg-white/15 text-white" />
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-white">{userName}</p>
-          <p className="text-xs text-white/65">{session.roles[0] ?? "member"}</p>
-        </div>
-        <UserMenu session={session} onLogout={onLogout} />
-      </div>
+      <AccountIdentityLink session={session} onClick={closeDrawer} />
       {onLogout && (
         <button
           type="button"
@@ -216,7 +212,6 @@ function Shell({
           <Link to="/dashboard" className="font-serif text-2xl font-semibold tracking-[-0.04em]">
             Ajo
           </Link>
-          <UserMenu session={session} onLogout={onLogout} />
         </header>
         <main className="mx-auto min-w-0 max-w-[1200px] p-4 sm:p-6">
           {notice && (
@@ -234,34 +229,22 @@ function Shell({
   );
 }
 
-function UserMenu({ session, onLogout }: { session: Session; onLogout?: () => void }) {
+function AccountIdentityLink({ session, onClick }: { session: Session; onClick?: () => void }) {
+  const [account] = accountMenuBlocks(session);
+  const roles = account.roles.length > 0 ? account.roles.join(" · ") : "member";
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger className="inline-flex size-11 items-center justify-center rounded-full">
-        <Avatar name={session.email} />
-        <span className="sr-only">Open user menu</span>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          align="end"
-          className="z-50 mt-2 w-48 rounded-card border border-border bg-surface p-1 shadow-lg"
-        >
-          <DropdownMenu.Item
-            asChild
-            className="cursor-pointer rounded-control px-3 py-2 text-sm outline-none hover:bg-bg"
-          >
-            <Link to="/notifications">Notifications</Link>
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
-            className="cursor-pointer rounded-control px-3 py-2 text-sm outline-none hover:bg-bg"
-            onSelect={onLogout}
-          >
-            <LogOut className="mr-2 inline size-4" />
-            Log out
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    <Link
+      to={account.path}
+      onClick={onClick}
+      className="mt-auto flex min-w-0 items-center gap-3 border-t border-white/15 pt-4 text-left"
+      aria-label={`Account: ${account.displayName}`}
+    >
+      <Avatar name={account.avatarName.slice(0, 1)} className="bg-white/15 text-white" />
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium text-white">{account.displayName}</span>
+        <span className="block truncate text-xs text-white/65">{roles}</span>
+      </span>
+    </Link>
   );
 }
 
@@ -291,7 +274,12 @@ function ProtectedShell() {
   }, [navigate, queryClient]);
   if (session.isPending) return <LoadingPage />;
   if (session.isError || !session.data) return <Navigate to="/login" replace />;
-  if (!session.data.roles.some((role) => role !== "member"))
+  const currentPath = location.pathname.split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  if (
+    !session.data.roles.some((role) => role !== "member") &&
+    currentPath !== "/account" &&
+    currentPath !== "/notifications"
+  )
     return <main className="p-8">Your account does not have officer access.</main>;
   const routeDecision = getRouteDecision(session.data.roles, location.pathname);
   if (!routeDecision.allowed) {
@@ -420,7 +408,8 @@ export default function App() {
         </Route>
         <Route path="/audit" element={<AuditPage />} />
         <Route path="/staff" element={<StaffPage />} />
-        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/account" element={<AccountPage />} />
+        <Route path="/notifications" element={<Navigate to="/account" replace />} />
       </Route>
       <Route path="*" element={<Navigate to={DEFAULT_LANDING_PATH} replace />} />
     </Routes>

@@ -318,7 +318,7 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
                     text(
                         """SELECT r.id,r.period_year,r.period_month,r.status,r.expected_total_kobo,
                           r.file_total_kobo,r.bank_receipt_total_kobo,r.created_by,r.imported_by,
-                          r.posted_by,
+                          r.posted_by,r.signed_off_by,
                           CASE WHEN created_user.id IS NULL THEN 'Unknown user'
                                WHEN NULLIF(btrim(created_user.full_name), '') IS NULL THEN 'Unnamed user'
                                ELSE btrim(created_user.full_name) END AS created_by_name,
@@ -330,6 +330,10 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
                                WHEN posted_user.id IS NULL THEN 'Unknown user'
                                WHEN NULLIF(btrim(posted_user.full_name), '') IS NULL THEN 'Unnamed user'
                                ELSE btrim(posted_user.full_name) END AS posted_by_name,
+                          CASE WHEN r.signed_off_by IS NULL THEN NULL
+                               WHEN signed_user.id IS NULL THEN 'Unknown user'
+                               WHEN NULLIF(btrim(signed_user.full_name), '') IS NULL THEN 'Unnamed user'
+                               ELSE btrim(signed_user.full_name) END AS signed_off_by_name,
                           r.created_at,r.imported_at,r.posted_at,r.signed_off_at
                           FROM payroll_runs AS r
                           LEFT JOIN users AS created_user
@@ -341,6 +345,9 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
                           LEFT JOIN users AS posted_user
                             ON posted_user.cooperative_id=r.cooperative_id
                            AND posted_user.id=r.posted_by
+                          LEFT JOIN users AS signed_user
+                            ON signed_user.cooperative_id=r.cooperative_id
+                           AND signed_user.id=r.signed_off_by
                           WHERE r.cooperative_id=:cid AND r.id=:id"""
                     ),
                     {"cid": cid, "id": run_id},
@@ -436,6 +443,8 @@ async def get_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
         "imported_by_name": run["imported_by_name"],
         "posted_by": str(run["posted_by"]) if run["posted_by"] is not None else None,
         "posted_by_name": run["posted_by_name"],
+        "signed_off_by": (str(run["signed_off_by"]) if run["signed_off_by"] is not None else None),
+        "signed_off_by_name": run["signed_off_by_name"],
         "created_at": run["created_at"],
         "imported_at": run["imported_at"],
         "posted_at": run["posted_at"],
