@@ -232,13 +232,21 @@ class ContributionBody(BaseModel):
     member_id: uuid.UUID
     kind: str = Field(pattern="^(savings|shares|dues)$")
     amount_kobo: int = Field(gt=0)
+    effective_date: date = Field(default_factory=date.today)
+    reference: str = Field(default="", max_length=200)
+    payment_method: str = Field(default="cash", min_length=1, max_length=40)
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
 class WithdrawalBody(BaseModel):
     member_id: uuid.UUID
     amount_kobo: int = Field(gt=0)
+    reason: str = Field(default="Member withdrawal request", min_length=1, max_length=500)
     idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class WithdrawalRejectBody(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class ImportBody(BaseModel):
@@ -361,7 +369,14 @@ async def contribute(
     body: ContributionBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, str]:
     entry_id = await service.record_contribution(
-        current, body.member_id, body.kind, body.amount_kobo, body.idempotency_key
+        current,
+        body.member_id,
+        body.kind,
+        body.amount_kobo,
+        body.idempotency_key,
+        effective_date=body.effective_date,
+        reference=body.reference,
+        payment_method=body.payment_method,
     )
     return {"journal_entry_id": str(entry_id)}
 
@@ -371,7 +386,7 @@ async def withdraw(
     body: WithdrawalBody, current: Annotated[CurrentSession, Depends(current_session)]
 ) -> dict[str, str]:
     request_id = await service.request_withdrawal(
-        current, body.member_id, body.amount_kobo, body.idempotency_key
+        current, body.member_id, body.amount_kobo, body.idempotency_key, reason=body.reason
     )
     return {"withdrawal_request_id": str(request_id)}
 
@@ -382,6 +397,37 @@ async def approve_withdrawal(
 ) -> dict[str, str]:
     entry_id = await service.approve_withdrawal(current, request_id)
     return {"journal_entry_id": str(entry_id)}
+
+
+@router.post("/members/withdrawals/{request_id}/reject", dependencies=[Depends(require_csrf)])
+async def reject_withdrawal(
+    request_id: uuid.UUID,
+    body: WithdrawalRejectBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, str]:
+    await service.reject_withdrawal(current, request_id, body.reason)
+    return {"status": "rejected"}
+
+
+@router.get("/members/{member_id}/withdrawals")
+async def member_withdrawals(
+    member_id: uuid.UUID,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, Any]:
+    _member_role(current)
+    async with transaction(current.cooperative_id) as session:
+        rows = await session.execute(
+            text("""SELECT wr.id,wr.amount_kobo,wr.status,wr.created_at,
+          wr.requested_by,coalesce(nullif(trim(u.full_name),''),'Unnamed user') AS requester_name,
+          wr.reason,wr.rejection_reason
+          FROM withdrawal_requests wr JOIN users u
+            ON u.cooperative_id=wr.cooperative_id AND u.id=wr.requested_by
+          WHERE wr.cooperative_id=:cid AND wr.member_id=:mid
+          ORDER BY wr.created_at DESC,wr.id"""),
+            {"cid": current.cooperative_id, "mid": member_id},
+        )
+        items = [dict(row) for row in rows.mappings().all()]
+    return {"items": items, "current_user_id": str(current.user_id)}
 
 
 @router.post("/members/import", dependencies=[Depends(require_csrf)])

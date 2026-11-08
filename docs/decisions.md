@@ -29,7 +29,9 @@ Enforce these write permissions in the member service; API and UI visibility are
 | Approve a withdrawal request | Treasurer only |
 | Post the withdrawal ledger entry | Treasurer only, in the same operation as approval (not a separate stage) |
 
-The person who requested a withdrawal can never approve it, even when they hold multiple roles. Members cannot request withdrawals in the app yet. Do not add a separate posting stage now. Follow-up: consider withdrawal posting as a distinct step, possibly committee approval followed by treasurer posting.
+Contribution records capture an effective date, reference/note, and payment method. Withdrawal requests capture a reason; a rejection requires a reason visible to the requester. Pending-withdrawal badges and notifications are available only to treasurers other than the requester, using the shared action-eligibility rules. Action notification messages contain only the section and public link, never member names or amounts.
+
+The person who requested a withdrawal can never approve or reject it, even when they hold multiple roles. Members cannot request withdrawals in the app yet. Do not add a separate posting stage now. Follow-up: withdrawal payout as a distinct step with a separate poster, possibly with committee approval.
 
 ## 1b. Payroll access and reporting
 

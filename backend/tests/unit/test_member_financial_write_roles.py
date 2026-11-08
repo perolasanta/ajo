@@ -60,6 +60,12 @@ async def invoke_write(action: str, actor: CurrentSession) -> object:
     if action in {"withdrawal_approval", "withdrawal_post"}:
         # Approval and ledger posting are deliberately one API operation today.
         return await members_api.approve_withdrawal(REQUEST_ID, actor)
+    if action == "withdrawal_rejection":
+        return await members_api.reject_withdrawal(
+            REQUEST_ID,
+            members_api.WithdrawalRejectBody(reason="Not enough supporting detail"),
+            actor,
+        )
     raise AssertionError(f"Unknown action: {action}")
 
 
@@ -84,6 +90,16 @@ async def test_officer_gets_403_when_approving_withdrawal(
     monkeypatch.setattr(service, "transaction", no_database_access)
     with pytest.raises(Forbidden) as error:
         await invoke_write("withdrawal_approval", current("officer"))
+    assert error.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_officer_gets_403_when_rejecting_withdrawal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service, "transaction", no_database_access)
+    with pytest.raises(Forbidden) as error:
+        await invoke_write("withdrawal_rejection", current("officer"))
     assert error.value.status_code == 403
 
 
@@ -124,7 +140,9 @@ async def transaction_with(session: RequestSession, _cooperative_id: uuid.UUID):
     yield session
 
 
-@pytest.mark.parametrize("roles", [("treasurer",), ("admin", "treasurer")])
+@pytest.mark.parametrize(
+    "roles", [("treasurer",), ("admin", "treasurer"), ("treasurer", "officer")]
+)
 @pytest.mark.asyncio
 async def test_treasurer_cannot_approve_own_request_even_with_multiple_roles(
     roles: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
@@ -153,3 +171,28 @@ def test_admin_treasurer_combo_uses_treasurer_actor_role() -> None:
     actor = current("admin", "treasurer")
     assert service._financial_actor_role(actor, ("treasurer", "officer")) == "treasurer"
     assert service._financial_actor_role(actor, ("treasurer",)) == "treasurer"
+
+
+def test_contribution_request_carries_effective_date_reference_and_payment_method() -> None:
+    body = members_api.ContributionBody(
+        member_id=MEMBER_ID,
+        kind="savings",
+        amount_kobo=1250,
+        effective_date="2026-11-08",
+        reference="cash receipt 14",
+        payment_method="cash",
+        idempotency_key="contribution-meta",
+    )
+    assert body.effective_date.isoformat() == "2026-11-08"
+    assert body.reference == "cash receipt 14"
+    assert body.payment_method == "cash"
+
+
+def test_withdrawal_request_carries_reason() -> None:
+    body = members_api.WithdrawalBody(
+        member_id=MEMBER_ID,
+        amount_kobo=100,
+        reason="Member requested a savings payout",
+        idempotency_key="withdrawal-reason",
+    )
+    assert body.reason == "Member requested a savings payout"

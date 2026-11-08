@@ -60,6 +60,9 @@ export function menuActionCount(name, summary, roles) {
   if (name === "Staff" && roles.includes("admin")) {
     count += summary?.role_changes?.awaiting_approval ?? 0;
   }
+  if (name === "Members" && roles.includes("treasurer")) {
+    count += summary?.members?.withdrawals_awaiting_approval ?? 0;
+  }
   if (name === "Loans") {
     if (roles.includes("committee")) count += summary?.loans?.awaiting_decision ?? 0;
     if (roles.includes("treasurer")) count += summary?.loans?.disputed_or_paused ?? 0;

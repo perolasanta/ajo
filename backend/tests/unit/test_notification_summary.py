@@ -37,6 +37,10 @@ BADGE_CANDIDATES: dict[str, list[dict[str, Any]]] = {
         {"entity_id": uuid.uuid4(), "excluded_user_ids": set()},
         {"entity_id": uuid.uuid4(), "excluded_user_ids": set()},
     ],
+    "withdrawal_approval": [
+        {"entity_id": uuid.uuid4(), "excluded_user_ids": set()},
+        {"entity_id": uuid.uuid4(), "excluded_user_ids": set()},
+    ],
 }
 
 ROLE_RESPONSES = [
@@ -54,6 +58,7 @@ ROLE_RESPONSES = [
             "payroll": {"awaiting_posting": 11},
             "disbursements": {"ready_to_record": 15},
             "loans": {"disputed_or_paused": 2},
+            "members": {"withdrawals_awaiting_approval": 2},
         },
     ),
     ("officer", {}),
@@ -165,6 +170,7 @@ async def test_notification_summary_unions_actions_for_multiple_roles(
         },
         "role_changes": {"awaiting_approval": 2},
         "loans": {"awaiting_decision": 17, "disputed_or_paused": 2},
+        "members": {"withdrawals_awaiting_approval": 2},
     }
     assert len(calls) == 1
     assert calls[0]["cooperative_id"] == current.cooperative_id
