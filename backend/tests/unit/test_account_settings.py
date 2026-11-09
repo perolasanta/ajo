@@ -308,3 +308,64 @@ async def test_session_list_is_a_safe_user_agent_summary_and_marks_current_devic
         sql for sql, _ in fake.calls if sql.startswith("select") and "user_sessions" in sql
     )
     assert "ip" not in select and "token_hash" not in select and "csrf_token_hash" not in select
+
+
+@pytest.mark.parametrize(
+    ("user_agent", "expected"),
+    [
+        (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Chrome on Windows",
+        ),
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+            "Safari on macOS",
+        ),
+        (
+            "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+            "Firefox on Linux",
+        ),
+        (
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+            "Chrome on Android",
+        ),
+        (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) CriOS/131.0.6778.69 Mobile/15E148 Safari/604.1",
+            "Chrome on iPhone",
+        ),
+        (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.2903.51",
+            "Edge on Windows",
+        ),
+        (
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36 EdgA/131.0.2903.51",
+            "Edge on Android",
+        ),
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 OPR/115.0.0.0",
+            "Opera on macOS",
+        ),
+        (
+            "Mozilla/5.0 (iPad; CPU OS 18_1 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+            "Safari on iPad",
+        ),
+        (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) FxiOS/133.0 Mobile/15E148 Safari/605.1.15",
+            "Firefox on iPhone",
+        ),
+        ("curl/8.10.1", "Unknown browser on unknown device"),
+    ],
+)
+def test_summarize_user_agent_handles_real_browser_user_agents(
+    user_agent: str, expected: str
+) -> None:
+    assert auth_service.summarize_user_agent(user_agent) == expected

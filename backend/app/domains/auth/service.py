@@ -1084,13 +1084,13 @@ async def change_password(
 def summarize_user_agent(user_agent: str | None) -> str:
     """Return a short browser/platform label without exposing the full user agent."""
     value = (user_agent or "").lower()
-    if "edg/" in value:
+    if "edg/" in value or "edga/" in value or "edgios/" in value:
         browser = "Edge"
     elif "opr/" in value or "opera" in value:
         browser = "Opera"
-    elif "firefox/" in value:
+    elif "fxios/" in value or "firefox/" in value:
         browser = "Firefox"
-    elif "chrome/" in value or "chromium/" in value:
+    elif "crios/" in value or "chrome/" in value or "chromium/" in value:
         browser = "Chrome"
     elif "safari/" in value:
         browser = "Safari"

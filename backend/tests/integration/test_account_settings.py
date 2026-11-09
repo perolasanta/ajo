@@ -51,7 +51,8 @@ async def account(request: pytest.FixtureRequest, test_database: Any) -> dict[st
         totp_code=None,
         recovery_code=None,
         ip="127.0.0.1",
-        user_agent="pytest Chrome on Linux",
+        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     )
     assert login.session_cookie is not None
     secret = pyotp.parse_uri(str(login.data["provisioning_uri"])).secret
@@ -133,7 +134,8 @@ async def test_password_change_revokes_other_sessions_but_keeps_current(
         totp_code=pyotp.TOTP(account["secret"]).now(),
         recovery_code=None,
         ip="127.0.0.2",
-        user_agent="pytest Firefox on Android",
+        user_agent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Firefox/132.0 Mobile Safari/537.36",
     )
     assert second_login.session_cookie is not None
     second_session = await auth_service.load_session(
