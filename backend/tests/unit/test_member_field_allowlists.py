@@ -24,6 +24,7 @@ ROLE_FIELDS = {
     "admin": {
         "list": {
             "id",
+            "has_pending_request",
             "member_no",
             "full_name",
             "phone_e164",
@@ -50,6 +51,7 @@ ROLE_FIELDS = {
     "officer": {
         "list": {
             "id",
+            "has_pending_request",
             "member_no",
             "full_name",
             "phone_e164",
@@ -74,7 +76,7 @@ ROLE_FIELDS = {
         "bank": {"id", "bank_code", "last4", "account_name", "verified_at", "status"},
     },
     "treasurer": {
-        "list": {"id", "member_no", "full_name"},
+        "list": {"id", "has_pending_request", "member_no", "full_name"},
         "detail": {"id", "member_no", "full_name", "bank_accounts", "balances"},
         "bank": {"id", "bank_code", "last4"},
     },

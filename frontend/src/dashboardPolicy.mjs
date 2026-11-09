@@ -63,15 +63,25 @@ const disbursementCards = (roles) => {
 export function dashboardCards(roles = []) {
   const cards = [...loanCards(roles), ...disbursementCards(roles)];
   if (roles.includes("committee")) {
-    cards.push(
-      {
-        title: "Applications under review",
-        description: "Loan applications",
-        source: "loans",
-        status: "under_review",
-        href: "/loans?status=under_review",
-      },
-    );
+    cards.push({
+      title: "Applications under review",
+      description: "Loan applications",
+      source: "loans",
+      status: "under_review",
+      href: "/loans?status=under_review",
+    });
   }
+  const addAction = (actionType, title, description, href) =>
+    cards.push({ title, description, source: "action", status: actionType, href, actionType });
+  if (roles.includes("treasurer") || roles.includes("admin"))
+    addAction("payroll", "Payroll runs needing my action", "Payroll", "/payroll?action=needed");
+  if (roles.includes("treasurer"))
+    addAction("withdrawals", "Withdrawal requests needing my action", "Members", "/withdrawal-requests?mine=needed");
+  if (roles.includes("admin"))
+    addAction("role_changes", "Role changes needing my action", "Staff", "/staff?action=needed");
+  if (roles.includes("admin") || roles.includes("treasurer"))
+    addAction("disbursements", "Disbursements needing my action", "Disbursements", "/disbursements?action=needed");
+  if (roles.includes("committee") || roles.includes("treasurer"))
+    addAction("loans", "Loans needing my action", "Loans", "/loans?action=needed");
   return cards;
 }

@@ -93,7 +93,8 @@ async def list_role_change_proposals(
     status: Annotated[ProposalStatus, Query()] = "pending",
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
+    action: str | None = Query(default=None, pattern="^needed$"),
 ) -> dict[str, object]:
     return await reads.list_role_change_proposals(
-        current, status=status, page=page, page_size=page_size
+        current, status=status, page=page, page_size=page_size, action=action
     )

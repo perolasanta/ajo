@@ -30,6 +30,7 @@ export function totalVisibleActionCount(
   summary: NotificationSummary | undefined,
   roles: string[],
 ): number;
+export function navigationTarget(name: string, count: number): string;
 export function formatMenuBadge(count: number): string | null;
 export function menuButtonLabel(count: number): string;
 export const DEFAULT_LANDING_PATH: string;

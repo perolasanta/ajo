@@ -30,11 +30,17 @@ class PermanentEmailDeliveryError(Exception):
 
 def build_action_email(event_type: str, payload: dict[str, Any], settings: Settings) -> ActionEmail:
     spec = ACTION_SPECS.get(event_type)
-    if spec is None or set(payload) != {"section", "url"}:
+    if spec is None or set(payload) != {"section", "action_kind", "message", "url"}:
         raise PermanentEmailDeliveryError("invalid_action_email_payload")
-    section = payload.get("section")
-    url = payload.get("url")
-    if section != spec.section or not isinstance(url, str):
+    section, action_kind, message, url = (
+        payload.get(key) for key in ("section", "action_kind", "message", "url")
+    )
+    if (
+        section != spec.section_label
+        or action_kind != spec.action_kind
+        or message != spec.sentence
+        or not isinstance(url, str)
+    ):
         raise PermanentEmailDeliveryError("invalid_action_email_payload")
     parsed = urlsplit(url)
     if (
@@ -42,19 +48,14 @@ def build_action_email(event_type: str, payload: dict[str, Any], settings: Setti
         or not parsed.netloc
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.query
         or parsed.fragment
     ):
         raise PermanentEmailDeliveryError("invalid_action_email_link")
     if settings.app_env != "development" and parsed.scheme != "https":
         raise PermanentEmailDeliveryError("action_email_link_requires_https")
-
-    subject = f"Action needed in {settings.app_name}: {section}"
-    text_content = f"Action needed in {section}; review it here: {url}."
-    html_content = (
-        f"<p>Action needed in {escape(section)}; review it "
-        f'<a href="{escape(url, quote=True)}">here</a>.</p>'
-    )
+    subject = f"Action needed in {settings.app_name}: {action_kind}"
+    text_content = f"{message} {url}"
+    html_content = f'<p>{escape(message)} <a href="{escape(url, quote=True)}">Open item</a>.</p>'
     return ActionEmail(subject=subject, text=text_content, html=html_content)
 
 
@@ -73,7 +74,6 @@ class BrevoEmailSender:
             raise RuntimeError("EMAIL_FROM_NAME is required when EMAIL_ENABLED is true")
         if urlsplit(BREVO_API_URL).scheme != "https":
             raise RuntimeError("Brevo API must use HTTPS")
-
         self._api_key = api_key
         self._from_address = settings.email_from_address.strip()
         self._from_name = settings.email_from_name.strip()
@@ -81,11 +81,7 @@ class BrevoEmailSender:
         self._client = client or httpx.AsyncClient(timeout=10.0)
 
     async def send(
-        self,
-        recipient: str,
-        subject: str,
-        text_content: str,
-        html_content: str,
+        self, recipient: str, subject: str, text_content: str, html_content: str
     ) -> None:
         response = await self._client.post(
             BREVO_API_URL,

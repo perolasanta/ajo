@@ -18,7 +18,7 @@ from app.core.db import transaction
 from app.core.errors import Conflict, NotFound, TooManyRequests
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import resolve_tenant_slug
-from app.domains.notifications.eligibility import LOAN_DISPUTED
+from app.domains.notifications.eligibility import LOAN_DECISION, LOAN_DISPUTED
 from app.domains.notifications.outbox import (
     enqueue_action_notifications_safely,
     enqueue_notification,
@@ -393,6 +393,10 @@ async def decide(slug: str, token: str, decision: str, ip: str, user_agent: str)
                 ),
                 {"status": target, "cid": cid, "id": row["application_id"]},
             )
+            if target == "under_review":
+                await enqueue_action_notifications_safely(
+                    session, cid, LOAN_DECISION, row["application_id"]
+                )
             if row["kind"] == "final_terms":
                 await session.execute(
                     text(

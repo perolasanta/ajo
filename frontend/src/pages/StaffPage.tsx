@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Navigate } from "react-router-dom";
 import {
   ApiError,
   createRoleChangeProposal,
   decideRoleChangeProposal,
   getRoleChangeProposals,
+  getNotificationSummary,
   getStaff,
   request,
   updateStaffFullName,
@@ -52,6 +54,9 @@ function formatDate(value: string): string {
 
 export default function StaffPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const actionNeeded = searchParams.get("action") === "needed";
+  const userSelectedActionTab = useRef(false);
   const [staffPage, setStaffPage] = useState(1);
   const [proposalPage, setProposalPage] = useState(1);
   const [status, setStatus] = useState<ProposalStatus>("pending");
@@ -71,9 +76,13 @@ export default function StaffPage() {
     enabled: isAdmin,
     retry: false,
   });
+  const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
+  const actionCount = summary.data?.role_changes?.awaiting_approval ?? 0;
+  useEffect(() => { const proposal = searchParams.get("proposal"); if (proposal && status !== "all") setStatus("all"); }, [searchParams, status]);
+  useEffect(() => { if (!userSelectedActionTab.current && isAdmin && actionCount > 0 && !searchParams.has("action") && !searchParams.has("proposal")) { const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next, { replace: true }); } }, [isAdmin, actionCount, searchParams, setSearchParams]);
   const proposals = useQuery({
-    queryKey: ["role-change-proposals", status, proposalPage],
-    queryFn: () => getRoleChangeProposals({ status, page: proposalPage, pageSize }),
+    queryKey: ["role-change-proposals", status, proposalPage, actionNeeded],
+    queryFn: () => getRoleChangeProposals({ status, page: proposalPage, pageSize, action: actionNeeded ? "needed" : undefined }),
     enabled: isAdmin,
     retry: false,
   });
@@ -342,6 +351,7 @@ export default function StaffPage() {
               Actions are revalidated by the server against current roles and proposal state.
             </p>
           </div>
+          <div className="flex gap-2" role="tablist" aria-label="Role proposal list view"><Button role="tab" aria-selected={actionNeeded} variant={actionNeeded ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next); }}>Needs my action{actionCount ? ` (${actionCount})` : ""}</Button><Button role="tab" aria-selected={!actionNeeded} variant={!actionNeeded ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.delete("action"); setSearchParams(next); }}>All</Button></div>
           <label className="text-sm font-medium">
             Status
             <Select
@@ -392,6 +402,7 @@ export default function StaffPage() {
                 <ProposalCard
                   key={proposal.proposal_id}
                   proposal={proposal}
+                  highlighted={actionNeeded || searchParams.get("proposal") === proposal.proposal_id}
                   currentUserId={session.data.user_id}
                   actionPending={proposalAction.isPending}
                   onAction={(decision) =>
@@ -433,11 +444,13 @@ export default function StaffPage() {
 
 function ProposalCard({
   proposal,
+  highlighted = false,
   currentUserId,
   actionPending,
   onAction,
 }: {
   proposal: RoleChangeProposal;
+  highlighted?: boolean;
   currentUserId: string;
   actionPending: boolean;
   onAction: (decision: "approve" | "reject" | "cancel") => void;
@@ -447,7 +460,7 @@ function ProposalCard({
   const isTarget = proposal.target_user_id === currentUserId;
   const canApprove = pending && !isProposer && !(proposal.action === "add" && isTarget);
   return (
-    <article className="rounded-card border border-border bg-surface p-4 sm:p-5">
+    <article className={`rounded-card border border-border bg-surface p-4 sm:p-5 ${highlighted ? "ring-2 ring-amber-400" : ""}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="break-words font-medium">

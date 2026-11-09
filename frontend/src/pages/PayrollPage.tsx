@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ApiError,
   createPayrollProfile,
   createPayrollRun,
+  getNotificationSummary,
   getPayrollProfiles,
   getPayrollRuns,
   request,
@@ -33,6 +34,12 @@ function ListError({ error, retry }: { error: unknown; retry: () => void }) {
 }
 
 const columns: ResponsiveColumn<PayrollRunSummary>[] = [
+  {
+    key: "action",
+    header: "Action",
+    role: "meta",
+    render: () => <span className="font-medium text-amber-800">Needs my action</span>,
+  },
   {
     key: "period",
     header: "Period",
@@ -91,6 +98,9 @@ function ListSkeleton() {
 }
 
 export default function PayrollPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const action = searchParams.get("action") === "needed" ? "needed" : undefined;
+  const userSelectedActionTab = useRef(false);
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
   const [showProfileForm, setShowProfileForm] = useState(false);
@@ -146,9 +156,12 @@ export default function PayrollPage() {
       void queryClient.invalidateQueries({ queryKey: ["payroll-profiles"] });
     },
   });
+  const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
+  const actionCount = (isAdmin ? summary.data?.payroll?.awaiting_sign_off ?? 0 : 0) + (roles.includes("treasurer") ? summary.data?.payroll?.awaiting_posting ?? 0 : 0);
+  useEffect(() => { if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) { const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next, { replace: true }); } }, [actionCount, searchParams, setSearchParams]);
   const runs = useQuery({
-    queryKey: ["payroll-runs", page],
-    queryFn: () => getPayrollRuns({ page, pageSize }),
+    queryKey: ["payroll-runs", page, action],
+    queryFn: () => getPayrollRuns({ page, pageSize, action }),
   });
   const state = payrollListState(runs);
   const totalPages = Math.max(1, Math.ceil((runs.data?.total ?? 0) / pageSize));
@@ -173,6 +186,7 @@ export default function PayrollPage() {
         Review expected and imported payroll totals. Member salary, contact, and bank details are
         not shown here.
       </p>
+      <div className="mb-4 flex gap-2" role="tablist" aria-label="Payroll list view"><Button role="tab" aria-selected={action === "needed"} variant={action === "needed" ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next); }}>Needs my action{actionCount ? ` (${actionCount})` : ""}</Button><Button role="tab" aria-selected={!action} variant={!action ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.delete("action"); setSearchParams(next); }}>All</Button></div>
       {showProfileForm && isAdmin && (
         <form
           className="mb-6 rounded-card border border-border bg-surface p-4 sm:p-5"
@@ -357,7 +371,7 @@ export default function PayrollPage() {
         <>
           <ResponsiveTable
             data={runs.data.items}
-            columns={columns}
+            columns={action ? columns : columns.slice(1)}
             getRowKey={(run) => run.run_id}
           />
           <div className="mt-4 flex items-center justify-between gap-3 text-sm">

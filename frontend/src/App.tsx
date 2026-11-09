@@ -21,6 +21,7 @@ import {
   getRouteDecision,
   menuButtonLabel,
   menuActionCount,
+  navigationTarget,
   totalVisibleActionCount,
   visibleNavigation,
 } from "./navigation";
@@ -53,6 +54,7 @@ const PayrollDetailPage = lazy(() => import("./pages/PayrollDetailPage"));
 const AuditPage = lazy(() => import("./pages/AuditPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const StaffPage = lazy(() => import("./pages/StaffPage"));
+const WithdrawalRequestsPage = lazy(() => import("./pages/WithdrawalRequestsPage"));
 const AccountPage = lazy(() => import("./pages/AccountPage"));
 
 const fakeMembers: MemberListItem[] = [
@@ -127,10 +129,11 @@ function Shell({
         {links.map(({ name, path }) => {
           const actionCount = menuActionCount(name, notificationSummary, session.roles);
           const badgeText = formatMenuBadge(actionCount);
+          const target = navigationTarget(name, actionCount);
           return (
             <NavLink
               key={path}
-              to={path}
+              to={target}
               onClick={closeDrawer}
               className={({ isActive }) =>
                 `flex min-h-10 items-center justify-between rounded-control px-3 text-sm text-white/85 transition hover:bg-white/10 ${isActive ? "bg-white/12 font-medium text-white" : ""}`
@@ -396,6 +399,7 @@ export default function App() {
       <Route element={<ProtectedShell />}>
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/members" element={<MembersPage />} />
+        <Route path="/withdrawal-requests" element={<WithdrawalRequestsPage />} />
         <Route path="/members/:memberId" element={<MemberDetailPage />} />
         <Route path="/loans" element={<LoansPage />} />
         <Route path="/loans/new" element={<NewLoanApplicationPage />} />

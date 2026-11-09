@@ -26,8 +26,10 @@ test("treasurer sees the record-transfer card but not the unfilterable prepare q
   assert.ok(!names.includes("Payroll awaiting posting"));
 });
 
-test("committee sees only the review queue", () => {
-  assert.deepEqual(namesFor("committee"), ["Applications under review"]);
+test("committee sees the review queue and a shared action destination", () => {
+  const cards = dashboardCards(["committee"]);
+  assert.ok(cards.some((card) => card.title === "Applications under review"));
+  assert.deepEqual(cards.filter((card) => card.actionType).map((card) => card.href), ["/loans?action=needed"]);
 });
 
 test("auditor sees loan and disbursement status cards only", () => {
@@ -38,9 +40,11 @@ test("auditor sees loan and disbursement status cards only", () => {
   assert.ok(!names.includes("Ready to prepare"));
 });
 
-test("every dashboard card links to a status-filtered existing list", () => {
-  for (const card of dashboardCards(["admin", "officer", "treasurer", "committee", "auditor"])) {
-    assert.match(card.href, /status=/);
-    assert.ok(["/loans", "/disbursements"].includes(card.href.split("?")[0]));
+test("action dashboard cards link to the shared needs-action list", () => {
+  const cards = dashboardCards(["admin", "officer", "treasurer", "committee", "auditor"]);
+  for (const card of cards.filter((entry) => entry.actionType)) {
+    assert.match(card.href, /(?:action=needed|mine=needed)/);
   }
+  assert.ok(cards.some((card) => card.href === "/withdrawal-requests?mine=needed"));
+  assert.ok(cards.some((card) => card.href === "/staff?action=needed"));
 });

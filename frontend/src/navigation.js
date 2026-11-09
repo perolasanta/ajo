@@ -9,6 +9,7 @@ export const navigation = [
     roles: ["officer", "committee", "treasurer", "admin", "auditor"],
   },
   { name: "Members", path: "/members", roles: ["officer", "treasurer", "auditor", "admin"] },
+  { name: "Withdrawal requests", path: "/withdrawal-requests", roles: ["officer", "treasurer", "admin"] },
   {
     name: "Loans",
     path: "/loans",
@@ -60,14 +61,25 @@ export function menuActionCount(name, summary, roles) {
   if (name === "Staff" && roles.includes("admin")) {
     count += summary?.role_changes?.awaiting_approval ?? 0;
   }
-  if (name === "Members" && roles.includes("treasurer")) {
-    count += summary?.members?.withdrawals_awaiting_approval ?? 0;
+  if (name === "Withdrawal requests" && roles.includes("treasurer")) {
+    count += summary?.withdrawal_requests?.awaiting_approval ?? 0;
   }
   if (name === "Loans") {
     if (roles.includes("committee")) count += summary?.loans?.awaiting_decision ?? 0;
     if (roles.includes("treasurer")) count += summary?.loans?.disputed_or_paused ?? 0;
   }
   return count;
+}
+
+
+export function navigationTarget(name, count) {
+  if (count <= 0) return navigation.find((item) => item.name === name)?.path ?? "/dashboard";
+  if (name === "Withdrawal requests") return "/withdrawal-requests?mine=needed";
+  if (name === "Loans") return "/loans?action=needed";
+  if (name === "Disbursements") return "/disbursements?action=needed";
+  if (name === "Payroll") return "/payroll?action=needed";
+  if (name === "Staff") return "/staff?action=needed";
+  return navigation.find((item) => item.name === name)?.path ?? "/dashboard";
 }
 
 export function totalVisibleActionCount(visibleLinks, summary, roles) {
@@ -90,6 +102,7 @@ export function menuButtonLabel(count) {
 const routePatterns = [
   ["/dashboard", /^\/dashboard$/],
   ["/members", /^\/members(?:\/[^/]+)?$/],
+  ["/withdrawal-requests", /^\/withdrawal-requests$/],
   ["/loans", /^\/loans(?:\/[^/]+)?$/],
   ["/disbursements", /^\/disbursements(?:\/[^/]+)?$/],
   ["/payroll", /^\/payroll(?:\/runs\/[^/]+)?$/],

@@ -34,17 +34,23 @@ def email_settings() -> Settings:
 def test_action_email_has_one_generic_sentence_and_html_link(email_settings: Settings) -> None:
     message = build_action_email(
         "payroll_sign_off",
-        {"section": "Payroll", "url": "https://ajo.example.test/payroll/runs"},
+        {
+            "section": "Payroll",
+            "action_kind": "payroll sign-off",
+            "message": "A payroll run needs your sign-off.",
+            "url": "https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111",
+        },
         email_settings,
     )
 
-    assert message.subject == "Action needed in Ajo Co-op: Payroll"
-    assert message.text == (
-        "Action needed in Payroll; review it here: https://ajo.example.test/payroll/runs."
+    assert message.subject == "Action needed in Ajo Co-op: payroll sign-off"
+    assert (
+        message.text
+        == "A payroll run needs your sign-off. https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111"
     )
-    assert message.html == (
-        "<p>Action needed in Payroll; review it "
-        '<a href="https://ajo.example.test/payroll/runs">here</a>.</p>'
+    assert (
+        message.html
+        == '<p>A payroll run needs your sign-off. <a href="https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111">Open item</a>.</p>'
     )
 
 
@@ -112,7 +118,9 @@ async def test_worker_sends_through_brevo_and_preserves_outbox_outcomes(
         "decrypt_payload",
         lambda value: {
             "section": "Payroll",
-            "url": "https://ajo.example.test/payroll/runs",
+            "action_kind": "payroll sign-off",
+            "message": "A payroll run needs your sign-off.",
+            "url": "https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111",
         },
     )
     monkeypatch.setattr(notification_worker, "transaction", fake_transaction)
@@ -136,14 +144,9 @@ async def test_worker_sends_through_brevo_and_preserves_outbox_outcomes(
     assert body == {
         "sender": {"name": "Ajo Notifications", "email": "noreply@example.test"},
         "to": [{"email": "private.person@example.test"}],
-        "subject": "Action needed in Ajo Co-op: Payroll",
-        "textContent": (
-            "Action needed in Payroll; review it here: https://ajo.example.test/payroll/runs."
-        ),
-        "htmlContent": (
-            "<p>Action needed in Payroll; review it "
-            '<a href="https://ajo.example.test/payroll/runs">here</a>.</p>'
-        ),
+        "subject": "Action needed in Ajo Co-op: payroll sign-off",
+        "textContent": "A payroll run needs your sign-off. https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111",
+        "htmlContent": '<p>A payroll run needs your sign-off. <a href="https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111">Open item</a>.</p>',
     }
     status_writes = [
         params for statement, params in writes if "UPDATE notifications SET status" in statement

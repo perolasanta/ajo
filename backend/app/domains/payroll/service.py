@@ -21,7 +21,8 @@ from app.core.errors import Conflict, Forbidden, NotFound, UnprocessableEntity
 from app.core.time import payroll_period
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
-from app.domains.notifications.eligibility import PAYROLL_SIGN_OFF
+from app.domains.notifications import eligibility
+from app.domains.notifications.eligibility import PAYROLL_POSTING, PAYROLL_SIGN_OFF
 from app.domains.notifications.outbox import enqueue_action_notifications_safely
 from app.domains.repayments.service import post_repayment
 
@@ -214,14 +215,24 @@ async def create_run(
     return run_id
 
 
-async def list_runs(current: CurrentSession, page: int, page_size: int) -> dict[str, Any]:
+async def list_runs(
+    current: CurrentSession, page: int, page_size: int, action: str | None = None
+) -> dict[str, Any]:
     _role(current, {"officer", "treasurer", "admin"})
     cid = current.cooperative_id
     offset = (page - 1) * page_size
     async with transaction(cid) as session:
+        action_ids: tuple[uuid.UUID, ...] | None = None
+        if action == "needed":
+            by_section = await eligibility.get_action_items_for_user(
+                session, cid, current.user_id, set(current.roles)
+            )
+            action_ids = by_section.get("payroll", ())
         total = await session.scalar(
-            text("SELECT count(*) FROM payroll_runs WHERE cooperative_id=:cid"),
-            {"cid": cid},
+            text(
+                "SELECT count(*) FROM payroll_runs WHERE cooperative_id=:cid AND (CAST(:action_ids AS uuid[]) IS NULL OR id=ANY(CAST(:action_ids AS uuid[])))"
+            ),
+            {"cid": cid, "action_ids": list(action_ids) if action_ids is not None else None},
         )
         rows = (
             (
@@ -263,10 +274,16 @@ async def list_runs(current: CurrentSession, page: int, page_size: int) -> dict[
                             GROUP BY cooperative_id,run_id
                           ) c ON c.cooperative_id=r.cooperative_id AND c.run_id=r.id
                           WHERE r.cooperative_id=:cid
+                            AND (CAST(:action_ids AS uuid[]) IS NULL OR r.id=ANY(CAST(:action_ids AS uuid[])))
                           ORDER BY r.period_year DESC,r.period_month DESC,r.created_at DESC
                           LIMIT :limit OFFSET :offset"""
                     ),
-                    {"cid": cid, "limit": page_size, "offset": offset},
+                    {
+                        "cid": cid,
+                        "action_ids": list(action_ids) if action_ids is not None else None,
+                        "limit": page_size,
+                        "offset": offset,
+                    },
                 )
             )
             .mappings()
@@ -723,6 +740,7 @@ async def import_file(
             channel="api",
             ip=None,
         )
+        await enqueue_action_notifications_safely(session, cid, PAYROLL_POSTING, run_id)
     return report
 
 

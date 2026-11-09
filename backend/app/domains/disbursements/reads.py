@@ -10,6 +10,7 @@ from sqlalchemy import text
 from app.core.db import transaction
 from app.core.errors import Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications import eligibility
 
 READ_ROLES = {"admin", "treasurer", "auditor"}
 BANK_ROLES = {"admin", "treasurer"}
@@ -99,6 +100,7 @@ SELECT d.id,d.loan_id,a.id AS application_id,m.member_no,m.full_name,d.amount_ko
    AND (CAST(:status AS text) IS NULL OR d.status=CAST(:status AS text))
    AND (CAST(:search AS text) IS NULL OR m.full_name ILIKE ('%'||CAST(:search AS text)||'%')
         OR m.member_no ILIKE ('%'||CAST(:search AS text)||'%'))
+   AND (CAST(:action_ids AS uuid[]) IS NULL OR d.id=ANY(CAST(:action_ids AS uuid[])))
 """
 
 
@@ -121,10 +123,16 @@ def _ready_loan_row(item: Any) -> dict[str, Any]:
 
 
 async def list_disbursements(
-    current: CurrentSession, *, status: str | None, search: str | None, page: int, page_size: int
+    current: CurrentSession,
+    *,
+    status: str | None,
+    search: str | None,
+    page: int,
+    page_size: int,
+    action: str | None = None,
 ) -> dict[str, Any]:
     role = read_role(current)
-    params = {
+    params: dict[str, object] = {
         "cid": current.cooperative_id,
         "status": status.strip() if status else None,
         "search": search.strip() if search else None,
@@ -132,6 +140,13 @@ async def list_disbursements(
         "offset": (page - 1) * page_size,
     }
     async with transaction(current.cooperative_id) as session:
+        action_ids: tuple[uuid.UUID, ...] | None = None
+        if action == "needed":
+            by_section = await eligibility.get_action_items_for_user(
+                session, current.cooperative_id, current.user_id, set(current.roles)
+            )
+            action_ids = by_section.get("disbursements", ())
+        params["action_ids"] = list(action_ids) if action_ids is not None else None
         total = int(
             (
                 await session.execute(
@@ -141,8 +156,9 @@ async def list_disbursements(
           WHERE d.cooperative_id=:cid
             AND (CAST(:status AS text) IS NULL OR d.status=CAST(:status AS text))
             AND (CAST(:search AS text) IS NULL OR m.full_name ILIKE ('%'||CAST(:search AS text)||'%')
-              OR m.member_no ILIKE ('%'||CAST(:search AS text)||'%'))"""),
-                    {key: params[key] for key in ("cid", "status", "search")},
+              OR m.member_no ILIKE ('%'||CAST(:search AS text)||'%'))
+            AND (CAST(:action_ids AS uuid[]) IS NULL OR d.id=ANY(CAST(:action_ids AS uuid[])))"""),
+                    {key: params[key] for key in ("cid", "status", "search", "action_ids")},
                 )
             ).scalar_one()
         )
@@ -159,7 +175,13 @@ async def get_disbursement(current: CurrentSession, disbursement_id: uuid.UUID) 
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
             text(SELECT + " AND d.id=:id"),
-            {"cid": current.cooperative_id, "status": None, "search": None, "id": disbursement_id},
+            {
+                "cid": current.cooperative_id,
+                "status": None,
+                "search": None,
+                "id": disbursement_id,
+                "action_ids": None,
+            },
         )
         row = result.mappings().one_or_none()
     if row is None:

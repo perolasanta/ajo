@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   getDisbursements,
   getReadyDisbursementLoans,
+  getNotificationSummary,
   prepareDisbursement,
   request,
 } from "../api/client";
@@ -87,6 +88,8 @@ export default function DisbursementsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState(() => searchParams.get("status") ?? "all");
+  const action = searchParams.get("action") === "needed" ? "needed" : undefined;
+  const userSelectedActionTab = useRef(false);
   const [page, setPage] = useState(1);
   const debouncedSearch = useDebouncedValue(search);
   const session = useQuery({
@@ -107,10 +110,14 @@ export default function DisbursementsPage() {
       navigate(`/disbursements/${result.disbursement_id}`);
     },
   });
+  const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
+  const roles = session.data?.roles ?? [];
+  const actionCount = (roles.includes("admin") ? (summary.data?.disbursements?.awaiting_authorization ?? 0) + (summary.data?.disbursements?.awaiting_confirmation ?? 0) : 0) + (roles.includes("treasurer") ? summary.data?.disbursements?.ready_to_record ?? 0 : 0);
+  useEffect(() => { if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) { const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next, { replace: true }); } }, [actionCount, searchParams, setSearchParams]);
   const disbursements = useQuery({
-    queryKey: ["disbursements", debouncedSearch, status, page],
+    queryKey: ["disbursements", debouncedSearch, status, action, page],
     queryFn: () =>
-      getDisbursements({ search: debouncedSearch || undefined, status, page, pageSize }),
+      getDisbursements({ search: debouncedSearch || undefined, status, action, page, pageSize }),
   });
   const listState = disbursementListState(disbursements);
   const statuses = useMemo(
@@ -123,7 +130,7 @@ export default function DisbursementsPage() {
     [disbursements.data, status],
   );
   const totalPages = Math.max(1, Math.ceil((disbursements.data?.total ?? 0) / pageSize));
-  useEffect(() => setPage(1), [debouncedSearch, status]);
+  useEffect(() => setPage(1), [debouncedSearch, status, action]);
   useEffect(() => setStatus(searchParams.get("status") ?? "all"), [searchParams]);
 
   function updateStatus(value: string) {
@@ -181,6 +188,7 @@ export default function DisbursementsPage() {
           )}
         </section>
       )}
+      <div className="mb-4 flex gap-2" role="tablist" aria-label="Disbursement list view"><Button role="tab" aria-selected={action === "needed"} variant={action === "needed" ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next); }}>Needs my action{actionCount ? ` (${actionCount})` : ""}</Button><Button role="tab" aria-selected={!action} variant={!action ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.delete("action"); setSearchParams(next); }}>All</Button></div>
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           aria-label="Search disbursements"
@@ -226,7 +234,7 @@ export default function DisbursementsPage() {
         <>
           <ResponsiveTable
             data={disbursements.data.items}
-            columns={columns}
+            columns={action ? [{ key: "action", header: "Action", role: "meta", render: () => <span className="font-medium text-amber-800">Needs my action</span> }, ...columns] : columns}
             getRowKey={(item) => item.id}
           />
           <div className="mt-4 flex items-center justify-between gap-3 text-sm">

@@ -243,8 +243,9 @@ async def list_runs(
     current: Annotated[CurrentSession, Depends(current_session)],
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
+    action: str | None = Query(default=None, pattern="^needed$"),
 ) -> dict[str, object]:
-    return await service.list_runs(current, page, page_size)
+    return await service.list_runs(current, page, page_size, action)
 
 
 @router.get("/payroll/runs/{run_id}", response_model=PayrollRunDetailResponse)
