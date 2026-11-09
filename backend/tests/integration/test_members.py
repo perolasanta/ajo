@@ -83,6 +83,7 @@ async def test_balance_derived_from_ledger_after_contribution_and_withdrawal(
         "savings_kobo": 7000,
         "shares_kobo": 0,
         "dues_paid_kobo": 0,
+        "active_loans_count": 0,
         "locked_kobo": 0,
         "available_kobo": 7000,
     }

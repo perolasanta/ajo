@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { request } from "../api/client";
+import {
+  PASSWORD_CHANGED_NOTICE,
+  PASSWORD_NOTICE_DURATION_MS,
+  passwordNoticeAfterEdit,
+} from "../passwordNotice.js";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
@@ -32,7 +37,8 @@ function formatDate(value: string): string {
 
 export default function AccountPage() {
   const client = useQueryClient();
-  const [passwordNotice, setPasswordNotice] = useState("");
+  const [passwordChangedAt, setPasswordChangedAt] = useState<number | null>(null);
+  const [passwordValidationError, setPasswordValidationError] = useState("");
   const profile = useQuery({
     queryKey: ["session"],
     queryFn: () => request<Profile>("/auth/me"),
@@ -56,7 +62,8 @@ export default function AccountPage() {
         body: JSON.stringify(body),
       }),
     onSuccess: async () => {
-      setPasswordNotice("Password changed. Other sessions have been signed out.");
+      setPasswordValidationError("");
+      setPasswordChangedAt(Date.now());
       await client.invalidateQueries({ queryKey: ["account-sessions"] });
     },
   });
@@ -84,6 +91,17 @@ export default function AccountPage() {
     },
   });
 
+  useEffect(() => {
+    if (passwordChangedAt === null) return;
+    const remaining = Math.max(0, passwordChangedAt + PASSWORD_NOTICE_DURATION_MS - Date.now());
+    const timeout = window.setTimeout(() => setPasswordChangedAt(null), remaining);
+    return () => window.clearTimeout(timeout);
+  }, [passwordChangedAt]);
+
+  function handlePasswordEdit() {
+    setPasswordChangedAt((shownAt) => passwordNoticeAfterEdit(shownAt, Date.now()));
+  }
+
   function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -92,10 +110,12 @@ export default function AccountPage() {
     const newPassword = String(values.get("new_password") ?? "");
     const confirmation = String(values.get("confirm_password") ?? "");
     if (newPassword !== confirmation) {
-      setPasswordNotice("The new passwords do not match.");
+      setPasswordValidationError("The new passwords do not match.");
+      setPasswordChangedAt(null);
       return;
     }
-    setPasswordNotice("");
+    setPasswordValidationError("");
+    setPasswordChangedAt(null);
     changePassword.mutate(
       { current_password: currentPassword, new_password: newPassword },
       { onSuccess: () => form.reset() },
@@ -177,6 +197,7 @@ export default function AccountPage() {
               type="password"
               autoComplete="current-password"
               maxLength={1024}
+              onChange={handlePasswordEdit}
             />
           </label>
           <label className="grid gap-1 text-sm font-medium">
@@ -188,6 +209,7 @@ export default function AccountPage() {
               autoComplete="new-password"
               minLength={12}
               maxLength={128}
+              onChange={handlePasswordEdit}
             />
           </label>
           <label className="grid gap-1 text-sm font-medium">
@@ -199,11 +221,17 @@ export default function AccountPage() {
               autoComplete="new-password"
               minLength={12}
               maxLength={128}
+              onChange={handlePasswordEdit}
             />
           </label>
-          {passwordNotice && (
+          {passwordChangedAt !== null && (
             <p role="status" className="text-sm text-ink">
-              {passwordNotice}
+              {PASSWORD_CHANGED_NOTICE}
+            </p>
+          )}
+          {passwordValidationError && (
+            <p role="alert" className="text-sm text-red-800">
+              {passwordValidationError}
             </p>
           )}
           {changePassword.isError && (
@@ -212,7 +240,9 @@ export default function AccountPage() {
               "status" in changePassword.error &&
               changePassword.error.status === 429
                 ? "Too many attempts. Please wait before trying again."
-                : "Unable to change password. Check your current password and password requirements."}
+                : changePassword.error instanceof Error
+                  ? changePassword.error.message
+                  : "Unable to change password. Check your current password and password requirements."}
             </p>
           )}
           <div>
