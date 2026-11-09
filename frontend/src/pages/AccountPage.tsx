@@ -240,7 +240,9 @@ export default function AccountPage() {
               "status" in changePassword.error &&
               changePassword.error.status === 429
                 ? "Too many attempts. Please wait before trying again."
-                : "Unable to change password. Check your current password and password requirements."}
+                : changePassword.error instanceof Error
+                  ? changePassword.error.message
+                  : "Unable to change password. Check your current password and password requirements."}
             </p>
           )}
           <div>
