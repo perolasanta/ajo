@@ -59,6 +59,14 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
         fields.setdefault("settings", {})
         if not isinstance(fields["settings"], dict):
             raise ValueError("Policy settings must be an object")
+        if "min_membership_months" in fields["settings"]:
+            months = fields["settings"]["min_membership_months"]
+            if isinstance(months, bool) or not isinstance(months, int) or not 0 <= months <= 600:
+                raise ValueError("min_membership_months must be an integer between 0 and 600")
+        if "guarantors_must_be_active" in fields["settings"] and not isinstance(
+            fields["settings"]["guarantors_must_be_active"], bool
+        ):
+            raise ValueError("guarantors_must_be_active must be a boolean")
         if "savings_backing_bps" in fields["settings"]:
             backing_bps = fields["settings"]["savings_backing_bps"]
             if (

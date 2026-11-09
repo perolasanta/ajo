@@ -29,7 +29,7 @@ test("loan detail snapshot displays readable terms and never exposes raw identif
 
   assert.deepEqual(fields, [
     { label: "Principal", value: "₦1,234.56" },
-    { label: "Annual rate", value: "12.50%" },
+    { label: "Annual rate", value: "12.50% a year (1.04% a month)" },
     { label: "Tenor", value: "6 months" },
     { label: "Product name", value: "Emergency loan" },
     { label: "Beneficiary name", value: "Aisha Bello" },

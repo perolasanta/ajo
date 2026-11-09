@@ -113,6 +113,8 @@ Keep delivery provider-neutral until procurement. Implement delivery behind a pr
 
 Revalidate loan amount, tenor, and rate against the applicable loan-product limits both when terms are edited and when the loan is approved. Reject a change or approval if any term is outside those limits.
 
+Loan eligibility also reads `cooperative_policy_versions.settings.min_membership_months` (integer 0–600; absent means no check) and `guarantors_must_be_active` (boolean; absent means true). Both checks run at submission and approval using WAT calendar dates; guarantors must be same-cooperative, unique, and not the borrower. The exact membership error is `Member has been a member for N months; at least M required.` Approved loans retain their stored terms and schedules when later policy versions change.
+
 ## 1c. Loan read access
 
 Enforce this matrix server-side with role-specific response schemas. Read endpoints are tenant-scoped through the existing transaction and RLS. New fields are omitted by default. No loan read endpoint returns phone, email, salary, staff number, full account numbers, consent tokens, token hashes, or OTP data.

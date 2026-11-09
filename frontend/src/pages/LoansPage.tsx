@@ -22,6 +22,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
 import { ResponsiveTable, type ResponsiveColumn } from "../ui/Table";
 import { canSubmitLoans } from "../loanPolicy";
+import { formatRate } from "../loanRate.mjs";
 
 const pageSize = 10;
 
@@ -336,7 +337,7 @@ export function NewLoanApplicationPage() {
               <option value="">Choose a product</option>
               {(products.data ?? []).map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.name} · {product.min_tenor_months}–{product.max_tenor_months} months
+                  {product.name} · {formatRate(product.annual_rate_bps)} · {product.min_tenor_months}–{product.max_tenor_months} months
                 </option>
               ))}
             </Select>
