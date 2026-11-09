@@ -76,7 +76,14 @@ async def test_enqueue_creates_channel_rows_only_for_linked_eligible_users(
     )
     assert all(
         row["payload"]
-        == repr({"section": "Payroll", "url": "https://ajo.example.test/payroll/runs"})
+        == repr(
+            {
+                "section": "Payroll",
+                "action_kind": "payroll sign-off",
+                "message": "A payroll run needs your sign-off.",
+                "url": f"https://ajo.example.test/payroll/runs/{entity}",
+            }
+        )
         for row in session.rows
     )
     assert "chat_id" not in " ".join(str(row) for row in session.rows)
@@ -159,7 +166,7 @@ async def test_enqueue_conflict_target_includes_channel(monkeypatch: pytest.Monk
     assert all("telegram" not in query or "telegram_links" in query for query in session.statements)
 
 
-def test_telegram_payload_is_section_plus_link_only() -> None:
+def test_telegram_payload_is_action_sentence_plus_direct_link() -> None:
     claim = ClaimedNotification(
         uuid.uuid4(),
         uuid.uuid4(),
@@ -172,9 +179,17 @@ def test_telegram_payload_is_section_plus_link_only() -> None:
         1,
         uuid.uuid4(),
     )
-    payload = {"section": "Payroll", "url": "https://ajo.example.test/payroll/runs"}
+    payload = {
+        "section": "Payroll",
+        "action_kind": "payroll sign-off",
+        "message": "A payroll run needs your sign-off.",
+        "url": "https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111",
+    }
     message = _telegram_message(claim, payload)
-    assert message == "Payroll: https://ajo.example.test/payroll/runs"
+    assert (
+        message
+        == "A payroll run needs your sign-off. https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111"
+    )
     with pytest.raises(PermanentDeliveryError):
         _telegram_message(claim, {**payload, "amount": "₦5,000"})
 
@@ -236,7 +251,12 @@ async def test_worker_applies_telegram_permanent_and_retry_failures(
     monkeypatch.setattr(
         worker_outbox,
         "decrypt_payload",
-        lambda value: {"section": "Payroll", "url": "https://ajo.example.test/payroll/runs"},
+        lambda value: {
+            "section": "Payroll",
+            "action_kind": "payroll sign-off",
+            "message": "A payroll run needs your sign-off.",
+            "url": "https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111",
+        },
     )
 
     async def destination(*args: Any, **kwargs: Any) -> str:
@@ -340,7 +360,12 @@ async def test_disabled_telegram_row_is_dead_lettered(
     monkeypatch.setattr(
         worker_outbox,
         "decrypt_payload",
-        lambda value: {"section": "Payroll", "url": "https://ajo.example.test/payroll/runs"},
+        lambda value: {
+            "section": "Payroll",
+            "action_kind": "payroll sign-off",
+            "message": "A payroll run needs your sign-off.",
+            "url": "https://ajo.example.test/payroll/runs/11111111-1111-1111-1111-111111111111",
+        },
     )
     failures: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 

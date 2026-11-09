@@ -14,7 +14,11 @@ from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
 from app.domains.loans.service import _effective_policy, _eligibility, _load_application, _today_wat
-from app.domains.notifications.eligibility import DISBURSEMENT_AUTHORIZATION
+from app.domains.notifications.eligibility import (
+    DISBURSEMENT_AUTHORIZATION,
+    DISBURSEMENT_CONFIRMATION,
+    DISBURSEMENT_RECORD,
+)
 from app.domains.notifications.outbox import enqueue_action_notifications_safely
 
 
@@ -274,6 +278,9 @@ async def authorize(current: CurrentSession, disbursement_id: uuid.UUID, ip: str
             channel="api",
             ip=ip,
         )
+        await enqueue_action_notifications_safely(
+            session, cid, DISBURSEMENT_RECORD, disbursement_id
+        )
     return True
 
 
@@ -329,6 +336,9 @@ async def record_transfer(
             summary={"transfer_date": transfer_date.isoformat()},
             channel="api",
             ip=ip,
+        )
+        await enqueue_action_notifications_safely(
+            session, cid, DISBURSEMENT_CONFIRMATION, disbursement_id
         )
     return True
 

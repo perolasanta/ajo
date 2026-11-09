@@ -7,6 +7,7 @@ import {
   disbursementRoles,
   getRouteDecision,
   navigation,
+  navigationTarget,
   formatMenuBadge,
   menuButtonLabel,
   totalVisibleActionCount,
@@ -223,7 +224,7 @@ test("mobile menu total sums action counts across visible sections", () => {
       disbursements: { awaiting_authorization: 4, awaiting_confirmation: 5, ready_to_record: 6 },
       role_changes: { awaiting_approval: 7 },
       loans: { awaiting_decision: 8, disputed_or_paused: 9 },
-      members: { withdrawals_awaiting_approval: 1 },
+      withdrawal_requests: { awaiting_approval: 1 },
     },
     roles,
   );
@@ -231,7 +232,7 @@ test("mobile menu total sums action counts across visible sections", () => {
 });
 
 test("withdrawal action badges count only for treasurers", () => {
-  const summary = { members: { withdrawals_awaiting_approval: 3 } };
+  const summary = { withdrawal_requests: { awaiting_approval: 3 } };
   assert.equal(totalVisibleActionCount(visibleNavigation(["treasurer"]), summary, ["treasurer"]), 3);
   assert.equal(totalVisibleActionCount(visibleNavigation(["officer"]), summary, ["officer"]), 0);
 });
@@ -274,4 +275,23 @@ test("mobile menu excludes counts for hidden or non-actionable sections", () => 
     roles,
   );
   assert.equal(total, 0);
+});
+
+
+test("action badges open their filtered queue, not an unfiltered section", () => {
+  assert.equal(navigationTarget("Withdrawal requests", 1), "/withdrawal-requests?mine=needed");
+  assert.equal(navigationTarget("Payroll", 2), "/payroll?action=needed");
+  assert.equal(navigationTarget("Loans", 1), "/loans?action=needed");
+  assert.equal(navigationTarget("Members", 0), "/members");
+});
+
+
+test("action deep links remain behind the normal route permission checks", () => {
+  assert.deepEqual(getRouteDecision(["treasurer"], "/members/abc?withdrawal_request=req"), { allowed: true });
+  assert.deepEqual(getRouteDecision(["committee"], "/withdrawal-requests?request=req"), {
+    allowed: false,
+    redirectTo: DEFAULT_LANDING_PATH,
+    notice: ACCESS_DENIED_NOTICE,
+  });
+  assert.equal(getRouteDecision(["member"], "/loans/abc").allowed, false);
 });

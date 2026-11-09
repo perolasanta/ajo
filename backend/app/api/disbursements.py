@@ -143,12 +143,13 @@ async def list_disbursements(
     current: Annotated[CurrentSession, Depends(current_session)],
     status: str | None = Query(default=None, max_length=40),
     search: str | None = Query(default=None, max_length=200),
+    action: str | None = Query(default=None, pattern="^needed$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
 ) -> dict[str, object]:
     role = reads.read_role(current)
     result = await reads.list_disbursements(
-        current, status=status, search=search, page=page, page_size=page_size
+        current, status=status, search=search, page=page, page_size=page_size, action=action
     )
     return _list_projection(result, role)
 

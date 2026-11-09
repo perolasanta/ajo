@@ -211,24 +211,27 @@ async def _telegram_destination(claim: ClaimedNotification) -> str:
 
 
 def _telegram_message(claim: ClaimedNotification, payload: dict[str, Any]) -> str:
-    section, link = payload.get("section"), payload.get("url")
+    section, action_kind, message, link = (
+        payload.get(key) for key in ("section", "action_kind", "message", "url")
+    )
     parsed = urlsplit(link) if isinstance(link, str) else None
+    spec = ACTION_SPECS.get(claim.kind)
     if (
         claim.recipient_user_id is None
-        or set(payload) != {"section", "url"}
-        or not isinstance(section, str)
-        or claim.kind not in ACTION_SPECS
-        or section != ACTION_SPECS[claim.kind].section
+        or set(payload) != {"section", "action_kind", "message", "url"}
+        or spec is None
+        or section != spec.section_label
+        or action_kind != spec.action_kind
+        or message != spec.sentence
         or parsed is None
         or parsed.scheme != "https"
         or not parsed.netloc
         or parsed.username is not None
         or parsed.password is not None
-        or parsed.query
         or parsed.fragment
     ):
         raise PermanentDeliveryError("invalid_telegram_action_payload")
-    return f"{section}: {link}"
+    return f"{message} {link}"
 
 
 def _masked_recipient_fields(channel: str, recipient: str | None) -> dict[str, str]:

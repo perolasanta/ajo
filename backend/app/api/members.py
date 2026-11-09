@@ -15,6 +15,7 @@ from app.core.db import transaction
 from app.core.errors import Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
 from app.domains.members import reads, service
+from app.domains.notifications import eligibility
 
 router = APIRouter(tags=["members"])
 
@@ -25,6 +26,7 @@ class _MemberResponse(BaseModel):
 
 class MemberListAdminOfficerResponse(_MemberResponse):
     id: uuid.UUID
+    has_pending_request: bool = False
     member_no: str
     full_name: str
     phone_e164: str | None
@@ -36,6 +38,7 @@ class MemberListAdminOfficerResponse(_MemberResponse):
 
 class MemberListTreasurerResponse(_MemberResponse):
     id: uuid.UUID
+    has_pending_request: bool = False
     member_no: str
     full_name: str
 
@@ -140,13 +143,24 @@ class MemberBankAccountTreasurerResponse(_MemberResponse):
     last4: str
 
 
-class MemberDetailAdminOfficerResponse(MemberListAdminOfficerResponse):
+class MemberDetailAdminOfficerResponse(_MemberResponse):
+    id: uuid.UUID
+    member_no: str
+    full_name: str
+    phone_e164: str | None
+    email: str | None
+    staff_no: str | None
     employer: str | None
+    status: str
+    joined_on: date | None
     bank_accounts: list[MemberBankAccountAdminOfficerResponse]
     balances: MemberBalancesResponse
 
 
-class MemberDetailTreasurerResponse(MemberListTreasurerResponse):
+class MemberDetailTreasurerResponse(_MemberResponse):
+    id: uuid.UUID
+    member_no: str
+    full_name: str
     bank_accounts: list[MemberBankAccountTreasurerResponse]
     balances: MemberBalancesResponse
 
@@ -166,7 +180,8 @@ MemberDetailResponse = (
     | MemberDetailAuditorResponse
 )
 
-FULL_MEMBER_LIST_QUERY = text("""SELECT id,member_no,full_name,phone_e164,email,staff_no,status,joined_on
+FULL_MEMBER_LIST_QUERY = text("""SELECT id,member_no,full_name,phone_e164,email,staff_no,status,joined_on,
+         EXISTS(SELECT 1 FROM withdrawal_requests wr WHERE wr.cooperative_id=members.cooperative_id AND wr.member_id=members.id AND wr.status='pending') AS has_pending_request
   FROM members
   WHERE cooperative_id=:cid
     AND (
@@ -175,25 +190,26 @@ FULL_MEMBER_LIST_QUERY = text("""SELECT id,member_no,full_name,phone_e164,email,
       OR member_no ILIKE (CAST(:search AS text) || '%')
       OR phone_e164 ILIKE (CAST(:search AS text) || '%')
       OR staff_no ILIKE (CAST(:search AS text) || '%')
-    )
+    ) AND (NOT :has_pending_request OR EXISTS(SELECT 1 FROM withdrawal_requests wr WHERE wr.cooperative_id=members.cooperative_id AND wr.member_id=members.id AND wr.status='pending'))
   ORDER BY member_no""")
-RESTRICTED_MEMBER_LIST_QUERY = text("""SELECT id,member_no,full_name
+RESTRICTED_MEMBER_LIST_QUERY = text("""SELECT id,member_no,full_name,
+         EXISTS(SELECT 1 FROM withdrawal_requests wr WHERE wr.cooperative_id=members.cooperative_id AND wr.member_id=members.id AND wr.status='pending') AS has_pending_request
   FROM members
   WHERE cooperative_id=:cid
     AND (
       CAST(:search AS text) IS NULL
       OR full_name ILIKE (CAST(:search AS text) || '%')
       OR member_no ILIKE (CAST(:search AS text) || '%')
-    )
+    ) AND (NOT :has_pending_request OR EXISTS(SELECT 1 FROM withdrawal_requests wr WHERE wr.cooperative_id=members.cooperative_id AND wr.member_id=members.id AND wr.status='pending'))
   ORDER BY member_no""")
-AUDITOR_MEMBER_LIST_QUERY = text("""SELECT id,member_no,full_name,status,joined_on
+AUDITOR_MEMBER_LIST_QUERY = text("""SELECT id,member_no,full_name,status,joined_on,false AS has_pending_request
   FROM members
   WHERE cooperative_id=:cid
     AND (
       CAST(:search AS text) IS NULL
       OR full_name ILIKE (CAST(:search AS text) || '%')
       OR member_no ILIKE (CAST(:search AS text) || '%')
-    )
+    ) AND (NOT :has_pending_request OR EXISTS(SELECT 1 FROM withdrawal_requests wr WHERE wr.cooperative_id=members.cooperative_id AND wr.member_id=members.id AND wr.status='pending'))
   ORDER BY member_no""")
 MEMBER_LIST_QUERIES = {
     "admin": FULL_MEMBER_LIST_QUERY,
@@ -266,6 +282,27 @@ class MemberWithdrawalRequestPage(_MemberResponse):
     current_user_id: str
 
 
+class WithdrawalQueueItem(_MemberResponse):
+    id: uuid.UUID
+    member_id: uuid.UUID
+    member_name: str
+    member_no: str
+    amount_kobo: int
+    requester_name: str
+    requested_by: uuid.UUID
+    requested_at: datetime
+    status: str
+    reason: str
+    rejection_reason: str | None
+
+
+class WithdrawalQueuePage(_MemberResponse):
+    items: list[WithdrawalQueueItem]
+    page: int
+    page_size: int
+    total: int
+
+
 class ImportBody(BaseModel):
     csv_text: str
     confirm: bool = False
@@ -303,18 +340,89 @@ def _detail_response_model(role: str) -> Any:
 async def list_members(
     current: Annotated[CurrentSession, Depends(current_session)],
     search: Annotated[str | None, Query(max_length=100)] = None,
+    has_pending_request: bool = False,
 ) -> list[MemberListResponse]:
     role = _member_role(current)
+    if role not in {"admin", "officer", "treasurer"}:
+        has_pending_request = False
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
             MEMBER_LIST_QUERIES[role],
-            {"cid": current.cooperative_id, "search": search.strip() if search else None},
+            {
+                "cid": current.cooperative_id,
+                "search": search.strip() if search else None,
+                "has_pending_request": has_pending_request,
+            },
         )
         model = _list_response_model(role)
         return cast(
             list[MemberListResponse],
             [model.model_validate(dict(row)) for row in result.mappings()],
         )
+
+
+@router.get("/withdrawal-requests", response_model=WithdrawalQueuePage)
+async def list_withdrawal_requests(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    status: str | None = Query(default=None, max_length=20),
+    mine: str = Query(default="all", pattern="^(all|needed)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+) -> dict[str, Any]:
+    roles = set(current.roles)
+    if not roles.intersection({"admin", "officer", "treasurer"}):
+        raise Forbidden("This role cannot read withdrawal requests")
+    officer_only = "officer" in roles and "treasurer" not in roles and "admin" not in roles
+    requested_status = status.strip() if status else None
+    if officer_only and requested_status not in (None, "pending"):
+        return {"items": [], "page": page, "page_size": page_size, "total": 0}
+    action_ids: tuple[uuid.UUID, ...] | None = None
+    async with transaction(current.cooperative_id) as session:
+        if mine == "needed" and "treasurer" in roles:
+            items = await eligibility.get_action_items_for_user(
+                session, current.cooperative_id, current.user_id, roles
+            )
+            action_ids = items.get("withdrawal_requests", ())
+        elif mine == "needed":
+            action_ids = ()
+        query = text("""WITH filtered AS (
+          SELECT wr.id,wr.member_id,m.full_name AS member_name,m.member_no,wr.amount_kobo,
+                 wr.requested_by,coalesce(nullif(trim(u.full_name),''),'Unnamed user') AS requester_name,
+                 wr.created_at AS requested_at,wr.status,wr.reason,wr.rejection_reason
+          FROM withdrawal_requests wr
+          JOIN members m ON m.cooperative_id=wr.cooperative_id AND m.id=wr.member_id
+          JOIN users u ON u.cooperative_id=wr.cooperative_id AND u.id=wr.requested_by
+          WHERE wr.cooperative_id=:cid
+            AND (CAST(:status AS text) IS NULL OR wr.status=CAST(:status AS text))
+            AND (NOT :officer_only OR wr.status='pending')
+            AND (CAST(:action_ids AS uuid[]) IS NULL OR wr.id=ANY(CAST(:action_ids AS uuid[])))
+        ) SELECT *,count(*) OVER() AS total FROM filtered
+          ORDER BY requested_at DESC,id DESC LIMIT :limit OFFSET :offset""")
+        rows = (
+            (
+                await session.execute(
+                    query,
+                    {
+                        "cid": current.cooperative_id,
+                        "status": "pending"
+                        if officer_only and requested_status is None
+                        else requested_status,
+                        "officer_only": officer_only,
+                        "action_ids": list(action_ids) if action_ids is not None else None,
+                        "limit": page_size,
+                        "offset": (page - 1) * page_size,
+                    },
+                )
+            )
+            .mappings()
+            .all()
+        )
+    return {
+        "items": [dict(row) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": int(rows[0]["total"]) if rows else 0,
+    }
 
 
 @router.get(
@@ -431,7 +539,10 @@ async def member_withdrawals(
     member_id: uuid.UUID,
     current: Annotated[CurrentSession, Depends(current_session)],
 ) -> dict[str, Any]:
-    _member_role(current)
+    roles = set(current.roles)
+    if not roles.intersection({"admin", "officer", "treasurer"}):
+        raise Forbidden("This role cannot read withdrawal requests")
+    officer_only = "officer" in roles and "treasurer" not in roles and "admin" not in roles
     async with transaction(current.cooperative_id) as session:
         rows = await session.execute(
             text("""SELECT wr.id,wr.amount_kobo,wr.status,wr.created_at,
@@ -440,8 +551,14 @@ async def member_withdrawals(
           FROM withdrawal_requests wr JOIN users u
             ON u.cooperative_id=wr.cooperative_id AND u.id=wr.requested_by
           WHERE wr.cooperative_id=:cid AND wr.member_id=:mid
+            AND (NOT :officer_only OR wr.status='pending' OR wr.requested_by=:user_id)
           ORDER BY wr.created_at DESC,wr.id"""),
-            {"cid": current.cooperative_id, "mid": member_id},
+            {
+                "cid": current.cooperative_id,
+                "mid": member_id,
+                "officer_only": officer_only,
+                "user_id": current.user_id,
+            },
         )
         items = [dict(row) for row in rows.mappings().all()]
     return {"items": items, "current_user_id": str(current.user_id)}

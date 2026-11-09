@@ -29,7 +29,9 @@ Enforce these write permissions in the member service; API and UI visibility are
 | Approve a withdrawal request | Treasurer only |
 | Post the withdrawal ledger entry | Treasurer only, in the same operation as approval (not a separate stage) |
 
-Contribution records capture an effective date, reference/note, and payment method. Withdrawal requests capture a reason; a rejection requires a reason visible to the requester. Pending-withdrawal badges and notifications are available only to treasurers other than the requester, using the shared action-eligibility rules. Action notification messages contain only the section and public link, never member names or amounts.
+Contribution records capture an effective date, reference/note, and payment method. Withdrawal requests capture a reason; a rejection requires a reason visible to the requester. Pending-withdrawal badges and notifications are available only to treasurers other than the requester, using the shared action-eligibility rules. Withdrawal queues are readable by treasurer, officer, and admin; committee and auditor cannot access them. Officers may see pending requests but cannot approve or reject them; admins are read-only.
+
+Action queues, badges, list filters, and notifications use the shared eligibility rules and expose the same actionable entity IDs. Email and Telegram alerts use subject `Action needed in <APP_NAME>: <action kind>`, one plain sentence naming the action kind, and a direct item link. They contain no names, amounts, or member data. The link requires login and the normal page/API permission checks. Menu and dashboard badges link to the corresponding “Needs my action” list. Request posters and other ineligible participants are excluded.
 
 The person who requested a withdrawal can never approve or reject it, even when they hold multiple roles. Members cannot request withdrawals in the app yet. Do not add a separate posting stage now. Follow-up: withdrawal payout as a distinct step with a separate poster, possibly with committee approval.
 
@@ -79,7 +81,7 @@ A cooperative with only one active admin cannot use maker-checker role changes: 
 
 Audit and role-change actor labels for their authorized readers use `Full Name (email)`, falling back to email when a name is absent. Disbursement and payroll actor labels show only the full name; an existing account without a name is `Unnamed user`, and a missing account is `Unknown user`. These responses retain the stored actor IDs and never expose email to roles without existing email access. Audit actor names are joined at read time; hash-chained `audit_logs` rows are never rewritten.
 
-Menu action badges count only items the current user can act on in sections their existing roles can open: treasurers see payroll posting, disbursement recording, and disputed/paused manual repayments; admins see payroll sign-off (excluding the poster or legacy importer), disbursement authorization/confirmation, and eligible role approvals; committee users see loan decisions; multi-role users receive the union of their eligible counts, with self-actions excluded.
+Menu action badges count only entity IDs returned by the shared action eligibility rules in sections their existing roles can open: treasurers see payroll posting, disbursement recording, disputed/paused manual repayments, and withdrawal approvals; admins see payroll sign-off (excluding the poster or legacy importer), disbursement authorization/confirmation, and eligible role approvals; committee users see loan decisions; multi-role users receive the union of their eligible counts, with self-actions excluded.
 
 ## 3. Disputed or paused loans and repayments
 

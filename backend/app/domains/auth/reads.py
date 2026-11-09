@@ -11,6 +11,7 @@ from app.core.db import transaction
 from app.core.errors import Forbidden, NotFound
 from app.domains.auth.display_names import staff_actor_display_name
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications import eligibility
 
 ProposalStatus = Literal["all", "pending", "approved", "rejected", "cancelled", "expired"]
 
@@ -103,6 +104,7 @@ async def list_role_change_proposals(
     status: ProposalStatus = "pending",
     page: int = 1,
     page_size: int = 25,
+    action: str | None = None,
 ) -> dict[str, Any]:
     """Return role-proposal workflow details, never credentials or session data."""
     _require_admin(current)
@@ -111,6 +113,13 @@ async def list_role_change_proposals(
         "status": status,
     }
     async with transaction(current.cooperative_id) as session:
+        action_ids: tuple[UUID, ...] | None = None
+        if action == "needed":
+            by_section = await eligibility.get_action_items_for_user(
+                session, current.cooperative_id, current.user_id, set(current.roles)
+            )
+            action_ids = by_section.get("staff", ())
+        params["action_ids"] = list(action_ids) if action_ids is not None else None
         total = int(
             await session.scalar(
                 text(
@@ -121,6 +130,7 @@ async def list_role_change_proposals(
                        AND (:status = 'all' OR
                             CASE WHEN p.status = 'pending' AND p.expires_at <= now()
                                  THEN 'expired' ELSE p.status END = :status)
+                       AND (CAST(:action_ids AS uuid[]) IS NULL OR p.id=ANY(CAST(:action_ids AS uuid[])))
                     """
                 ),
                 params,
@@ -150,6 +160,7 @@ async def list_role_change_proposals(
                    AND (:status = 'all' OR
                         CASE WHEN p.status = 'pending' AND p.expires_at <= now()
                              THEN 'expired' ELSE p.status END = :status)
+                   AND (CAST(:action_ids AS uuid[]) IS NULL OR p.id=ANY(CAST(:action_ids AS uuid[])))
                  ORDER BY p.created_at DESC, p.id DESC
                  LIMIT :limit OFFSET :offset
                 """

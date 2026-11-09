@@ -8,6 +8,7 @@ export type MemberListItem = {
   staff_no?: string | null;
   status?: string;
   joined_on?: string | null;
+  has_pending_request?: boolean;
 };
 
 export type MemberBalances = {
@@ -76,6 +77,12 @@ export type MemberActivityItem = {
   entity_id: string | null;
   safe_summary: Record<string, string | number | null>;
 };
+export type WithdrawalQueueItem = {
+  id: string; member_id: string; member_name: string; member_no: string; amount_kobo: number;
+  requester_name: string; requested_by: string; requested_at: string; status: string; reason: string;
+  rejection_reason: string | null;
+};
+export type WithdrawalQueuePage = { items: WithdrawalQueueItem[]; page: number; page_size: number; total: number };
 export type MemberActivityPage = {
   items: MemberActivityItem[];
   page: number;
@@ -305,7 +312,7 @@ export type NotificationSummary = {
   };
   role_changes?: { awaiting_approval?: number };
   loans?: { awaiting_decision?: number; disputed_or_paused?: number };
-  members?: { withdrawals_awaiting_approval?: number };
+  withdrawal_requests?: { awaiting_approval?: number };
 };
 
 export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "auditor";

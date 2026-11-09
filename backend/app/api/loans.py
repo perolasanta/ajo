@@ -159,12 +159,13 @@ async def list_applications(
     current: Annotated[CurrentSession, Depends(current_session)],
     status: Annotated[str | None, Query(max_length=50)] = None,
     search: Annotated[str | None, Query(max_length=100)] = None,
+    action: Annotated[str | None, Query(pattern="^needed$")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 25,
 ) -> LoanApplicationListResponse:
     _loan_read_role(current)
     result = await reads.list_applications(
-        current, status=status, search=search, page=page, page_size=page_size
+        current, status=status, search=search, page=page, page_size=page_size, action=action
     )
     return LoanApplicationListResponse.model_validate(result)
 

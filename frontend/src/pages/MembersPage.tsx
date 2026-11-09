@@ -43,11 +43,12 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(0);
   const [dense, setDense] = useState(false);
+  const [pendingOnly, setPendingOnly] = useState(false);
   const debouncedSearch = useDebouncedValue(search);
   const members = useQuery({
-    queryKey: ["members", fakeMembers ? "design" : "live", debouncedSearch],
+    queryKey: ["members", fakeMembers ? "design" : "live", debouncedSearch, pendingOnly],
     queryFn: () =>
-      fakeMembers ? Promise.resolve(fakeMembers) : getMembers(debouncedSearch || undefined),
+      fakeMembers ? Promise.resolve(fakeMembers) : getMembers(debouncedSearch || undefined, pendingOnly),
   });
   const statuses = useMemo(
     () =>
@@ -64,10 +65,11 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
         .join(" ");
       return (
         (status === "all" || member.status === status) &&
+        (!pendingOnly || member.has_pending_request) &&
         (fakeMembers ? searchable.toLowerCase().includes(term) : true)
       );
     });
-  }, [debouncedSearch, fakeMembers, members.data, status]);
+  }, [debouncedSearch, fakeMembers, members.data, pendingOnly, status]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageMembers = filtered.slice(page * perPage, page * perPage + perPage);
   const visibleColumns = memberColumns.filter((column) => {
@@ -76,10 +78,11 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
     if (column.key === "phone")
       return pageMembers.some((member) => member.phone_e164 !== undefined);
     if (column.key === "status") return pageMembers.some((member) => member.status !== undefined);
+    if (column.key === "pending") return pageMembers.some((member) => member.has_pending_request !== undefined);
     return true;
   });
 
-  useEffect(() => setPage(0), [debouncedSearch, status]);
+  useEffect(() => setPage(0), [debouncedSearch, pendingOnly, status]);
   useEffect(() => setPage((current) => Math.min(current, totalPages - 1)), [totalPages]);
 
   return (
@@ -106,6 +109,7 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
             ))}
           </Select>
         )}
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={pendingOnly} onChange={(event) => setPendingOnly(event.target.checked)} />Has pending request</label>
         <div className="hidden md:block">
           <TableDensityToggle dense={dense} onChange={setDense} />
         </div>
@@ -123,6 +127,7 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
               onClick={() => {
                 setSearch("");
                 setStatus("all");
+                setPendingOnly(false);
               }}
             >
               Clear filters
@@ -130,6 +135,7 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
           }
         />
       )}
+      {pendingOnly && members.data && <p className="text-sm text-muted">Showing members with pending withdrawal requests.</p>}
       {pageMembers.length > 0 && (
         <>
           <ResponsiveTable
@@ -193,6 +199,12 @@ const memberColumns: ResponsiveColumn<MemberListItem>[] = [
     render: (member) => member.staff_no ?? "—",
   },
   { key: "phone", header: "Phone", role: "meta", render: (member) => member.phone_e164 ?? "—" },
+  {
+    key: "pending",
+    header: "Withdrawal request",
+    role: "badge",
+    render: (member) => member.has_pending_request ? <Badge status="pending">Pending request</Badge> : "—",
+  },
   {
     key: "status",
     header: "Status",

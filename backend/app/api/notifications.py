@@ -32,8 +32,8 @@ class LoanActionCounts(BaseModel):
     disputed_or_paused: int | None = None
 
 
-class MemberActionCounts(BaseModel):
-    withdrawals_awaiting_approval: int | None = None
+class WithdrawalRequestActionCounts(BaseModel):
+    awaiting_approval: int | None = None
 
 
 class NotificationSummaryResponse(BaseModel):
@@ -43,7 +43,7 @@ class NotificationSummaryResponse(BaseModel):
     disbursements: DisbursementActionCounts | None = None
     role_changes: RoleChangeActionCounts | None = None
     loans: LoanActionCounts | None = None
-    members: MemberActionCounts | None = None
+    withdrawal_requests: WithdrawalRequestActionCounts | None = None
 
 
 @router.get(

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Navigate } from "react-router-dom";
-import { ApiError, getDashboardSummary, request } from "../api/client";
+import { ApiError, getDashboardSummary, getNotificationSummary, request } from "../api/client";
 import { dashboardCards } from "../dashboardPolicy.mjs";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -47,8 +47,32 @@ export default function DashboardPage() {
     enabled: session.isSuccess,
     queryFn: getDashboardSummary,
   });
-  const countForCard = (card: DashboardCard) =>
-    dashboard.data?.[card.source]?.[card.status] ?? 0;
+  const actionSummary = useQuery({
+    queryKey: ["notification-summary"],
+    enabled: session.isSuccess,
+    queryFn: getNotificationSummary,
+  });
+  const countForCard = (card: DashboardCard) => {
+    if (card.actionType === "payroll")
+      return (roles.includes("treasurer")
+        ? actionSummary.data?.payroll?.awaiting_posting ?? 0
+        : 0) + (roles.includes("admin")
+        ? actionSummary.data?.payroll?.awaiting_sign_off ?? 0
+        : 0);
+    if (card.actionType === "withdrawals")
+      return actionSummary.data?.withdrawal_requests?.awaiting_approval ?? 0;
+    if (card.actionType === "role_changes")
+      return actionSummary.data?.role_changes?.awaiting_approval ?? 0;
+    if (card.actionType === "disbursements")
+      return (actionSummary.data?.disbursements?.awaiting_authorization ?? 0) +
+        (actionSummary.data?.disbursements?.awaiting_confirmation ?? 0) +
+        (actionSummary.data?.disbursements?.ready_to_record ?? 0);
+    if (card.actionType === "loans")
+      return (actionSummary.data?.loans?.awaiting_decision ?? 0) +
+        (actionSummary.data?.loans?.disputed_or_paused ?? 0);
+    if (card.source === "action") return 0;
+    return dashboard.data?.[card.source]?.[card.status] ?? 0;
+  };
 
   if (session.isPending) return <DashboardSkeleton />;
   if (session.isError || !session.data) return <Navigate to="/login" replace />;

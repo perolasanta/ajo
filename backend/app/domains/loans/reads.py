@@ -10,6 +10,7 @@ from sqlalchemy import text
 from app.core.db import transaction
 from app.core.errors import Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications import eligibility
 
 READ_ROLES = {"admin", "officer", "treasurer", "committee", "auditor"}
 BANK_ROLES = {"admin", "officer", "treasurer"}
@@ -52,6 +53,14 @@ APPLICATION_SELECT = """
     ) guarantees ON true
    WHERE a.cooperative_id=:cid
      AND (CAST(:status AS text) IS NULL OR a.status=CAST(:status AS text))
+     AND (CAST(:action_ids AS uuid[]) IS NULL OR a.id=ANY(CAST(:action_ids AS uuid[]))
+          OR EXISTS (SELECT 1 FROM loans action_loan WHERE action_loan.cooperative_id=a.cooperative_id
+                     AND action_loan.application_id=a.id AND action_loan.id=ANY(CAST(:action_ids AS uuid[]))))
+     AND (CAST(:id AS uuid) IS NULL OR a.id=CAST(:id AS uuid)
+          OR EXISTS (SELECT 1 FROM loans deep_link_loan
+                     WHERE deep_link_loan.cooperative_id=a.cooperative_id
+                       AND deep_link_loan.application_id=a.id
+                       AND deep_link_loan.id=CAST(:id AS uuid)))
      AND (CAST(:search AS text) IS NULL OR m.full_name ILIKE ('%' || CAST(:search AS text) || '%')
           OR m.member_no ILIKE ('%' || CAST(:search AS text) || '%'))
 """
@@ -62,6 +71,9 @@ APPLICATION_COUNT_QUERY = text("""
     JOIN members m ON m.cooperative_id=a.cooperative_id AND m.id=a.member_id
    WHERE a.cooperative_id=:cid
      AND (CAST(:status AS text) IS NULL OR a.status=CAST(:status AS text))
+     AND (CAST(:action_ids AS uuid[]) IS NULL OR a.id=ANY(CAST(:action_ids AS uuid[]))
+          OR EXISTS (SELECT 1 FROM loans action_loan WHERE action_loan.cooperative_id=a.cooperative_id
+                     AND action_loan.application_id=a.id AND action_loan.id=ANY(CAST(:action_ids AS uuid[]))))
      AND (CAST(:search AS text) IS NULL OR m.full_name ILIKE ('%' || CAST(:search AS text) || '%')
           OR m.member_no ILIKE ('%' || CAST(:search AS text) || '%'))
 """)
@@ -84,22 +96,31 @@ async def list_applications(
     search: str | None,
     page: int,
     page_size: int,
+    action: str | None = None,
 ) -> dict[str, Any]:
     read_role(current)
     offset = (page - 1) * page_size
-    params = {
-        "cid": current.cooperative_id,
-        "status": status.strip() if status else None,
-        "search": search.strip() if search else None,
-        "limit": page_size,
-        "offset": offset,
-    }
     async with transaction(current.cooperative_id) as session:
+        action_ids: tuple[uuid.UUID, ...] | None = None
+        if action == "needed":
+            by_section = await eligibility.get_action_items_for_user(
+                session, current.cooperative_id, current.user_id, set(current.roles)
+            )
+            action_ids = by_section.get("loans", ())
+        params = {
+            "cid": current.cooperative_id,
+            "status": status.strip() if status else None,
+            "search": search.strip() if search else None,
+            "limit": page_size,
+            "offset": offset,
+            "action_ids": list(action_ids) if action_ids is not None else None,
+            "id": None,
+        }
         total = int(
             (
                 await session.execute(
                     APPLICATION_COUNT_QUERY,
-                    {key: params[key] for key in ("cid", "status", "search")},
+                    {key: params[key] for key in ("cid", "status", "search", "action_ids")},
                 )
             ).scalar_one()
         )
@@ -112,11 +133,14 @@ async def get_application(current: CurrentSession, application_id: uuid.UUID) ->
     role = read_role(current)
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
-            text(
-                f"""{APPLICATION_SELECT}
-                AND a.id=:id"""
-            ),
-            {"cid": current.cooperative_id, "status": None, "search": None, "id": application_id},
+            text(APPLICATION_SELECT),
+            {
+                "cid": current.cooperative_id,
+                "status": None,
+                "search": None,
+                "action_ids": None,
+                "id": application_id,
+            },
         )
         row = result.mappings().one_or_none()
         if row is None:

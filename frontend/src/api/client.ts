@@ -11,6 +11,7 @@ import type {
   MemberStatementPage,
   MemberLoanPage,
   MemberActivityPage,
+  WithdrawalQueuePage,
   NotificationSummary,
   DashboardSummary,
   PayrollDryRunResponse,
@@ -135,8 +136,20 @@ async function unwrap<T>(result: { data?: T; response: Response }): Promise<T> {
   return result.data;
 }
 
-export async function getMembers(search?: string): Promise<MemberListItem[]> {
-  return unwrap(await api.GET("/members", { params: { query: search ? { search } : {} } }));
+export async function getMembers(search?: string, hasPendingRequest = false): Promise<MemberListItem[]> {
+  const query = new URLSearchParams();
+  if (search) query.set("search", search);
+  if (hasPendingRequest) query.set("has_pending_request", "true");
+  return request<MemberListItem[]>(`/members?${query.toString()}`);
+}
+
+export function getWithdrawalRequests(params: { status?: string; mine?: "all" | "needed"; page?: number; pageSize?: number } = {}): Promise<WithdrawalQueuePage> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.mine) query.set("mine", params.mine);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<WithdrawalQueuePage>(`/withdrawal-requests?${query.toString()}`);
 }
 
 export async function getMember(memberId: string): Promise<MemberDetail> {
@@ -184,11 +197,13 @@ export async function getLoanApplications(
     search?: string;
     page?: number;
     pageSize?: number;
+    action?: "needed";
   } = {},
 ): Promise<LoanApplicationPage> {
   const query = new URLSearchParams();
   if (params.status && params.status !== "all") query.set("status", params.status);
   if (params.search) query.set("search", params.search);
+  if (params.action) query.set("action", params.action);
   query.set("page", String(params.page ?? 1));
   query.set("page_size", String(params.pageSize ?? 10));
   return request<LoanApplicationPage>(`/loan-applications?${query.toString()}`);
@@ -261,11 +276,12 @@ export function decideLoanApplication(
 }
 
 export async function getDisbursements(
-  params: { status?: string; search?: string; page?: number; pageSize?: number } = {},
+  params: { status?: string; search?: string; page?: number; pageSize?: number; action?: "needed" } = {},
 ): Promise<DisbursementPage> {
   const query = new URLSearchParams();
   if (params.status && params.status !== "all") query.set("status", params.status);
   if (params.search) query.set("search", params.search);
+  if (params.action) query.set("action", params.action);
   query.set("page", String(params.page ?? 1));
   query.set("page_size", String(params.pageSize ?? 10));
   return request<DisbursementPage>(`/disbursements?${query.toString()}`);
@@ -276,15 +292,11 @@ export function getDisbursement(disbursementId: string): Promise<DisbursementRec
 }
 
 export async function getPayrollRuns(
-  params: { page?: number; pageSize?: number } = {},
+  params: { page?: number; pageSize?: number; action?: "needed" } = {},
 ): Promise<PayrollRunPage> {
-  return unwrap(
-    await api.GET("/payroll/runs", {
-      params: {
-        query: { page: params.page ?? 1, page_size: params.pageSize ?? 10 },
-      },
-    }),
-  );
+  const query = new URLSearchParams({page: String(params.page ?? 1), page_size: String(params.pageSize ?? 10)});
+  if (params.action) query.set("action", params.action);
+  return request<PayrollRunPage>(`/payroll/runs?${query.toString()}`);
 }
 
 export type PayrollProfile = {
@@ -437,6 +449,7 @@ export async function getRoleChangeProposals(
     status?: "all" | "pending" | "approved" | "rejected" | "cancelled" | "expired";
     page?: number;
     pageSize?: number;
+    action?: "needed";
   } = {},
 ): Promise<RoleChangeProposalPage> {
   const query = new URLSearchParams({
@@ -444,6 +457,7 @@ export async function getRoleChangeProposals(
     page: String(params.page ?? 1),
     page_size: String(params.pageSize ?? 25),
   });
+  if (params.action) query.set("action", params.action);
   return request<RoleChangeProposalPage>(`/role-change-proposals?${query.toString()}`);
 }
 

@@ -20,6 +20,11 @@ EVENT_ROLES = {
     "disbursement_authorization": "admin",
     "role_change_approval": "admin",
     "loan_disputed": "treasurer",
+    "payroll_posting": "treasurer",
+    "disbursement_record": "treasurer",
+    "disbursement_confirmation": "admin",
+    "loan_decision": "committee",
+    "withdrawal_approval": "treasurer",
 }
 
 
@@ -61,17 +66,24 @@ def test_role_add_target_is_excluded_from_approval_recipients() -> None:
 
 
 @pytest.mark.parametrize("event_type", EVENT_ROLES)
-def test_payload_has_only_section_and_public_section_link(event_type: str) -> None:
+def test_payload_has_generic_action_sentence_and_direct_item_link(event_type: str) -> None:
     settings = Settings(
         app_env="development",
         app_name="Ajo",
         public_base_url="https://ajo.example.test/base/",
     )
 
-    payload = notification_outbox.build_action_payload(event_type, settings)
+    entity_id = uuid.uuid4()
+    payload = notification_outbox.build_action_payload(
+        event_type,
+        settings,
+        entity_id=entity_id,
+        member_id=uuid.uuid4() if event_type == eligibility.WITHDRAWAL_APPROVAL else None,
+    )
 
-    assert set(payload) == {"section", "url"}
+    assert set(payload) == {"section", "action_kind", "message", "url"}
     assert payload["url"].startswith("https://ajo.example.test/")
+    assert str(entity_id) in payload["url"]
     serialized = json.dumps(payload)
     for forbidden in (
         "Ada Lovelace",
@@ -115,6 +127,7 @@ async def test_enqueue_is_deduplicated_per_recipient_event_entity(
         return "encrypted"
 
     monkeypatch.setattr(notification_outbox, "encrypt_payload", capture_payload)
+    member_id = uuid.uuid4()
 
     class FakeSession:
         def __init__(self) -> None:
@@ -130,6 +143,11 @@ async def test_enqueue_is_deduplicated_per_recipient_event_entity(
                 params["entity_id"],
             )
             self.rows.setdefault(key, params)
+
+        async def scalar(self, statement: Any, params: dict[str, Any]) -> uuid.UUID:
+            assert "SELECT MEMBER_ID FROM WITHDRAWAL_REQUESTS" in str(statement).upper()
+            assert params == {"cid": cooperative_id, "id": entity_id}
+            return member_id
 
     session = FakeSession()
     await notification_outbox.enqueue_action_notifications(
@@ -149,7 +167,7 @@ async def test_enqueue_is_deduplicated_per_recipient_event_entity(
         row["member_id"] is None and row["channel"] == "email" and row["template_version"] == "v1"
         for row in session.rows.values()
     )
-    assert all(set(payload) == {"section", "url"} for payload in payloads)
+    assert all(set(payload) == {"section", "action_kind", "message", "url"} for payload in payloads)
 
 
 async def test_enqueue_failure_is_swallowed_inside_savepoint(

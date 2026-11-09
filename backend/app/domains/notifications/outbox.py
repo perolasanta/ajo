@@ -1,5 +1,3 @@
-"""Encrypted notification outbox primitives and provider-neutral action enqueueing."""
-
 from __future__ import annotations
 
 import json
@@ -20,8 +18,7 @@ logger = logging.getLogger(__name__)
 
 _EMAIL_IN_MESSAGE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _UUID_IN_MESSAGE = re.compile(
-    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
-    re.IGNORECASE,
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
 )
 _PHONE_IN_MESSAGE = re.compile(r"(?<!\w)\+?\d[\d\s().-]{7,}\d(?!\w)")
 _CURRENCY_AMOUNT_IN_MESSAGE = re.compile(r"(?:[₦$€£]\s*\d[\d,]*(?:\.\d{1,2})?)")
@@ -86,7 +83,13 @@ def decrypt_payload(payload_encrypted: str) -> dict[str, Any]:
     return decoded
 
 
-def build_action_payload(event_type: str, settings: Settings) -> dict[str, str]:
+def build_action_payload(
+    event_type: str,
+    settings: Settings,
+    *,
+    entity_id: uuid.UUID | None = None,
+    member_id: uuid.UUID | None = None,
+) -> dict[str, str]:
     spec = eligibility.ACTION_SPECS[event_type]
     base = settings.public_base_url.rstrip("/")
     parsed = urlsplit(base)
@@ -101,7 +104,21 @@ def build_action_payload(event_type: str, settings: Settings) -> dict[str, str]:
         raise ValueError("PUBLIC_BASE_URL must be an absolute public URL")
     if settings.app_env != "development" and parsed.scheme != "https":
         raise ValueError("PUBLIC_BASE_URL must use HTTPS outside development")
-    return {"section": spec.section, "url": f"{base}{spec.path}"}
+    if event_type == eligibility.WITHDRAWAL_APPROVAL and entity_id and member_id is None:
+        raise ValueError("Withdrawal action links require a member ID")
+    path = (
+        spec.path.format(
+            id=str(entity_id), member_id=str(member_id) if member_id is not None else ""
+        )
+        if entity_id
+        else f"/{spec.section}"
+    )
+    return {
+        "section": spec.section_label,
+        "action_kind": spec.action_kind,
+        "message": spec.sentence,
+        "url": f"{base}{path}",
+    }
 
 
 async def enqueue_notification(
@@ -117,8 +134,8 @@ async def enqueue_notification(
     notification_id = uuid.uuid4()
     await session.execute(
         text("""INSERT INTO notifications
-          (id,cooperative_id,member_id,kind,channel,template_version,payload_encrypted)
-          VALUES(:id,:cid,:member,:kind,:channel,:template_version,:payload)"""),
+      (id,cooperative_id,member_id,kind,channel,template_version,payload_encrypted)
+      VALUES(:id,:cid,:member,:kind,:channel,:template_version,:payload)"""),
         {
             "id": notification_id,
             "cid": cooperative_id,
@@ -155,7 +172,20 @@ async def enqueue_action_notifications(
     settings = get_settings()
     if not settings.email_enabled and not settings.telegram_enabled:
         return
-    payload = encrypt_payload(build_action_payload(event_type, settings))
+    member_id: uuid.UUID | None = None
+    if event_type == eligibility.WITHDRAWAL_APPROVAL:
+        member_id = await session.scalar(
+            text(
+                "SELECT member_id FROM withdrawal_requests "
+                "WHERE cooperative_id=:cid AND id=:id AND status='pending'"
+            ),
+            {"cid": cooperative_id, "id": entity_id},
+        )
+        if member_id is None:
+            return
+    payload = encrypt_payload(
+        build_action_payload(event_type, settings, entity_id=entity_id, member_id=member_id)
+    )
     for recipient in recipients:
         channels: list[str] = []
         if settings.email_enabled:
@@ -170,10 +200,8 @@ async def enqueue_action_notifications(
         for channel in channels:
             await session.execute(
                 text("""INSERT INTO notifications
-              (id,cooperative_id,member_id,recipient_user_id,kind,entity_id,
-               channel,template_version,payload_encrypted)
-              VALUES(:id,:cid,:member_id,:recipient_user_id,:kind,:entity_id,
-                     :channel,:template_version,:payload)
+              (id,cooperative_id,member_id,recipient_user_id,kind,entity_id,channel,template_version,payload_encrypted)
+              VALUES(:id,:cid,:member_id,:recipient_user_id,:kind,:entity_id,:channel,:template_version,:payload)
               ON CONFLICT (cooperative_id,recipient_user_id,channel,kind,entity_id)
                 WHERE recipient_user_id IS NOT NULL DO NOTHING"""),
                 {
@@ -204,8 +232,7 @@ async def enqueue_action_notifications_safely(
         exception_class = type(exc).__name__
         exception_message = _safe_exception_message(exc)
         logger.error(
-            "action_notification_enqueue_failed "
-            "event_type=%s entity_id=%s exception_class=%s exception_message=%s",
+            "action_notification_enqueue_failed event_type=%s entity_id=%s exception_class=%s exception_message=%s",
             event_type,
             entity_id,
             exception_class,
