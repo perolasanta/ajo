@@ -12,6 +12,7 @@ import asyncpg
 import pytest
 from sqlalchemy import text
 
+from app.core.config import get_settings
 from app.core.db import asyncpg_dsn, dispose_engine, transaction
 from app.core.errors import Conflict, Forbidden
 from app.domains.auth.service import CurrentSession
@@ -667,8 +668,13 @@ async def test_notification_domain_queries_accept_null_optional_entity_filter(
 
 
 async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(
-    db: asyncpg.Connection, caplog: pytest.LogCaptureFixture
+    db: asyncpg.Connection, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "email_enabled", True)
+    monkeypatch.setattr(settings, "email_from_address", "test@example.test")
+    monkeypatch.setattr(settings, "email_from_name", "Ajo Test")
+    monkeypatch.setattr(settings, "brevo_api_key", "dummy-brevo-key")
     cid, users, _ = await setup_payroll_fixture(db, extra_admins=1)
     officer_id, treasurer_id, first_admin_id, second_admin_id = (
         users[0],
@@ -739,3 +745,31 @@ async def test_treasurer_post_queues_signoff_for_every_admin_and_updates_badges(
         (second_admin_id, "payroll_sign_off", run_id, "email", "pending"),
     }
     assert treasurer_id not in {row["recipient_user_id"] for row in rows}
+
+
+async def test_treasurer_post_succeeds_without_queued_actions_when_channels_disabled(
+    db: asyncpg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "email_enabled", False)
+    monkeypatch.setattr(settings, "telegram_enabled", False)
+    cid, users, _ = await setup_payroll_fixture(db, extra_admins=1)
+    profile_id = await service.create_profile(
+        session(cid, users[3], "admin"),
+        {"staff_no_column": "Staff", "amount_column": "Amount"},
+    )
+    run_id = await service.create_run(session(cid, users[0], "officer"), profile_id, 2099, 1)
+    payroll_csv = await service.export_expected(session(cid, users[0], "officer"), run_id)
+    await service.import_file(
+        session(cid, users[2], "treasurer"), run_id, payroll_csv, "payroll.csv"
+    )
+
+    assert await service.post_run(session(cid, users[2], "treasurer"), run_id) == 1
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM notifications WHERE cooperative_id=$1 AND entity_id=$2",
+            cid,
+            run_id,
+        )
+        == 0
+    )
