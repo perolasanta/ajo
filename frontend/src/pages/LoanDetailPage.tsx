@@ -14,6 +14,7 @@ import { Table, TableCell, TableHead } from "../ui/Table";
 import type { LoanApplicationDetail } from "../api/schema";
 import { canDecideLoans, canSeeDestinationAccount } from "../loanPolicy";
 import { loanSnapshotPresentation } from "../loanSnapshotPresentation.mjs";
+import { formatRate } from "../loanRate.mjs";
 
 type Session = { roles: string[] };
 
@@ -93,7 +94,7 @@ function LoanDetail({ detail, roles }: { detail: LoanApplicationDetail; roles: s
             <dl className="mt-4 grid gap-4 sm:grid-cols-2">
               <Item label="Principal" value={<Money kobo={detail.principal_kobo} />} />
               <Item label="Tenor" value={`${detail.tenor_months} months`} />
-              <Item label="Annual rate" value={`${(detail.annual_rate_bps / 100).toFixed(2)}%`} />
+              <Item label="Rate" value={formatRate(detail.annual_rate_bps)} />
               <Item label="Status" value={<Badge>{detail.status}</Badge>} />
               <Item label="Submitted" value={<DateTime value={detail.submitted_at} />} />
               <Item label="Decision" value={detail.decision ?? "Pending"} />

@@ -18,6 +18,11 @@ from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
 from app.domains.consent.service import create_consent
 from app.domains.loans.calculations import build_schedule, deduction_capacity, max_loan_from_savings
+from app.domains.loans.rules import (
+    format_savings_cap_message,
+    validate_guarantor_ids,
+    validate_min_membership,
+)
 
 WAT = ZoneInfo("Africa/Lagos")
 ACTIVE_LOAN_STATUSES = ("approved", "disbursed", "repaying")
@@ -64,6 +69,64 @@ def _savings_backing_bps(settings: Any) -> int:
     if isinstance(bps, bool) or not isinstance(bps, int) or not 0 <= bps <= 10_000:
         raise Conflict("Cooperative savings_backing_bps setting must be between 0 and 10000")
     return bps
+
+
+def _min_membership_months(settings: Any) -> int:
+    value = (settings or {}).get("min_membership_months", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 600:
+        raise Conflict("Cooperative min_membership_months setting must be between 0 and 600")
+    return value
+
+
+def _guarantors_must_be_active(settings: Any) -> bool:
+    value = (settings or {}).get("guarantors_must_be_active", True)
+    if not isinstance(value, bool):
+        raise Conflict("Cooperative guarantors_must_be_active setting must be a boolean")
+    return value
+
+
+async def _validate_membership_and_guarantors(
+    session: Any,
+    cooperative_id: uuid.UUID,
+    application_date: date,
+    policy: Any,
+    borrower_id: uuid.UUID,
+    guarantor_ids: list[uuid.UUID],
+) -> None:
+    borrower = (
+        (
+            await session.execute(
+                text("SELECT joined_on FROM members WHERE cooperative_id=:cid AND id=:id"),
+                {"cid": cooperative_id, "id": borrower_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if borrower is None:
+        raise NotFound("Borrower member not found")
+    try:
+        validate_min_membership(
+            borrower["joined_on"], application_date, _min_membership_months(policy["settings"])
+        )
+    except ValueError as exc:
+        raise Conflict(str(exc)) from exc
+    ids = [str(item) for item in guarantor_ids]
+    members = {}
+    if guarantor_ids:
+        rows = (
+            await session.execute(
+                text("SELECT id,status FROM members WHERE cooperative_id=:cid AND id=ANY(:ids)"),
+                {"cid": cooperative_id, "ids": guarantor_ids},
+            )
+        ).mappings()
+        members = {str(row["id"]): ("same", row["status"]) for row in rows}
+    try:
+        validate_guarantor_ids(
+            str(borrower_id), ids, members, _guarantors_must_be_active(policy["settings"])
+        )
+    except ValueError as exc:
+        raise Conflict(str(exc)) from exc
 
 
 async def _load_application(
@@ -163,11 +226,12 @@ async def _eligibility(
         reasons.append("current_salary_missing_or_wrong_basis")
     if installment > capacity.capacity_kobo:
         reasons.append("instalment_exceeds_capacity")
-    if (
-        available_savings < int(policy["min_savings_kobo"])
-        or int(application["principal_kobo"]) > savings_limit
-    ):
+    if available_savings < int(policy["min_savings_kobo"]):
         reasons.append("savings_safeguard_failed")
+    elif int(application["principal_kobo"]) > savings_limit:
+        reasons.append(
+            format_savings_cap_message(savings_limit, int(policy["loan_to_savings_multiple_x100"]))
+        )
     guarantee_count = int(
         (
             await session.execute(
@@ -308,6 +372,14 @@ async def submit_application(
             raise Conflict("Loan amount is outside product limits")
         if not (product["min_tenor_months"] <= tenor_months <= product["max_tenor_months"]):
             raise Conflict("Loan tenor is outside product limits")
+        await _validate_membership_and_guarantors(
+            session,
+            cid,
+            today,
+            policy,
+            member_id,
+            [guarantor_id for guarantor_id, _ in guarantors or []],
+        )
         await session.execute(
             text("""INSERT INTO loan_applications(cooperative_id,id,member_id,beneficiary_member_id,
               product_id,policy_version_id,submitted_by,staff_submitted,destination_bank_account_id,
@@ -447,6 +519,22 @@ async def decide_application(
             )
         else:
             policy = await _effective_policy(session, cid, _today_wat())
+            guarantor_rows = await session.execute(
+                text(
+                    "SELECT guarantor_member_id FROM guarantees "
+                    "WHERE cooperative_id=:cid AND application_id=:app AND status<>'released' "
+                    "ORDER BY guarantor_member_id"
+                ),
+                {"cid": cid, "app": application_id},
+            )
+            await _validate_membership_and_guarantors(
+                session,
+                cid,
+                _today_wat(),
+                policy,
+                application["member_id"],
+                [row["guarantor_member_id"] for row in guarantor_rows.mappings()],
+            )
             product_terms = None
             if decision == "approved":
                 product_terms = await _validate_product_terms(
@@ -459,6 +547,16 @@ async def decide_application(
                 )
             eligibility = await _eligibility(session, application, policy)
             if decision == "approved" and not eligibility["eligible"]:
+                cap_reason = next(
+                    (
+                        reason
+                        for reason in eligibility["reasons"]
+                        if reason.startswith("Loan is above")
+                    ),
+                    None,
+                )
+                if cap_reason:
+                    raise Conflict(cap_reason)
                 raise Conflict("Application does not meet current eligibility rules")
             backing_bps: int | None = None
             backing_amount: int | None = None

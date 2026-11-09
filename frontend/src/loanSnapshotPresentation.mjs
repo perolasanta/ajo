@@ -15,9 +15,7 @@ function formatNaira(koboValue) {
 function formatRate(bpsValue) {
   const bps = integerValue(bpsValue);
   if (bps === null || bps < 0n) return "Unavailable";
-  const whole = bps / 100n;
-  const hundredths = (bps % 100n).toString().padStart(2, "0");
-  return `${whole}.${hundredths}%`;
+  return `${(Number(bps) / 100).toFixed(2)}% a year (${(Number(bps) / 1200).toFixed(2)}% a month)`;
 }
 
 function formatTenor(value) {

@@ -32,7 +32,15 @@ class PolicyBody(BaseModel):
 
     @field_validator("settings")
     @classmethod
-    def validate_savings_backing_bps(cls, settings: dict[str, Any]) -> dict[str, Any]:
+    def validate_loan_settings(cls, settings: dict[str, Any]) -> dict[str, Any]:
+        if "min_membership_months" in settings:
+            months = settings["min_membership_months"]
+            if isinstance(months, bool) or not isinstance(months, int) or not 0 <= months <= 600:
+                raise ValueError("min_membership_months must be an integer between 0 and 600")
+        if "guarantors_must_be_active" in settings and not isinstance(
+            settings["guarantors_must_be_active"], bool
+        ):
+            raise ValueError("guarantors_must_be_active must be a boolean")
         if "savings_backing_bps" not in settings:
             return settings
         bps = settings["savings_backing_bps"]
