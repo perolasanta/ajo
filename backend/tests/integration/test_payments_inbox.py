@@ -155,6 +155,38 @@ async def test_deposit_cannot_include_a_receipt_twice(db: asyncpg.Connection) ->
         )
 
 
+async def test_treasurer_cannot_confirm_deposit_with_any_own_receipt(
+    db: asyncpg.Connection,
+) -> None:
+    cid, officer, treasurer, member_id, _ = await payment_tenant(db)
+    receipts = []
+    for actor_id, role, key in (
+        (officer, "officer", "cash-mixed-officer"),
+        (treasurer, "treasurer", "cash-mixed-treasurer"),
+    ):
+        receipts.append(
+            await service.record_payment(
+                session(cid, actor_id, role),
+                member_id=member_id,
+                channel="cash",
+                purpose="savings",
+                amount_kobo=1000,
+                provider="manual",
+                provider_reference=None,
+                received_on=date.today(),
+                idempotency_key=key,
+            )
+        )
+    with pytest.raises(Conflict, match="differ from every receipt recorder"):
+        await service.record_cash_deposit(
+            session(cid, treasurer, "treasurer"),
+            slip_reference="SLIP-MIXED-RECORDER",
+            deposited_on=date.today(),
+            payment_ids=[receipt["id"] for receipt in receipts],
+            idempotency_key="deposit-mixed-recorder",
+        )
+
+
 async def test_cash_is_overdue_at_the_configured_calendar_day_limit(
     db: asyncpg.Connection,
 ) -> None:

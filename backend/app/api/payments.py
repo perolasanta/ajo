@@ -37,6 +37,12 @@ class RejectionBody(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class CashDepositBody(BaseModel):
+    slip_reference: str = Field(min_length=1, max_length=160)
+    deposited_on: date
+    payment_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
 def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
@@ -113,3 +119,20 @@ async def get_payment(
     current: Annotated[CurrentSession, Depends(current_session)],
 ) -> dict[str, object]:
     return await service.get_payment(current, payment_id)
+
+
+@router.post("/payments/cash-deposits", dependencies=[Depends(require_csrf)])
+async def record_cash_deposit(
+    body: CashDepositBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+    request: Request,
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+) -> dict[str, object]:
+    return await service.record_cash_deposit(
+        current,
+        slip_reference=body.slip_reference,
+        deposited_on=body.deposited_on,
+        payment_ids=body.payment_ids,
+        idempotency_key=_action_key(idempotency_key),
+        ip=_ip(request),
+    )

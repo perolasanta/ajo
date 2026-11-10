@@ -554,3 +554,208 @@ async def cash_on_hand_balance(cooperative_id: uuid.UUID) -> int:
             {"cid": cooperative_id},
         )
         return int(balance or 0)
+
+
+async def record_cash_deposit(
+    current: CurrentSession,
+    *,
+    slip_reference: str,
+    deposited_on: date,
+    payment_ids: list[uuid.UUID],
+    idempotency_key: str,
+    ip: str | None = None,
+) -> dict[str, Any]:
+    role = _role(current, {"treasurer"})
+    slip = slip_reference.strip()
+    if not slip or len(slip) > 160:
+        raise ValueError("Bank deposit slip reference must be 1–160 characters")
+    if not idempotency_key.strip():
+        raise ValueError("Idempotency key is required")
+    if not payment_ids:
+        raise ValueError("Select at least one cash receipt")
+    if len(payment_ids) != len(set(payment_ids)):
+        raise Conflict("A cash receipt cannot be included twice in one deposit")
+
+    cid = current.cooperative_id
+    ordered_ids = sorted(payment_ids, key=str)
+    payload = {
+        "operation": "cash_deposit_confirm",
+        "slip_reference": slip,
+        "deposited_on": deposited_on.isoformat(),
+        "payment_ids": [str(payment_id) for payment_id in ordered_ids],
+    }
+    async with transaction(cid) as session:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 33303))"),
+            {"key": f"{cid}:cash-deposit-key:{idempotency_key}"},
+        )
+        request_hash = await _request_hash(session, payload)
+        existing = (
+            (
+                await session.execute(
+                    text("""SELECT id,request_hash,amount_kobo,ledger_entry_id
+                    FROM cash_deposits WHERE cooperative_id=:cid AND idempotency_key=:key"""),
+                    {"cid": cid, "key": idempotency_key},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if existing is not None:
+            if not hmac.compare_digest(bytes(existing["request_hash"]), request_hash):
+                raise Conflict("Idempotency key was reused with a different payload")
+            return {
+                "id": str(existing["id"]),
+                "status": "banked",
+                "slip_reference": slip,
+                "deposited_on": deposited_on,
+                "amount_kobo": int(existing["amount_kobo"]),
+                "payment_ids": [str(payment_id) for payment_id in ordered_ids],
+                "ledger_entry_id": str(existing["ledger_entry_id"]),
+            }
+
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 33304))"),
+            {"key": f"{cid}:cash-deposit-slip:{slip}"},
+        )
+        duplicate_slip = await session.scalar(
+            text("SELECT id FROM cash_deposits WHERE cooperative_id=:cid AND slip_reference=:slip"),
+            {"cid": cid, "slip": slip},
+        )
+        if duplicate_slip is not None:
+            raise Conflict("A deposit with this slip reference already exists")
+
+        rows = (
+            (
+                await session.execute(
+                    text("""SELECT id,recorded_by,received_on,amount_kobo,status
+                    FROM payments WHERE cooperative_id=:cid AND id=ANY(:ids)
+                    ORDER BY id FOR UPDATE"""),
+                    {"cid": cid, "ids": ordered_ids},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        if len(rows) != len(ordered_ids):
+            raise NotFound("One or more cash receipts were not found")
+        if any(row["status"] != "received" for row in rows):
+            raise Conflict("Only cash receipts awaiting deposit can be banked")
+        if any(row["recorded_by"] == current.user_id for row in rows):
+            raise Conflict(
+                "The treasurer confirming a deposit must differ from every receipt recorder"
+            )
+        if any(row["received_on"] > deposited_on for row in rows):
+            raise Conflict("Deposit date cannot be earlier than a cash receipt date")
+        amount_kobo = sum(int(row["amount_kobo"]) for row in rows)
+        if amount_kobo <= 0:
+            raise Conflict("Cash deposit amount must be greater than zero")
+        cash_balance = await session.scalar(
+            text("""SELECT coalesce(sum(lines.debit_kobo-lines.credit_kobo),0)::bigint
+                FROM journal_lines lines JOIN accounts accounts
+                  ON accounts.cooperative_id=lines.cooperative_id
+                 AND accounts.id=lines.account_id
+                WHERE lines.cooperative_id=:cid AND accounts.code='cash_on_hand'"""),
+            {"cid": cid},
+        )
+        if int(cash_balance or 0) < amount_kobo:
+            raise Conflict("Selected receipts exceed the cash-on-hand ledger balance")
+
+        account_rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT code,id FROM accounts WHERE cooperative_id=:cid AND code=ANY(:codes)"
+                    ),
+                    {"cid": cid, "codes": ["bank", "cash_on_hand"]},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        account_ids = {row["code"]: row["id"] for row in account_rows}
+        if set(account_ids) != {"bank", "cash_on_hand"}:
+            raise Conflict("Required cash deposit ledger accounts are not configured")
+
+        deposit_id = uuid.uuid4()
+        lines = [
+            {
+                "account_id": str(account_ids["bank"]),
+                "debit_kobo": amount_kobo,
+                "credit_kobo": 0,
+            },
+            {
+                "account_id": str(account_ids["cash_on_hand"]),
+                "debit_kobo": 0,
+                "credit_kobo": amount_kobo,
+            },
+        ]
+        entry_id = await session.scalar(
+            text("""SELECT post_journal_entry_with_payload(
+                :cid,:date,'cash_deposit',:source,'Cash bank deposit',:actor,:key,
+                CAST(:lines AS jsonb),CAST(:payload AS jsonb),NULL)"""),
+            {
+                "cid": cid,
+                "date": deposited_on,
+                "source": deposit_id,
+                "actor": current.user_id,
+                "key": f"cash-deposit:{deposit_id}",
+                "lines": json.dumps(lines),
+                "payload": json.dumps(payload, separators=(",", ":")),
+            },
+        )
+        if entry_id is None:
+            raise RuntimeError("Cash deposit did not produce a ledger entry")
+        await session.execute(
+            text("""INSERT INTO cash_deposits
+                (cooperative_id,id,slip_reference,deposited_on,amount_kobo,confirmed_by,
+                 ledger_entry_id,idempotency_key,request_hash)
+                VALUES(:cid,:id,:slip,:date,:amount,:actor,:entry,:key,:hash)"""),
+            {
+                "cid": cid,
+                "id": deposit_id,
+                "slip": slip,
+                "date": deposited_on,
+                "amount": amount_kobo,
+                "actor": current.user_id,
+                "entry": entry_id,
+                "key": idempotency_key,
+                "hash": request_hash,
+            },
+        )
+        for payment_id in ordered_ids:
+            await session.execute(
+                text("""INSERT INTO cash_deposit_receipts
+                    (cooperative_id,deposit_id,payment_id) VALUES(:cid,:deposit,:payment)"""),
+                {"cid": cid, "deposit": deposit_id, "payment": payment_id},
+            )
+        await session.execute(
+            text("""UPDATE payments SET status='banked',confirmed_by=:actor,confirmed_at=now()
+                WHERE cooperative_id=:cid AND id=ANY(:ids)"""),
+            {"cid": cid, "actor": current.user_id, "ids": ordered_ids},
+        )
+        await append_audit(
+            session,
+            cooperative_id=cid,
+            actor_user_id=current.user_id,
+            action="cash_deposit_confirmed",
+            entity_type="cash_deposit",
+            entity_id=str(deposit_id),
+            role=role,
+            summary={
+                "amount_kobo": amount_kobo,
+                "receipt_count": len(ordered_ids),
+                "slip_reference": slip,
+            },
+            channel="api",
+            ip=ip,
+        )
+        return {
+            "id": str(deposit_id),
+            "status": "banked",
+            "slip_reference": slip,
+            "deposited_on": deposited_on,
+            "amount_kobo": amount_kobo,
+            "payment_ids": [str(payment_id) for payment_id in ordered_ids],
+            "ledger_entry_id": str(entry_id),
+        }
