@@ -17,3 +17,14 @@ Read docs/context.md before any task. It is the source of truth.
 ## Run mode (permanent)
 Never touch Docker. Never run pytest or make migrate; the owner runs them and pastes failures. Run only ruff and mypy. Do not explore the repo: open only the files named in the task. Final report: max 6 lines, then the exact commands the owner should run. No explanations of code.## Frontend format
 Write code in normal formatted style, never whole files on one line. Frontend uses Prettier (npm run format). Before saying a frontend task is done, the code must pass `npm run typecheck`.
+
+## Checkpoint rules (owner requirement: work can be interrupted at any time)
+
+1. First action of every task: create the task branch from the latest main, push it with an empty commit (`git commit --allow-empty -m "chore: start <task>"`), and open a DRAFT pull request whose description lists the task's numbered steps as a checklist.
+2. After each numbered step, or each unit of work that stands alone (a migration, a backend slice, a page, a set of tests), commit with the message "step N: <what>" and push immediately. Never end a turn with uncommitted work.
+3. After each push, tick the matching checklist item in the PR description (`gh pr edit --body-file`) and keep a one-line "STATE:" at the top.
+4. Failing tests written first may be committed with the prefix "test(red):", unfinished code with "wip:". Never present unfinished work as finished.
+5. If your budget is running low, stop at a clean point: commit and push everything and write in the PR description "STOPPED AT step N; remaining: ...; next action: ...".
+6. When resuming a task, read the PR description and `git log main..HEAD`, continue from the first unchecked step, and do not redo finished work.
+7. Leave the PR as a draft. The owner marks it ready and merges after running the tests.
+8. Task prompts may list test commands. Where they conflict with this file, this file prevails. Do not stop to ask.
