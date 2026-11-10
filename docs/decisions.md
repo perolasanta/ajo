@@ -83,6 +83,14 @@ Audit and role-change actor labels for their authorized readers use `Full Name (
 
 Menu action badges count only entity IDs returned by the shared action eligibility rules in sections their existing roles can open: treasurers see payroll posting, disbursement recording, disputed/paused manual repayments, and withdrawal approvals; admins see payroll sign-off (excluding the poster or legacy importer), disbursement authorization/confirmation, and eligible role approvals; committee users see loan decisions; multi-role users receive the union of their eligible counts, with self-actions excluded.
 
+## 2. Payments
+
+Manual member payments are recorded by an officer or treasurer and are tenant-scoped by the cooperative. A bank transfer waits for confirmation by a different officer or treasurer; the payment recorder can never confirm or reject their own transfer. Cash receipts are recorded by an officer or treasurer, and a different treasurer must confirm the bank deposit. The treasurer who confirms the deposit must differ from every receipt recorder in the batch; a deposit can include only cash receipts with status `received` on the same cooperative and cannot be dated before any included receipt. The cooperative policy's `cash_banking_days` sets the banking window (default two WAT calendar days); receipts older than that threshold are marked overdue in the needs-my-action queue and on the cash-deposit list.
+
+Payments use the shared action-eligibility rules so the menu badge, action queue, and notification recipients all expose the same entity IDs. The payment confirmation alert reads `A payment needs your confirmation`; the cash banking alert reads `Cash needs to be banked`; both messages omit member names, amounts, and other identifiers. The recorder can never be eligible as the confirmer for the same payment or receipt set, regardless of multi-role membership.
+
+**Follow-up work:** implement the dedicated Payments page and inbox; add Paystack sub-accounts and virtual account support; support member-initiated payments and exit fees once the product and payment routing model are approved.
+
 ## 3. Disputed or paused loans and repayments
 
 Loans that are disputed or marked deduction-paused must be excluded from automated payroll deductions and automated payroll posting. Repayment on such a loan is allowed only as a manual repayment posted by a treasurer, with a reason recorded in the audit/transaction record.
