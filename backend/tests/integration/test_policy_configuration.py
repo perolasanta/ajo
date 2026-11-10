@@ -161,6 +161,18 @@ async def test_approved_policy_is_immutable(db: asyncpg.Connection) -> None:
             )
 
 
+async def test_cash_banking_days_is_read_from_typed_policy_column(
+    db: asyncpg.Connection,
+) -> None:
+    cid, proposer, approver = await tenant(db)
+    async with db.transaction():
+        await db.execute("SELECT set_config('app.cooperative_id',$1,true)", str(cid))
+        await policy_row(db, cid, proposer, status="approved", approved_by=approver)
+    policy = await service.get_effective_policy(cid, date(2026, 6, 1))
+    assert policy["cash_banking_days"] == 2
+    assert "cash_banking_days" not in policy["settings"]
+
+
 async def test_effective_policy_uses_wat_calendar_boundaries(db: asyncpg.Connection) -> None:
     cid, proposer, approver = await tenant(db)
     async with db.transaction():

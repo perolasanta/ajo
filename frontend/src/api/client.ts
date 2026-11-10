@@ -238,6 +238,7 @@ export type SettingsPolicyVersion = {
   payroll_allocation_order: string[];
   confirmation_expiry_minutes: number;
   otp_validity_seconds: number;
+  cash_banking_days: number;
   settings: Record<string, unknown>;
   proposed_by?: string;
   approved_by?: string | null;

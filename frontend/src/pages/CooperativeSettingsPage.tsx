@@ -32,6 +32,8 @@ type FieldDef = {
   help: string;
   suffix?: string;
   type?: string;
+  min?: number;
+  max?: number;
   options?: string[];
 };
 
@@ -95,6 +97,14 @@ const policyFields: FieldDef[] = [
     suffix: "seconds",
   },
   {
+    key: "cash_banking_days",
+    label: "Cash banking window (days)",
+    help: "Cash receipts must be deposited within this many calendar days of receipt.",
+    type: "number",
+    min: 1,
+    max: 30,
+  },
+  {
     key: "savings_backing_percent",
     label: "Savings backing",
     help: "Share of the loan principal backed by savings.",
@@ -145,6 +155,7 @@ function policyValues(policy?: EffectivePolicy | null): Record<string, string> {
     payroll_allocation_order: (policy.payroll_allocation_order ?? []).join(", "),
     confirmation_expiry_minutes: String(policy.confirmation_expiry_minutes),
     otp_validity_seconds: String(policy.otp_validity_seconds),
+    cash_banking_days: String(policy.cash_banking_days),
     savings_backing_percent: (Number(settings.savings_backing_bps ?? 0) / 100).toFixed(2),
     min_membership_months: String(settings.min_membership_months ?? 0),
     guarantors_must_be_active: String(settings.guarantors_must_be_active ?? true),
@@ -179,6 +190,8 @@ function PolicyFields({
             <input
               className={input}
               type={field.type ?? "text"}
+              min={field.min}
+              max={field.max}
               inputMode={field.type ? undefined : "decimal"}
               value={values[field.key] ?? ""}
               onChange={(event) => onChange(field.key, event.target.value)}
@@ -275,6 +288,7 @@ export default function CooperativeSettingsPage() {
           .filter(Boolean),
         confirmation_expiry_minutes: Number(formValues.confirmation_expiry_minutes),
         otp_validity_seconds: Number(formValues.otp_validity_seconds),
+        cash_banking_days: Number(formValues.cash_banking_days),
         settings: {
           savings_backing_bps: annualPercentToBps(formValues.savings_backing_percent),
           min_membership_months: Number(formValues.min_membership_months),

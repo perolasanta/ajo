@@ -27,6 +27,7 @@ _POLICY_FIELDS = (
     "payroll_allocation_order",
     "confirmation_expiry_minutes",
     "otp_validity_seconds",
+    "cash_banking_days",
     "settings",
 )
 
@@ -57,6 +58,14 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
         )
         fields = {key: values[key] for key in _POLICY_FIELDS if key in values}
         fields.setdefault("settings", {})
+        fields.setdefault("cash_banking_days", 2)
+        cash_banking_days = fields["cash_banking_days"]
+        if (
+            isinstance(cash_banking_days, bool)
+            or not isinstance(cash_banking_days, int)
+            or not 1 <= cash_banking_days <= 30
+        ):
+            raise ValueError("cash_banking_days must be an integer between 1 and 30")
         if not isinstance(fields["settings"], dict):
             raise ValueError("Policy settings must be an object")
         if "min_membership_months" in fields["settings"]:
@@ -82,11 +91,13 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
               (id, cooperative_id, version, status, proposed_by, settings,
                effective_from, salary_basis, deduction_cap_bps, max_active_loans,
                guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
-               interest_method, payroll_allocation_order, confirmation_expiry_minutes, otp_validity_seconds)
+               interest_method, payroll_allocation_order, confirmation_expiry_minutes,
+               otp_validity_seconds, cash_banking_days)
             VALUES (:id, :cid, :version, 'proposed', :actor, CAST(:settings AS jsonb),
                :effective_from, :salary_basis, :deduction_cap_bps, :max_active_loans,
                :guarantors_required, :min_savings_kobo, :loan_to_savings_multiple_x100,
-               :interest_method, :payroll_allocation_order, :confirmation_expiry_minutes, :otp_validity_seconds)
+               :interest_method, :payroll_allocation_order, :confirmation_expiry_minutes,
+               :otp_validity_seconds, :cash_banking_days)
         """),
             {
                 "id": policy_id,
@@ -207,7 +218,7 @@ async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict
             SELECT id, version, effective_from, effective_to, salary_basis,
                    deduction_cap_bps, max_active_loans, guarantors_required,
                    min_savings_kobo, loan_to_savings_multiple_x100, interest_method, payroll_allocation_order,
-                   confirmation_expiry_minutes, otp_validity_seconds, settings
+                   confirmation_expiry_minutes, otp_validity_seconds, cash_banking_days, settings
               FROM cooperative_policy_versions
              WHERE cooperative_id = :cid AND status = 'approved'
                AND effective_from <= :on_date
@@ -234,7 +245,8 @@ async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
                        approved_by, salary_basis, deduction_cap_bps, max_active_loans,
                        guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
                        interest_method, payroll_allocation_order,
-                       confirmation_expiry_minutes, otp_validity_seconds, settings, created_at
+                       confirmation_expiry_minutes, otp_validity_seconds, cash_banking_days,
+                       settings, created_at
                   FROM cooperative_policy_versions
                  WHERE cooperative_id = :cid
                  ORDER BY version DESC

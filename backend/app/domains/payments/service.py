@@ -556,6 +556,36 @@ async def cash_on_hand_balance(cooperative_id: uuid.UUID) -> int:
         return int(balance or 0)
 
 
+async def list_cash_awaiting_deposit(current: CurrentSession) -> list[dict[str, Any]]:
+    _role(current, _PAYMENT_READ_ROLES)
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text("""SELECT p.id,p.member_id,p.receipt_no,p.purpose,p.amount_kobo,
+                p.provider_reference,p.received_on,p.recorded_at,p.recorded_by,
+                coalesce(policy.cash_banking_days,2) AS cash_banking_days,
+                (p.received_on + coalesce(policy.cash_banking_days,2) <
+                    (now() AT TIME ZONE 'Africa/Lagos')::date) AS overdue
+              FROM payments p
+              LEFT JOIN LATERAL (
+                SELECT v.cash_banking_days FROM cooperative_policy_versions v
+                 WHERE v.cooperative_id=p.cooperative_id AND v.status='approved'
+                   AND v.effective_from <= p.received_on
+                   AND (v.effective_to IS NULL OR p.received_on < v.effective_to)
+                 ORDER BY v.effective_from DESC LIMIT 1
+              ) policy ON true
+             WHERE p.cooperative_id=:cid AND p.channel='cash' AND p.status='received'
+             ORDER BY p.received_on,p.recorded_at,p.id"""),
+            {"cid": current.cooperative_id},
+        )
+        rows = []
+        for row in result.mappings().all():
+            item = dict(row)
+            for field in ("id", "member_id", "recorded_by"):
+                item[field] = str(item[field])
+            rows.append(item)
+        return rows
+
+
 async def record_cash_deposit(
     current: CurrentSession,
     *,

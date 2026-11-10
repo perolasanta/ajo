@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import asyncpg
 import pytest
@@ -16,6 +17,10 @@ from app.domains.payments import service
 from tests.integration.test_members import session, setup_tenant
 
 pytestmark = pytest.mark.db
+
+
+def today_wat() -> date:
+    return datetime.now(ZoneInfo("Africa/Lagos")).date()
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +59,7 @@ async def record_transfer(cooperative_id, actor_id, member_id, reference, key="t
         amount_kobo=12500,
         provider="manual",
         provider_reference=reference,
-        received_on=date.today(),
+        received_on=today_wat(),
         idempotency_key=key,
     )
 
@@ -111,7 +116,7 @@ async def test_cash_on_hand_equals_unbanked_receipts(db: asyncpg.Connection) -> 
         amount_kobo=24500,
         provider="manual",
         provider_reference=None,
-        received_on=date.today(),
+        received_on=today_wat(),
         idempotency_key="cash-unbanked-1",
     )
     assert received["status"] == "received"
@@ -119,7 +124,7 @@ async def test_cash_on_hand_equals_unbanked_receipts(db: asyncpg.Connection) -> 
     await service.record_cash_deposit(
         session(cid, treasurer, "treasurer"),
         slip_reference="SLIP-CASH-1",
-        deposited_on=date.today(),
+        deposited_on=today_wat(),
         payment_ids=[received["id"]],
         idempotency_key="deposit-cash-1",
     )
@@ -142,14 +147,14 @@ async def test_deposit_cannot_include_a_receipt_twice(db: asyncpg.Connection) ->
         amount_kobo=1000,
         provider="manual",
         provider_reference=None,
-        received_on=date.today(),
+        received_on=today_wat(),
         idempotency_key="cash-dup-set",
     )
     with pytest.raises(Conflict, match="twice|duplicate"):
         await service.record_cash_deposit(
             session(cid, treasurer, "treasurer"),
             slip_reference="SLIP-DUP-SET",
-            deposited_on=date.today(),
+            deposited_on=today_wat(),
             payment_ids=[received["id"], received["id"]],
             idempotency_key="deposit-dup-set",
         )
@@ -173,7 +178,7 @@ async def test_treasurer_cannot_confirm_deposit_with_any_own_receipt(
                 amount_kobo=1000,
                 provider="manual",
                 provider_reference=None,
-                received_on=date.today(),
+                received_on=today_wat(),
                 idempotency_key=key,
             )
         )
@@ -181,30 +186,34 @@ async def test_treasurer_cannot_confirm_deposit_with_any_own_receipt(
         await service.record_cash_deposit(
             session(cid, treasurer, "treasurer"),
             slip_reference="SLIP-MIXED-RECORDER",
-            deposited_on=date.today(),
+            deposited_on=today_wat(),
             payment_ids=[receipt["id"] for receipt in receipts],
             idempotency_key="deposit-mixed-recorder",
         )
 
 
-async def test_cash_is_overdue_at_the_configured_calendar_day_limit(
+async def test_cash_becomes_overdue_after_the_configured_calendar_day_limit(
     db: asyncpg.Connection,
 ) -> None:
     cid, officer, _, member_id, _ = await payment_tenant(db)
-    await service.record_payment(
-        session(cid, officer, "officer"),
-        member_id=member_id,
-        channel="cash",
-        purpose="savings",
-        amount_kobo=100,
-        provider="manual",
-        provider_reference=None,
-        received_on=date.today() - timedelta(days=2),
-        idempotency_key="cash-overdue-2d",
-    )
-    rows = await service.list_cash_awaiting_deposit(session(cid, officer, "officer"))
-    assert len(rows) == 1
-    assert rows[0]["overdue"] is True
+    current = session(cid, officer, "officer")
+    for days_ago, key in ((2, "cash-at-window"), (3, "cash-past-window")):
+        await service.record_payment(
+            current,
+            member_id=member_id,
+            channel="cash",
+            purpose="savings",
+            amount_kobo=100,
+            provider="manual",
+            provider_reference=None,
+            received_on=today_wat() - timedelta(days=days_ago),
+            idempotency_key=key,
+        )
+    rows = await service.list_cash_awaiting_deposit(current)
+    assert len(rows) == 2
+    overdue_by_receipt_date = {row["received_on"]: row["overdue"] for row in rows}
+    assert overdue_by_receipt_date[today_wat() - timedelta(days=2)] is False
+    assert overdue_by_receipt_date[today_wat() - timedelta(days=3)] is True
 
 
 async def test_member_balance_matches_cash_contribution_ledger(db: asyncpg.Connection) -> None:
@@ -217,7 +226,7 @@ async def test_member_balance_matches_cash_contribution_ledger(db: asyncpg.Conne
         amount_kobo=9876,
         provider="manual",
         provider_reference=None,
-        received_on=date.today(),
+        received_on=today_wat(),
         idempotency_key="cash-balance-1",
     )
     assert (await member_balances(cid, member_id))["savings_kobo"] == 9876
@@ -242,7 +251,7 @@ async def test_admin_is_read_only_for_payment_writes(db: asyncpg.Connection) -> 
             amount_kobo=100,
             provider="manual",
             provider_reference=None,
-            received_on=date.today(),
+            received_on=today_wat(),
             idempotency_key="admin-write-denied",
         )
 

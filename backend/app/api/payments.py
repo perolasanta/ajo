@@ -113,6 +113,13 @@ async def reject_payment(
     )
 
 
+@router.get("/payments/cash-awaiting-deposit")
+async def list_cash_awaiting_deposit(
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> list[dict[str, object]]:
+    return await service.list_cash_awaiting_deposit(current)
+
+
 @router.get("/payments/{payment_id}")
 async def get_payment(
     payment_id: uuid.UUID,
