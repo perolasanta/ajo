@@ -54,6 +54,7 @@ const PayrollDetailPage = lazy(() => import("./pages/PayrollDetailPage"));
 const AuditPage = lazy(() => import("./pages/AuditPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const StaffPage = lazy(() => import("./pages/StaffPage"));
+const CooperativeSettingsPage = lazy(() => import("./pages/CooperativeSettingsPage"));
 const WithdrawalRequestsPage = lazy(() => import("./pages/WithdrawalRequestsPage"));
 const AccountPage = lazy(() => import("./pages/AccountPage"));
 
@@ -411,6 +412,7 @@ export default function App() {
           <Route path="/payroll/runs/:runId" element={<PayrollDetailPage />} />
         </Route>
         <Route path="/audit" element={<AuditPage />} />
+        <Route path="/settings" element={<CooperativeSettingsPage />} />
         <Route path="/staff" element={<StaffPage />} />
         <Route path="/account" element={<AccountPage />} />
         <Route path="/notifications" element={<Navigate to="/account" replace />} />

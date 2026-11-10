@@ -136,14 +136,19 @@ async function unwrap<T>(result: { data?: T; response: Response }): Promise<T> {
   return result.data;
 }
 
-export async function getMembers(search?: string, hasPendingRequest = false): Promise<MemberListItem[]> {
+export async function getMembers(
+  search?: string,
+  hasPendingRequest = false,
+): Promise<MemberListItem[]> {
   const query = new URLSearchParams();
   if (search) query.set("search", search);
   if (hasPendingRequest) query.set("has_pending_request", "true");
   return request<MemberListItem[]>(`/members?${query.toString()}`);
 }
 
-export function getWithdrawalRequests(params: { status?: string; mine?: "all" | "needed"; page?: number; pageSize?: number } = {}): Promise<WithdrawalQueuePage> {
+export function getWithdrawalRequests(
+  params: { status?: string; mine?: "all" | "needed"; page?: number; pageSize?: number } = {},
+): Promise<WithdrawalQueuePage> {
   const query = new URLSearchParams();
   if (params.status) query.set("status", params.status);
   if (params.mine) query.set("mine", params.mine);
@@ -217,6 +222,83 @@ export function getLoanProducts(): Promise<LoanProduct[]> {
   return request<LoanProduct[]>("/loan-products");
 }
 
+export type SettingsPolicyVersion = {
+  id: string;
+  version: number;
+  status: string;
+  effective_from: string;
+  effective_to: string | null;
+  salary_basis: string;
+  deduction_cap_bps: number;
+  max_active_loans: number;
+  guarantors_required: number;
+  min_savings_kobo: number;
+  loan_to_savings_multiple_x100: number;
+  interest_method: string;
+  payroll_allocation_order: string[];
+  confirmation_expiry_minutes: number;
+  otp_validity_seconds: number;
+  settings: Record<string, unknown>;
+  proposed_by?: string;
+  approved_by?: string | null;
+};
+
+export type SettingsLoanProduct = LoanProduct & {
+  status: string;
+  supersedes_id: string | null;
+  approved_at: string | null;
+};
+
+export function getPolicyVersions(): Promise<SettingsPolicyVersion[]> {
+  return request<SettingsPolicyVersion[]>("/policies/versions");
+}
+
+export function getSettingsLoanProducts(): Promise<SettingsLoanProduct[]> {
+  return request<SettingsLoanProduct[]>("/settings/loan-products");
+}
+
+export function submitPolicyProposal(
+  body: Record<string, unknown>,
+): Promise<{ policy_version_id: string }> {
+  return request<{ policy_version_id: string }>("/policies", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify(body),
+  });
+}
+
+export function decidePolicy(
+  policyId: string,
+  action: "approve" | "supersede",
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const suffix = action === "approve" ? "approve" : "supersede";
+  return request(`/policies/${encodeURIComponent(policyId)}/${suffix}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify(body),
+  });
+}
+
+export function submitLoanProductProposal(
+  body: Record<string, unknown>,
+): Promise<{ loan_product_id: string }> {
+  return request<{ loan_product_id: string }>("/loan-products", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify(body),
+  });
+}
+
+export function approveSettingsLoanProduct(productId: string, reason: string): Promise<unknown> {
+  const date = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
+  return request(`/loan-products/${encodeURIComponent(productId)}/approve?on_date=${date}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function getDashboardSummary(): Promise<DashboardSummary> {
   return request<DashboardSummary>("/dashboard/summary");
 }
@@ -276,7 +358,13 @@ export function decideLoanApplication(
 }
 
 export async function getDisbursements(
-  params: { status?: string; search?: string; page?: number; pageSize?: number; action?: "needed" } = {},
+  params: {
+    status?: string;
+    search?: string;
+    page?: number;
+    pageSize?: number;
+    action?: "needed";
+  } = {},
 ): Promise<DisbursementPage> {
   const query = new URLSearchParams();
   if (params.status && params.status !== "all") query.set("status", params.status);
@@ -294,7 +382,10 @@ export function getDisbursement(disbursementId: string): Promise<DisbursementRec
 export async function getPayrollRuns(
   params: { page?: number; pageSize?: number; action?: "needed" } = {},
 ): Promise<PayrollRunPage> {
-  const query = new URLSearchParams({page: String(params.page ?? 1), page_size: String(params.pageSize ?? 10)});
+  const query = new URLSearchParams({
+    page: String(params.page ?? 1),
+    page_size: String(params.pageSize ?? 10),
+  });
   if (params.action) query.set("action", params.action);
   return request<PayrollRunPage>(`/payroll/runs?${query.toString()}`);
 }

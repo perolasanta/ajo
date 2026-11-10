@@ -194,3 +194,7 @@ Session listing and revocation are self-service and tenant-scoped: a user may se
 MFA enrollment continues to return the one-time recovery-code list from its existing API response. The current login UI does not display that response to the user. This decision does not change enrollment or recovery-code behavior.
 
 Payroll run detail displays the sign-off actor using the existing payroll name-only label rule: trimmed full name, `Unnamed user` for an existing unnamed user, and `Unknown user` when the user record is absent.
+
+## 14. Cooperative settings screens
+
+The staff Settings navigation is available only to admins and officers. Officers may propose policy and loan-product versions; only admins may approve or supersede, and existing service-layer actor-separation and immutability rules remain authoritative. Settings reads are tenant-scoped and restricted to admin/officer. The UI accepts naira, percentages, months and loan-to-savings multiples, converting them to integer kobo/basis points/x100 at the API boundary. Effective dates are entered and displayed as WAT calendar dates. Policy versions are not edited in place; loan product changes create a new version.
