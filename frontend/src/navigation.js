@@ -66,6 +66,10 @@ export function menuActionCount(name, summary, roles) {
   if (name === "Staff" && roles.includes("admin")) {
     count += summary?.role_changes?.awaiting_approval ?? 0;
   }
+  if (name === "Settings" && roles.includes("admin")) {
+    count += summary?.settings?.policy_approval ?? 0;
+    count += summary?.settings?.product_approval ?? 0;
+  }
   if (name === "Withdrawal requests" && roles.includes("treasurer")) {
     count += summary?.withdrawal_requests?.awaiting_approval ?? 0;
   }
@@ -83,6 +87,7 @@ export function navigationTarget(name, count) {
   if (name === "Disbursements") return "/disbursements?action=needed";
   if (name === "Payroll") return "/payroll?action=needed";
   if (name === "Staff") return "/staff?action=needed";
+  if (name === "Settings") return "/settings?tab=approval";
   return navigation.find((item) => item.name === name)?.path ?? "/dashboard";
 }
 

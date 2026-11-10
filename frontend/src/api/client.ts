@@ -241,12 +241,25 @@ export type SettingsPolicyVersion = {
   settings: Record<string, unknown>;
   proposed_by?: string;
   approved_by?: string | null;
+  proposed_by_name?: string;
+  proposed_by_email?: string | null;
+  approved_by_name?: string;
+  approved_by_email?: string | null;
+  created_at?: string;
 };
 
 export type SettingsLoanProduct = LoanProduct & {
   status: string;
   supersedes_id: string | null;
   approved_at: string | null;
+  created_at?: string;
+  effective_from?: string | null;
+  proposed_by?: string;
+  proposed_by_name?: string;
+  proposed_by_email?: string | null;
+  approved_by?: string | null;
+  approved_by_name?: string;
+  approved_by_email?: string | null;
 };
 
 export function getPolicyVersions(): Promise<SettingsPolicyVersion[]> {
@@ -280,6 +293,14 @@ export function decidePolicy(
   });
 }
 
+export function rejectPolicy(policyId: string, reason: string): Promise<unknown> {
+  return request(`/policies/${encodeURIComponent(policyId)}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function submitLoanProductProposal(
   body: Record<string, unknown>,
 ): Promise<{ loan_product_id: string }> {
@@ -293,6 +314,14 @@ export function submitLoanProductProposal(
 export function approveSettingsLoanProduct(productId: string, reason: string): Promise<unknown> {
   const date = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
   return request(`/loan-products/${encodeURIComponent(productId)}/approve?on_date=${date}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function rejectSettingsLoanProduct(productId: string, reason: string): Promise<unknown> {
+  return request(`/loan-products/${encodeURIComponent(productId)}/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({ reason }),

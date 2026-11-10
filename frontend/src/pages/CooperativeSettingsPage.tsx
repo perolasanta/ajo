@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   approveSettingsLoanProduct,
   decidePolicy,
   getPolicyVersions,
   getSettingsLoanProducts,
+  getNotificationSummary,
+  rejectPolicy,
+  rejectSettingsLoanProduct,
   request,
   submitLoanProductProposal,
   submitPolicyProposal,
@@ -23,6 +26,12 @@ import { Button } from "../ui/Button";
 import { EmptyState, Skeleton } from "../ui/Feedback";
 import { PageHeader } from "../ui/PageHeader";
 import { Select } from "../ui/Select";
+import {
+  buildPolicyReviewRows,
+  buildProductReviewRows,
+  canApproveSettings,
+  formatActorLabel as actorLabel,
+} from "../settingsReview.mjs";
 
 type Session = { user_id: string; roles: string[] };
 type EffectivePolicy = Omit<SettingsPolicyVersion, "status">;
@@ -203,7 +212,9 @@ export default function CooperativeSettingsPage() {
     retry: false,
   });
   const isAdmin = session.data?.roles.includes("admin") ?? false;
-  const [tab, setTab] = useState<"policy" | "products">("policy");
+  const [tab, setTab] = useState<"policy" | "products" | "approval">(() =>
+    new URLSearchParams(window.location.search).get("tab") === "approval" ? "approval" : "policy",
+  );
   const [values, setValues] = useState<Record<string, string>>({});
   const [product, setProduct] = useState({
     name: "",
@@ -250,6 +261,13 @@ export default function CooperativeSettingsPage() {
     ),
     retry: false,
   });
+  const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
+  const settingsActionCount =
+    (summary.data?.settings?.policy_approval ?? 0) +
+    (summary.data?.settings?.product_approval ?? 0);
+  useEffect(() => {
+    if (settingsActionCount > 0 && tab === "policy") setTab("approval");
+  }, [settingsActionCount, tab]);
   const currentValues = useMemo(() => policyValues(policy.data), [policy.data]);
   const formValues = Object.keys(values).length ? values : currentValues;
   const invalidate = () => {
@@ -336,6 +354,15 @@ export default function CooperativeSettingsPage() {
       approveSettingsLoanProduct(id, reason),
     onSuccess: invalidate,
   });
+  const rejectPolicyMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => rejectPolicy(id, reason),
+    onSuccess: invalidate,
+  });
+  const rejectProduct = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      rejectSettingsLoanProduct(id, reason),
+    onSuccess: invalidate,
+  });
 
   if (session.isPending) return <Skeleton className="h-60" />;
   if (!session.data || session.isError)
@@ -370,6 +397,14 @@ export default function CooperativeSettingsPage() {
         </Button>
         <Button
           role="tab"
+          aria-selected={tab === "approval"}
+          variant={tab === "approval" ? "primary" : "secondary"}
+          onClick={() => setTab("approval")}
+        >
+          Needs approval{settingsActionCount ? ` (${settingsActionCount})` : ""}
+        </Button>
+        <Button
+          role="tab"
           aria-selected={tab === "products"}
           variant={tab === "products" ? "primary" : "secondary"}
           onClick={() => setTab("products")}
@@ -377,6 +412,25 @@ export default function CooperativeSettingsPage() {
           Loan products
         </Button>
       </div>
+      {tab === "approval" && (
+        <SettingsApprovalTab
+          policies={policyQuery.data ?? []}
+          products={productsQuery.data ?? []}
+          effective={policy.data}
+          userId={session.data.user_id}
+          isAdmin={isAdmin}
+          pending={
+            policyAction.isPending ||
+            approveProduct.isPending ||
+            rejectPolicyMutation.isPending ||
+            rejectProduct.isPending
+          }
+          onApprovePolicy={(id, reason) => policyAction.mutate({ id, action: "approve", reason })}
+          onRejectPolicy={(id, reason) => rejectPolicyMutation.mutate({ id, reason })}
+          onApproveProduct={(id, reason) => approveProduct.mutate({ id, reason })}
+          onRejectProduct={(id, reason) => rejectProduct.mutate({ id, reason })}
+        />
+      )}
       {tab === "policy" && (
         <>
           <section className={`${card} mb-6`}>
@@ -514,7 +568,6 @@ export default function CooperativeSettingsPage() {
                 key={version.id}
                 item={version}
                 isAdmin={isAdmin}
-                actorId={session.data.user_id}
                 pending={policyAction.isPending}
                 onAction={(action, reason, end) =>
                   policyAction.mutate({ id: version.id, action, reason, effective_to: end })
@@ -739,21 +792,17 @@ export default function CooperativeSettingsPage() {
                       {(item.max_amount_kobo / 100).toLocaleString()} · {item.min_tenor_months}–
                       {item.max_tenor_months} months · {item.guarantors_required} guarantors
                     </p>
+                    <p className="mt-1 text-xs text-muted">
+                      Proposed by{" "}
+                      {actorLabel(item.proposed_by_name, item.proposed_by_email, isAdmin)} ·
+                      Approved by{" "}
+                      {actorLabel(item.approved_by_name, item.approved_by_email, isAdmin)}
+                    </p>
                     {item.approved_at && (
                       <p className="mt-1 text-xs text-muted">
                         Approved {displayWAT(item.approved_at)}
                       </p>
                     )}
-                    {item.status === "proposed" &&
-                      (isAdmin ? (
-                        <AdminProductApproval
-                          item={item}
-                          pending={approveProduct.isPending}
-                          onApprove={(reason) => approveProduct.mutate({ id: item.id, reason })}
-                        />
-                      ) : (
-                        <p className="mt-2 text-xs text-muted">Waiting for another admin.</p>
-                      ))}
                   </article>
                 ))}
               </div>
@@ -768,19 +817,16 @@ export default function CooperativeSettingsPage() {
 function PolicyHistoryItem({
   item,
   isAdmin,
-  actorId,
   pending,
   onAction,
 }: {
   item: SettingsPolicyVersion;
   isAdmin: boolean;
-  actorId: string;
   pending: boolean;
   onAction: (action: "approve" | "supersede", reason: string, end?: string) => void;
 }) {
   const [reason, setReason] = useState("");
   const [end, setEnd] = useState("");
-  const proposer = item.proposed_by === actorId;
   return (
     <article className="mt-3 rounded-control border border-border p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -791,38 +837,10 @@ function PolicyHistoryItem({
         </span>
       </div>
       <p className="mt-1 text-xs text-muted">
-        Proposer {item.proposed_by ?? "unknown"} · Approver {item.approved_by ?? "—"}
+        Proposed by {actorLabel(item.proposed_by_name, item.proposed_by_email, isAdmin)}
+        {item.created_at ? ` on ${displayWAT(item.created_at)}` : ""} · Approved by{" "}
+        {actorLabel(item.approved_by_name, item.approved_by_email, isAdmin)}
       </p>
-      {item.status === "proposed" &&
-        (isAdmin ? (
-          proposer ? (
-            <p className="mt-2 text-amber-800">
-              Waiting for another admin; the proposer cannot approve.
-            </p>
-          ) : (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <input
-                aria-label="Approval reason"
-                className={`${input} max-w-sm`}
-                placeholder="Decision reason"
-                required
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              />
-              <Button
-                disabled={!reason.trim() || pending}
-                onClick={() => {
-                  if (window.confirm("Approve this policy version?"))
-                    onAction("approve", reason.trim());
-                }}
-              >
-                Approve
-              </Button>
-            </div>
-          )
-        ) : (
-          <p className="mt-2 text-muted">Waiting for another admin.</p>
-        ))}
       {item.status === "approved" && isAdmin && (
         <div className="mt-3 flex flex-wrap gap-2">
           <input
@@ -856,33 +874,203 @@ function PolicyHistoryItem({
   );
 }
 
-function AdminProductApproval({
-  item,
+function SettingsApprovalTab({
+  policies,
+  products,
+  effective,
+  userId,
+  isAdmin,
+  pending,
+  onApprovePolicy,
+  onRejectPolicy,
+  onApproveProduct,
+  onRejectProduct,
+}: {
+  policies: SettingsPolicyVersion[];
+  products: SettingsLoanProduct[];
+  effective?: EffectivePolicy;
+  userId: string;
+  isAdmin: boolean;
+  pending: boolean;
+  onApprovePolicy: (id: string, reason: string) => void;
+  onRejectPolicy: (id: string, reason: string) => void;
+  onApproveProduct: (id: string, reason: string) => void;
+  onRejectProduct: (id: string, reason: string) => void;
+}) {
+  const pendingPolicies = policies.filter((item) => item.status === "proposed");
+  const pendingProducts = products.filter((item) => item.status === "proposed");
+  if (!pendingPolicies.length && !pendingProducts.length)
+    return (
+      <EmptyState
+        title="No settings changes need approval"
+        detail="Pending policy and loan-product proposals will appear here."
+      />
+    );
+  const proposedPolicy = pendingPolicies[0];
+  return (
+    <section className={card} aria-label="Settings proposals needing approval">
+      <h2 className="font-serif text-xl font-semibold">Needs approval</h2>
+      {proposedPolicy && (
+        <ReviewPanel
+          title={`Policy version ${proposedPolicy.version}`}
+          rows={buildPolicyReviewRows(
+            policies
+              .filter(
+                (item) =>
+                  item.status === "approved" &&
+                  item.effective_from <= proposedPolicy.effective_from,
+              )
+              .sort((left, right) => right.effective_from.localeCompare(left.effective_from))[0] ??
+              effective ??
+              {},
+            proposedPolicy,
+          )}
+          effectiveFrom={proposedPolicy.effective_from}
+          reason="Policy change"
+          proposer={actorLabel(
+            proposedPolicy.proposed_by_name,
+            proposedPolicy.proposed_by_email,
+            isAdmin,
+          )}
+          proposedAt={proposedPolicy.created_at}
+          isProposer={proposedPolicy.proposed_by === userId}
+          canApprove={canApproveSettings(
+            { roles: isAdmin ? ["admin"] : [], userId },
+            proposedPolicy.proposed_by ?? "",
+          )}
+          pending={pending}
+          onApprove={(reason) => onApprovePolicy(proposedPolicy.id, reason)}
+          onReject={(reason) => onRejectPolicy(proposedPolicy.id, reason)}
+        />
+      )}
+      {pendingProducts.map((product) => {
+        const superseded = products.find((item) => item.id === product.supersedes_id);
+        return (
+          <ReviewPanel
+            key={product.id}
+            title={`Loan product: ${product.name}`}
+            comparisonLabel="Changes from the version this product supersedes"
+            rows={buildProductReviewRows(superseded ?? {}, product)}
+            effectiveFrom={product.effective_from}
+            reason="Loan product change"
+            proposer={actorLabel(product.proposed_by_name, product.proposed_by_email, isAdmin)}
+            proposedAt={product.created_at}
+            isProposer={product.proposed_by === userId}
+            canApprove={canApproveSettings(
+              { roles: isAdmin ? ["admin"] : [], userId },
+              product.proposed_by ?? "",
+            )}
+            pending={pending}
+            onApprove={(reason) => onApproveProduct(product.id, reason)}
+            onReject={(reason) => onRejectProduct(product.id, reason)}
+          />
+        );
+      })}
+    </section>
+  );
+}
+
+function ReviewPanel({
+  title,
+  comparisonLabel = "Changes from the currently effective policy",
+  rows,
+  effectiveFrom,
+  reason,
+  proposer,
+  proposedAt,
+  isProposer,
+  canApprove,
   pending,
   onApprove,
+  onReject,
 }: {
-  item: SettingsLoanProduct;
+  title: string;
+  comparisonLabel?: string;
+  rows: { key: string; label: string; current: string; proposed: string; changed: boolean }[];
+  effectiveFrom?: string | null;
+  reason: string;
+  proposer: string;
+  proposedAt?: string;
+  isProposer: boolean;
+  canApprove: boolean;
   pending: boolean;
   onApprove: (reason: string) => void;
+  onReject: (reason: string) => void;
 }) {
-  const [reason, setReason] = useState("");
+  const [decisionReason, setDecisionReason] = useState("");
+  const summary = rows.map((row) => `${row.label}: ${row.current} → ${row.proposed}`).join("; ");
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      <input
-        aria-label={`Approval reason for ${item.name}`}
-        className={`${input} max-w-sm`}
-        placeholder="Approval reason"
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-      />
-      <Button
-        disabled={!reason.trim() || pending}
-        onClick={() => {
-          if (window.confirm(`Approve ${item.name}?`)) onApprove(reason.trim());
-        }}
-      >
-        Approve
-      </Button>
-    </div>
+    <article className="mt-4 rounded-control border-2 border-amber-300 bg-amber-50/50 p-4">
+      <h3 className="font-semibold">{title}</h3>
+      <p className="mt-1 text-sm">{comparisonLabel}</p>
+      <table className="mt-3 w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="p-2">Label</th>
+            <th className="p-2">Current value</th>
+            <th className="p-2">Proposed value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key} className={row.changed ? "bg-amber-100" : ""}>
+              <td className="p-2">{row.label}</td>
+              <td className="p-2">{row.current}</td>
+              <td className="p-2 font-medium">{row.proposed}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-3 text-sm">
+        <strong>Effective from:</strong> {effectiveFrom ? `${effectiveFrom} (WAT)` : "—"}
+      </p>
+      <p className="text-sm">
+        <strong>Reason:</strong> {reason}
+      </p>
+      <p className="text-sm">
+        <strong>Proposed by:</strong> {proposer}
+        {proposedAt ? ` · ${displayWAT(proposedAt)}` : ""}
+      </p>
+      {isProposer ? (
+        <p className="mt-3 text-sm text-amber-900">You proposed this; another admin must approve</p>
+      ) : canApprove ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <input
+            className={`${input} max-w-sm`}
+            aria-label="Decision reason"
+            value={decisionReason}
+            onChange={(event) => setDecisionReason(event.target.value)}
+            placeholder="Decision reason"
+          />
+          <Button
+            disabled={pending || !decisionReason.trim()}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Approve this settings change? ${summary}. Effective from ${effectiveFrom} (WAT).`,
+                )
+              )
+                onApprove(decisionReason.trim());
+            }}
+          >
+            Approve
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={pending}
+            onClick={() => {
+              const rejection = window.prompt("Reason for rejecting this settings change?");
+              if (rejection?.trim()) onReject(rejection.trim());
+            }}
+          >
+            Reject
+          </Button>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-muted">
+          Only another admin can approve or reject this change.
+        </p>
+      )}
+    </article>
   );
 }
