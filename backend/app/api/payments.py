@@ -18,14 +18,15 @@ router = APIRouter(tags=["payments"])
 
 class PaymentRecordBody(BaseModel):
     member_id: uuid.UUID
-    channel: Literal["bank_transfer"]
+    channel: Literal["cash", "bank_transfer"]
     purpose: Literal["savings", "shares", "dues", "loan_repayment"]
     loan_id: uuid.UUID | None = None
     amount_kobo: int = Field(gt=0)
-    provider_reference: str = Field(min_length=1, max_length=160)
+    provider_reference: str | None = Field(default=None, max_length=160)
     received_on: date
     fee_kobo: int = Field(default=0, ge=0)
     fee_bearer: Literal["member", "cooperative"] = "member"
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class DecisionBody(BaseModel):
@@ -66,6 +67,7 @@ async def record_payment(
         received_on=body.received_on,
         fee_kobo=body.fee_kobo,
         fee_bearer=body.fee_bearer,
+        reason=body.reason,
         idempotency_key=_action_key(idempotency_key),
         ip=_ip(request),
     )

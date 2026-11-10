@@ -70,6 +70,20 @@ async def _request_hash(session: AsyncSession, payload: dict[str, Any]) -> bytes
     return bytes(result)
 
 
+async def _next_receipt_no(session: AsyncSession, cooperative_id: uuid.UUID) -> int:
+    value = await session.scalar(
+        text("""INSERT INTO payment_receipt_counters (cooperative_id,last_receipt_no)
+            VALUES(:cid,1)
+            ON CONFLICT (cooperative_id) DO UPDATE
+              SET last_receipt_no=payment_receipt_counters.last_receipt_no+1
+            RETURNING last_receipt_no"""),
+        {"cid": cooperative_id},
+    )
+    if value is None:
+        raise RuntimeError("Could not allocate a payment receipt number")
+    return int(value)
+
+
 async def record_payment(
     current: CurrentSession,
     *,
@@ -84,11 +98,12 @@ async def record_payment(
     loan_id: uuid.UUID | None = None,
     fee_kobo: int = 0,
     fee_bearer: str = "member",
+    reason: str | None = None,
     ip: str | None = None,
 ) -> dict[str, Any]:
     actor_role = _role(current, _PAYMENT_WRITE_ROLES)
-    if channel != "bank_transfer":
-        raise Conflict("Cash payments are handled by the cash-receipt workflow")
+    if channel not in {"cash", "bank_transfer"}:
+        raise ValueError("Manual provider supports cash and bank transfers only")
     if provider != MANUAL_PROVIDER.provider_code:
         raise ValueError("Unknown manual payment provider")
     reference = MANUAL_PROVIDER.normalize_reference(channel, provider_reference)
@@ -114,6 +129,7 @@ async def record_payment(
         "loan_id": str(loan_id) if loan_id else None,
         "fee_kobo": fee_kobo,
         "fee_bearer": fee_bearer,
+        "reason": reason.strip() if reason and reason.strip() else None,
     }
     async with transaction(cid) as session:
         await session.execute(
@@ -164,24 +180,31 @@ async def record_payment(
                 loan["status"] == "disputed" or loan["deductions_paused"]
             ) and actor_role != "treasurer":
                 raise Forbidden("Only a treasurer may record a disputed or paused loan repayment")
-        duplicate = await session.scalar(
-            text("""SELECT id FROM payments WHERE cooperative_id=:cid
-                AND channel=:channel AND provider_reference=:reference"""),
-            {"cid": cid, "channel": channel, "reference": reference},
-        )
-        if duplicate is not None:
-            raise Conflict("A payment with this bank reference already exists")
+            if (loan["status"] == "disputed" or loan["deductions_paused"]) and not (
+                reason and reason.strip()
+            ):
+                raise Conflict("A reason is required for a disputed or paused loan repayment")
+        if reference is not None:
+            duplicate = await session.scalar(
+                text("""SELECT id FROM payments WHERE cooperative_id=:cid
+                    AND channel=:channel AND provider_reference=:reference"""),
+                {"cid": cid, "channel": channel, "reference": reference},
+            )
+            if duplicate is not None:
+                raise Conflict("A payment with this bank reference already exists")
 
         payment_id = uuid.uuid4()
+        receipt_no = await _next_receipt_no(session, cid) if channel == "cash" else None
+        status = "received" if channel == "cash" else "pending"
         try:
             async with session.begin_nested():
                 await session.execute(
                     text("""INSERT INTO payments (
                         cooperative_id,id,member_id,channel,provider,provider_reference,purpose,
                         loan_id,amount_kobo,fee_kobo,fee_bearer,status,recorded_by,received_on,
-                        idempotency_key,request_hash)
+                        receipt_no,idempotency_key,request_hash)
                         VALUES(:cid,:id,:member,:channel,:provider,:reference,:purpose,
-                        :loan,:amount,:fee,:fee_bearer,'pending',:actor,:received,:key,:hash)"""),
+                        :loan,:amount,:fee,:fee_bearer,:status,:actor,:received,:receipt,:key,:hash)"""),
                     {
                         "cid": cid,
                         "id": payment_id,
@@ -194,8 +217,10 @@ async def record_payment(
                         "amount": amount_kobo,
                         "fee": fee_kobo,
                         "fee_bearer": fee_bearer,
+                        "status": status,
                         "actor": current.user_id,
                         "received": received_on,
+                        "receipt": receipt_no,
                         "key": idempotency_key,
                         "hash": request_hash,
                     },
@@ -209,7 +234,7 @@ async def record_payment(
             session,
             cooperative_id=cid,
             actor_user_id=current.user_id,
-            action="payment_transfer_recorded",
+            action="payment_cash_received" if channel == "cash" else "payment_transfer_recorded",
             entity_type="payment",
             entity_id=str(payment_id),
             role=actor_role,
@@ -217,6 +242,29 @@ async def record_payment(
             channel="api",
             ip=ip,
         )
+        if channel == "cash":
+            ledger_entry_id = await _post_confirmed_payment(
+                session,
+                current,
+                {
+                    "id": payment_id,
+                    "member_id": member_id,
+                    "loan_id": loan_id,
+                    "purpose": purpose,
+                    "amount_kobo": amount_kobo,
+                    "provider_reference": reference or "cash",
+                    "received_on": received_on,
+                    "channel": channel,
+                },
+                reason=reason,
+                ip=ip,
+            )
+            await session.execute(
+                text(
+                    "UPDATE payments SET ledger_entry_id=:entry WHERE cooperative_id=:cid AND id=:id"
+                ),
+                {"cid": cid, "id": payment_id, "entry": ledger_entry_id},
+            )
         row = (
             (
                 await session.execute(
@@ -264,20 +312,23 @@ async def _post_confirmed_payment(
     ip: str | None,
 ) -> uuid.UUID:
     payment_id = payment["id"]
-    posting_key = f"payment:{payment_id}:confirm"
+    source = payment["channel"]
+    funding_account_code = "cash_on_hand" if source == "cash" else "bank"
+    posting_key = f"payment:{payment_id}:post"
     if payment["purpose"] == "loan_repayment":
         repayment_id = await post_repayment(
             current,
             loan_id=payment["loan_id"],
             member_id=payment["member_id"],
             amount_kobo=int(payment["amount_kobo"]),
-            source="bank_transfer",
+            source=source,
             received_on=payment["received_on"],
             reference=payment["provider_reference"],
             idempotency_key=posting_key,
             ip=ip,
             reason=reason,
             db_session=session,
+            funding_account_code=funding_account_code,
         )
         entry_id = await session.scalar(
             text("SELECT journal_entry_id FROM repayments WHERE cooperative_id=:cid AND id=:id"),
@@ -294,8 +345,9 @@ async def _post_confirmed_payment(
         posting_key,
         effective_date=payment["received_on"],
         reference=payment["provider_reference"],
-        payment_method="bank_transfer",
+        payment_method=source,
         db_session=session,
+        funding_account_code=funding_account_code,
     )
 
 
@@ -489,3 +541,16 @@ async def get_payment(current: CurrentSession, payment_id: uuid.UUID) -> dict[st
         if row is None:
             raise NotFound("Payment not found")
         return _payment_dict(row)
+
+
+async def cash_on_hand_balance(cooperative_id: uuid.UUID) -> int:
+    async with transaction(cooperative_id) as session:
+        balance = await session.scalar(
+            text("""SELECT coalesce(sum(lines.debit_kobo-lines.credit_kobo),0)::bigint
+                FROM journal_lines lines JOIN accounts accounts
+                  ON accounts.cooperative_id=lines.cooperative_id
+                 AND accounts.id=lines.account_id
+                WHERE lines.cooperative_id=:cid AND accounts.code='cash_on_hand'"""),
+            {"cid": cooperative_id},
+        )
+        return int(balance or 0)
