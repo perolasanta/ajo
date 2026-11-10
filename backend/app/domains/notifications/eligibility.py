@@ -18,6 +18,8 @@ ROLE_CHANGE_APPROVAL = "role_change_approval"
 LOAN_DECISION = "loan_decision"
 LOAN_DISPUTED = "loan_disputed"
 WITHDRAWAL_APPROVAL = "withdrawal_approval"
+POLICY_APPROVAL = "policy_approval"
+PRODUCT_APPROVAL = "product_approval"
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,22 @@ ACTION_SPECS = {
         "A withdrawal request needs your approval.",
         "/members/{member_id}?withdrawal_request={id}",
     ),
+    POLICY_APPROVAL: ActionSpec(
+        frozenset({"admin"}),
+        "settings",
+        "Settings",
+        "settings change approval",
+        "A settings change needs your approval",
+        "/settings?proposal={id}",
+    ),
+    PRODUCT_APPROVAL: ActionSpec(
+        frozenset({"admin"}),
+        "settings",
+        "Settings",
+        "settings change approval",
+        "A settings change needs your approval",
+        "/settings?proposal={id}",
+    ),
 }
 
 _CANDIDATE_SQL = {
@@ -175,6 +193,23 @@ _CANDIDATE_SQL = {
         FROM withdrawal_requests wr
         WHERE wr.cooperative_id=:cooperative_id AND wr.status='pending'
           AND (CAST(:entity_id AS uuid) IS NULL OR wr.id=CAST(:entity_id AS uuid))
+    """,
+    POLICY_APPROVAL: """
+        SELECT p.id AS entity_id, ARRAY[p.proposed_by]::uuid[] AS excluded_user_ids
+        FROM cooperative_policy_versions p
+        WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
+    """,
+    PRODUCT_APPROVAL: """
+        SELECT p.id AS entity_id,
+               coalesce((SELECT array_agg(al.actor_user_id) FROM audit_logs al
+                         WHERE al.cooperative_id=p.cooperative_id
+                           AND al.entity_type='loan_product' AND al.entity_id=p.id::text
+                           AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
+                 AS excluded_user_ids
+        FROM loan_products p
+        WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
     """,
 }
 
@@ -291,6 +326,17 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
     UNION ALL
     SELECT 'withdrawal_approval', wr.id, ARRAY[wr.requested_by]::uuid[]
       FROM withdrawal_requests wr WHERE wr.cooperative_id=:cooperative_id AND wr.status='pending'
+    UNION ALL
+    SELECT 'policy_approval', p.id, ARRAY[p.proposed_by]::uuid[]
+      FROM cooperative_policy_versions p
+     WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
+    UNION ALL
+    SELECT 'product_approval', p.id,
+           coalesce((SELECT array_agg(al.actor_user_id) FROM audit_logs al
+                     WHERE al.cooperative_id=p.cooperative_id
+                       AND al.entity_type='loan_product' AND al.entity_id=p.id::text
+                       AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
+      FROM loan_products p WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
 """)
 
 

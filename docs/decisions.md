@@ -83,6 +83,12 @@ Audit and role-change actor labels for their authorized readers use `Full Name (
 
 Menu action badges count only entity IDs returned by the shared action eligibility rules in sections their existing roles can open: treasurers see payroll posting, disbursement recording, disputed/paused manual repayments, and withdrawal approvals; admins see payroll sign-off (excluding the poster or legacy importer), disbursement authorization/confirmation, and eligible role approvals; committee users see loan decisions; multi-role users receive the union of their eligible counts, with self-actions excluded.
 
+### 2b. Settings approval review
+
+Pending cooperative policy and loan-product versions are reviewed in a dedicated Settings panel. The panel compares the proposal with the currently effective or superseded version, renders changed values in human units, and includes the WAT effective date, reason, proposer, and proposed time. Approve and reject controls exist only in this panel; rejection requires a reason and approval confirms the changed fields and effective date. A proposer sees an informational message and cannot approve or reject their own proposal.
+
+Policy and product approvals are admin-only actions through the shared action-eligibility function. Proposers are excluded from candidates, badges, queues, email, and Telegram notifications. Settings action kinds are `policy_approval` and `product_approval`; alerts use the generic text `A settings change needs your approval` and a direct proposal link, without names or amounts. Settings history joins users at read time: authorized admin viewers see `Full Name (email)`, other authorized viewers see `Full Name`, with `Unnamed user` and `Unknown user` fallbacks. Stored proposal and audit rows are not rewritten.
+
 ## 3. Disputed or paused loans and repayments
 
 Loans that are disputed or marked deduction-paused must be excluded from automated payroll deductions and automated payroll posting. Repayment on such a loan is allowed only as a manual repayment posted by a treasurer, with a reason recorded in the audit/transaction record.
