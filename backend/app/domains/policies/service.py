@@ -225,6 +225,43 @@ async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict
         return dict(row)
 
 
+async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
+    _require_role(current, {"officer", "admin"})
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text("""
+                SELECT id, version, status, effective_from, effective_to, proposed_by,
+                       approved_by, salary_basis, deduction_cap_bps, max_active_loans,
+                       guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
+                       interest_method, payroll_allocation_order,
+                       confirmation_expiry_minutes, otp_validity_seconds, settings, created_at
+                  FROM cooperative_policy_versions
+                 WHERE cooperative_id = :cid
+                 ORDER BY version DESC
+            """),
+            {"cid": current.cooperative_id},
+        )
+        return [dict(row) for row in result.mappings().all()]
+
+
+async def list_loan_products(current: CurrentSession) -> list[dict[str, Any]]:
+    _require_role(current, {"officer", "admin"})
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text("""
+                SELECT id, code, name, interest_method, annual_rate_bps,
+                       min_amount_kobo, max_amount_kobo, min_tenor_months,
+                       max_tenor_months, fee_bps, guarantors_required, status,
+                       supersedes_id, created_at, approved_at
+                  FROM loan_products
+                 WHERE cooperative_id = :cid
+                 ORDER BY code, created_at DESC, id
+            """),
+            {"cid": current.cooperative_id},
+        )
+        return [dict(row) for row in result.mappings().all()]
+
+
 async def supersede_policy(
     current: CurrentSession, policy_id: uuid.UUID, effective_to: date, reason: str
 ) -> None:

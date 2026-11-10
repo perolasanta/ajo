@@ -9,7 +9,11 @@ export const navigation = [
     roles: ["officer", "committee", "treasurer", "admin", "auditor"],
   },
   { name: "Members", path: "/members", roles: ["officer", "treasurer", "auditor", "admin"] },
-  { name: "Withdrawal requests", path: "/withdrawal-requests", roles: ["officer", "treasurer", "admin"] },
+  {
+    name: "Withdrawal requests",
+    path: "/withdrawal-requests",
+    roles: ["officer", "treasurer", "admin"],
+  },
   {
     name: "Loans",
     path: "/loans",
@@ -21,6 +25,7 @@ export const navigation = [
     path: "/payroll",
     roles: ["treasurer", "officer", "admin"],
   },
+  { name: "Settings", path: "/settings", roles: ["officer", "admin"] },
   { name: "Audit", path: "/audit", roles: ["admin", "auditor"] },
   { name: "Staff", path: "/staff", roles: ["admin"] },
 ];
@@ -71,7 +76,6 @@ export function menuActionCount(name, summary, roles) {
   return count;
 }
 
-
 export function navigationTarget(name, count) {
   if (count <= 0) return navigation.find((item) => item.name === name)?.path ?? "/dashboard";
   if (name === "Withdrawal requests") return "/withdrawal-requests?mine=needed";
@@ -106,6 +110,7 @@ const routePatterns = [
   ["/loans", /^\/loans(?:\/[^/]+)?$/],
   ["/disbursements", /^\/disbursements(?:\/[^/]+)?$/],
   ["/payroll", /^\/payroll(?:\/runs\/[^/]+)?$/],
+  ["/settings", /^\/settings$/],
   ["/audit", /^\/audit$/],
   ["/staff", /^\/staff$/],
 ];

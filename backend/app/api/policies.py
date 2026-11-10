@@ -77,6 +77,13 @@ class LoanProductBody(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+@router.get("/policies/versions")
+async def list_policy_versions(
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> list[dict[str, Any]]:
+    return await service.list_policy_versions(current)
+
+
 @router.post("/policies", dependencies=[Depends(require_csrf)])
 async def propose_policy(
     body: PolicyBody,
@@ -137,6 +144,13 @@ async def propose_loan_product(
     values = body.model_dump(exclude={"effective_on", "reason"})
     product_id = await service.create_loan_product(current, values, body.effective_on, body.reason)
     return {"loan_product_id": str(product_id)}
+
+
+@router.get("/settings/loan-products")
+async def list_loan_products(
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> list[dict[str, Any]]:
+    return await service.list_loan_products(current)
 
 
 @router.post("/loan-products/{product_id}/approve", dependencies=[Depends(require_csrf)])
