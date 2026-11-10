@@ -7,12 +7,12 @@ from datetime import date, timedelta
 
 import asyncpg
 import pytest
-from app.domains.payments import service
 
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.members.service import member_balances
 from app.domains.notifications.eligibility import ACTION_SPECS, CASH_DEPOSIT, PAYMENT_CONFIRMATION
+from app.domains.payments import service
 from tests.integration.test_members import session, setup_tenant
 
 pytestmark = pytest.mark.db
