@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 DEFAULT_CHART = (
     ("bank", "Cooperative bank", "asset"),
+    ("cash_on_hand", "Cash held by officers", "asset"),
     ("loans_receivable", "Loans receivable", "asset"),
     ("interest_receivable", "Interest receivable", "asset"),
     ("member_savings", "Withdrawable member savings", "liability"),

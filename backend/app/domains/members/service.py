@@ -7,10 +7,13 @@ import hmac
 import io
 import json
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import lock_cooperative_member, transaction
 from app.core.errors import Conflict, Forbidden, NotFound
@@ -35,6 +38,17 @@ def _financial_actor_role(current: CurrentSession, allowed_roles: tuple[str, ...
     raise Forbidden("Role is not permitted for this financial action")
 
 
+@asynccontextmanager
+async def _transaction_or_session(
+    cooperative_id: uuid.UUID, db_session: AsyncSession | None
+) -> AsyncIterator[AsyncSession]:
+    if db_session is None:
+        async with transaction(cooperative_id) as session:
+            yield session
+    else:
+        yield db_session
+
+
 async def record_contribution(
     current: CurrentSession,
     member_id: uuid.UUID,
@@ -45,13 +59,17 @@ async def record_contribution(
     effective_date: date | None = None,
     reference: str = "",
     payment_method: str = "cash",
+    db_session: AsyncSession | None = None,
+    funding_account_code: str = "bank",
 ) -> uuid.UUID:
     actor_role = _financial_actor_role(current, ("treasurer", "officer"))
     if kind not in {"savings", "shares", "dues"} or amount_kobo <= 0 or not payment_method.strip():
         raise ValueError("contribution is invalid")
+    if funding_account_code not in {"bank", "cash_on_hand"}:
+        raise ValueError("contribution funding account is invalid")
     if not idempotency_key.strip():
         raise ValueError("idempotency key is required")
-    async with transaction(current.cooperative_id) as session:
+    async with _transaction_or_session(current.cooperative_id, db_session) as session:
         request_payload = {
             "operation": "member_contribution",
             "member_id": str(member_id),
@@ -88,10 +106,11 @@ async def record_contribution(
             return uuid.UUID(str(existing["id"]))
         accounts = await session.execute(
             text(
-                "SELECT code,id FROM accounts WHERE cooperative_id=:cid AND code IN ('bank', :target)"
+                "SELECT code,id FROM accounts WHERE cooperative_id=:cid AND code IN (:funding, :target)"
             ),
             {
                 "cid": current.cooperative_id,
+                "funding": funding_account_code,
                 "target": {
                     "savings": "member_savings",
                     "shares": "member_shares",
@@ -121,7 +140,7 @@ async def record_contribution(
                     "lines": json.dumps(
                         [
                             {
-                                "account_id": str(ids["bank"]),
+                                "account_id": str(ids[funding_account_code]),
                                 "member_id": str(member_id),
                                 "debit_kobo": amount_kobo,
                             },

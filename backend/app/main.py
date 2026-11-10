@@ -18,6 +18,7 @@ from app.api import (
     loans,
     members,
     notifications,
+    payments,
     payroll,
     policies,
     repayments,
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(disbursements.router, prefix="/api/v1")
     app.include_router(repayments.router, prefix="/api/v1")
     app.include_router(payroll.router, prefix="/api/v1")
+    app.include_router(payments.router, prefix="/api/v1")
     app.include_router(staff.router, prefix="/api/v1")
     app.include_router(telegram.router, prefix="/api/v1")
     app.include_router(telegram.webhook_router)
