@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { ApiError, getNotificationSummary, getPayments, request } from "../api/client";
 import type { PaymentListItem } from "../api/schema";
 import { menuActionCount } from "../navigation";
+import { PaymentRecordForm } from "./PaymentRecordForm";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState, Skeleton } from "../ui/Feedback";
@@ -184,6 +185,7 @@ export default function PaymentsPage() {
       <p className="mb-5 max-w-2xl text-sm text-muted">
         Review recorded payments. Bank account numbers are never shown in this list.
       </p>
+      <PaymentRecordForm roles={roles} />
       <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Payments list view">
         <Button
           role="tab"

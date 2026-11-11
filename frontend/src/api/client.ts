@@ -13,6 +13,8 @@ import type {
   MemberActivityPage,
   WithdrawalQueuePage,
   PaymentsListPage,
+  PaymentRecordBody,
+  PaymentRecordResponse,
   NotificationSummary,
   DashboardSummary,
   PayrollDryRunResponse,
@@ -180,6 +182,20 @@ export function getPayments(
   query.set("page", String(params.page ?? 1));
   query.set("page_size", String(params.pageSize ?? 25));
   return request<PaymentsListPage>(`/payments?${query.toString()}`);
+}
+
+export function recordPayment(
+  body: PaymentRecordBody,
+  idempotencyKey: string,
+): Promise<PaymentRecordResponse> {
+  return request<PaymentRecordResponse>("/payments", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
 }
 
 export async function getMember(memberId: string): Promise<MemberDetail> {

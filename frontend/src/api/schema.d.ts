@@ -54,6 +54,7 @@ export type MemberLoanItem = {
   loan_id?: string | null;
   application_status: string;
   loan_status?: string | null;
+  deductions_paused?: boolean | null;
   principal_kobo: number;
   outstanding_balance_kobo?: number | null;
   next_installment_at?: string | null;
@@ -332,6 +333,23 @@ export type PaymentListItem = {
   received_on: string;
   receipt_no: number | null;
 };
+export type PaymentRecordBody = {
+  member_id: string;
+  channel: "cash" | "bank_transfer";
+  purpose: "savings" | "shares" | "dues" | "loan_repayment";
+  loan_id: string | null;
+  amount_kobo: number;
+  provider_reference: string | null;
+  received_on: string;
+  fee_kobo: number;
+  fee_bearer: "member";
+  reason: string | null;
+};
+export type PaymentRecordResponse = {
+  id: string;
+  status: string;
+  receipt_no: number | null;
+};
 export type PaymentsListPage = {
   items: PaymentListItem[];
   total: number;
@@ -414,6 +432,11 @@ export interface paths {
         };
       };
       responses: { 200: { content: { "application/json": PaymentsListPage } } };
+    };
+    post: {
+      parameters: { header: { "Idempotency-Key": string } };
+      requestBody: { content: { "application/json": PaymentRecordBody } };
+      responses: { 200: { content: { "application/json": PaymentRecordResponse } } };
     };
   };
   "/auth/csrf": Record<string, never>;
