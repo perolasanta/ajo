@@ -32,7 +32,7 @@ def upgrade() -> None:
     op.execute("DROP INDEX IF EXISTS notifications_action_dedupe_idx")
     op.execute(
         """CREATE UNIQUE INDEX notifications_action_dedupe_idx
-          ON notifications(cooperative_id,recipient_user_id,kind,entity_id)
+          ON notifications(cooperative_id, recipient_user_id, channel, kind, entity_id)
           WHERE recipient_user_id IS NOT NULL"""
     )
     values = ",".join(f"'{kind}'" for kind in _ACTION_KINDS)
