@@ -28,6 +28,7 @@ _POLICY_FIELDS = (
     "payroll_allocation_order",
     "confirmation_expiry_minutes",
     "otp_validity_seconds",
+    "cash_banking_days",
     "settings",
 )
 
@@ -58,6 +59,14 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
         )
         fields = {key: values[key] for key in _POLICY_FIELDS if key in values}
         fields.setdefault("settings", {})
+        fields.setdefault("cash_banking_days", 2)
+        cash_banking_days = fields["cash_banking_days"]
+        if (
+            isinstance(cash_banking_days, bool)
+            or not isinstance(cash_banking_days, int)
+            or not 1 <= cash_banking_days <= 30
+        ):
+            raise ValueError("cash_banking_days must be an integer between 1 and 30")
         if not isinstance(fields["settings"], dict):
             raise ValueError("Policy settings must be an object")
         if "min_membership_months" in fields["settings"]:
@@ -83,11 +92,13 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
               (id, cooperative_id, version, status, proposed_by, settings,
                effective_from, salary_basis, deduction_cap_bps, max_active_loans,
                guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
-               interest_method, payroll_allocation_order, confirmation_expiry_minutes, otp_validity_seconds)
+               interest_method, payroll_allocation_order, confirmation_expiry_minutes,
+               otp_validity_seconds, cash_banking_days)
             VALUES (:id, :cid, :version, 'proposed', :actor, CAST(:settings AS jsonb),
                :effective_from, :salary_basis, :deduction_cap_bps, :max_active_loans,
                :guarantors_required, :min_savings_kobo, :loan_to_savings_multiple_x100,
-               :interest_method, :payroll_allocation_order, :confirmation_expiry_minutes, :otp_validity_seconds)
+               :interest_method, :payroll_allocation_order, :confirmation_expiry_minutes,
+               :otp_validity_seconds, :cash_banking_days)
         """),
             {
                 "id": policy_id,
@@ -262,7 +273,7 @@ async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict
             SELECT id, version, effective_from, effective_to, salary_basis,
                    deduction_cap_bps, max_active_loans, guarantors_required,
                    min_savings_kobo, loan_to_savings_multiple_x100, interest_method, payroll_allocation_order,
-                   confirmation_expiry_minutes, otp_validity_seconds, settings
+                   confirmation_expiry_minutes, otp_validity_seconds, cash_banking_days, settings
               FROM cooperative_policy_versions
              WHERE cooperative_id = :cid AND status = 'approved'
                AND effective_from <= :on_date
@@ -287,15 +298,16 @@ async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
             text("""
                 SELECT p.id, p.version, p.status, p.effective_from, p.effective_to, p.proposed_by,
                        p.approved_by, p.salary_basis, p.deduction_cap_bps, p.max_active_loans,
-                       guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
-                       interest_method, payroll_allocation_order,
-                       confirmation_expiry_minutes, otp_validity_seconds, settings, p.created_at,
+                       p.guarantors_required, p.min_savings_kobo, p.loan_to_savings_multiple_x100,
+                       p.interest_method, p.payroll_allocation_order,
+                       p.confirmation_expiry_minutes, p.otp_validity_seconds,
+                       p.cash_banking_days, p.settings, p.created_at,
                        CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
                        proposer.email AS proposed_by_email,
                        CASE WHEN approver.id IS NULL THEN 'Unknown user' ELSE coalesce(approver.full_name, 'Unnamed user') END AS approved_by_name,
                        approver.email AS approved_by_email
-                  FROM cooperative_policy_versions
-                  p LEFT JOIN users proposer ON proposer.cooperative_id=p.cooperative_id AND proposer.id=p.proposed_by
+                  FROM cooperative_policy_versions p
+                  LEFT JOIN users proposer ON proposer.cooperative_id=p.cooperative_id AND proposer.id=p.proposed_by
                     LEFT JOIN users approver ON approver.cooperative_id=p.cooperative_id AND approver.id=p.approved_by
                  WHERE p.cooperative_id = :cid
                  ORDER BY p.version DESC

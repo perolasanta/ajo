@@ -1,13 +1,13 @@
 """Allow settings approval action notifications.
 
-Revision ID: 0029
-Revises: 0028
+Revision ID: 0035
+Revises: 0034
 """
 
 from alembic import op
 
-revision = "0029"
-down_revision = "0028"
+revision = "0035"
+down_revision = "0034"
 branch_labels = None
 depends_on = None
 
@@ -21,14 +21,15 @@ _ACTION_KINDS = (
     "disbursement_record",
     "disbursement_confirmation",
     "loan_decision",
+    "payment_confirmation",
+    "cash_deposit",
     "policy_approval",
     "product_approval",
 )
 
 
 def upgrade() -> None:
-    op.execute("ALTER TABLE loan_products ADD COLUMN effective_from date")
-    op.execute("DROP INDEX notifications_action_dedupe_idx")
+    op.execute("DROP INDEX IF EXISTS notifications_action_dedupe_idx")
     op.execute(
         """CREATE UNIQUE INDEX notifications_action_dedupe_idx
           ON notifications(cooperative_id,recipient_user_id,kind,entity_id)
@@ -61,4 +62,3 @@ def downgrade() -> None:
             AND kind IN ({values}))
         )"""
     )
-    op.execute("ALTER TABLE loan_products DROP COLUMN effective_from")

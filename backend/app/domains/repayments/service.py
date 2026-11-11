@@ -63,10 +63,13 @@ async def post_repayment(
     ip: str | None,
     reason: str | None = None,
     db_session: AsyncSession | None = None,
+    funding_account_code: str = "bank",
 ) -> uuid.UUID:
     role = _role(current, {"officer", "treasurer", "admin"})
     if amount_kobo <= 0 or source not in {"payroll", "bank_transfer", "cash"}:
         raise ValueError("Repayment amount and source are invalid")
+    if funding_account_code not in {"bank", "cash_on_hand"}:
+        raise ValueError("Repayment funding account is invalid")
     if not reference.strip() or not idempotency_key.strip():
         raise ValueError("Repayment reference and idempotency key are required")
     cid = current.cooperative_id
@@ -186,7 +189,11 @@ async def post_repayment(
                     ),
                     {
                         "cid": cid,
-                        "codes": ["bank", "unallocated_receipts", *_ACCOUNT_CODES.values()],
+                        "codes": [
+                            funding_account_code,
+                            "unallocated_receipts",
+                            *_ACCOUNT_CODES.values(),
+                        ],
                     },
                 )
             )
@@ -194,13 +201,17 @@ async def post_repayment(
             .all()
         )
         ids = {row["code"]: row["id"] for row in accounts}
-        missing = {"bank", "unallocated_receipts", *_ACCOUNT_CODES.values()} - ids.keys()
+        missing = {
+            funding_account_code,
+            "unallocated_receipts",
+            *_ACCOUNT_CODES.values(),
+        } - ids.keys()
         if missing:
             raise Conflict("Required repayment ledger accounts are not configured")
         repayment_id = uuid.uuid4()
         lines: list[dict[str, Any]] = [
             {
-                "account_id": str(ids["bank"]),
+                "account_id": str(ids[funding_account_code]),
                 "member_id": str(member_id),
                 "loan_id": str(loan_id),
                 "debit_kobo": amount_kobo,

@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 PAYROLL_POSTING = "payroll_posting"
 PAYROLL_SIGN_OFF = "payroll_sign_off"
+PAYMENT_CONFIRMATION = "payment_confirmation"
+CASH_DEPOSIT = "cash_deposit"
 DISBURSEMENT_RECORD = "disbursement_record"
 DISBURSEMENT_AUTHORIZATION = "disbursement_authorization"
 DISBURSEMENT_CONFIRMATION = "disbursement_confirmation"
@@ -55,6 +57,22 @@ ACTION_SPECS = {
         "payroll sign-off",
         "A payroll run needs your sign-off.",
         "/payroll/runs/{id}",
+    ),
+    PAYMENT_CONFIRMATION: ActionSpec(
+        frozenset({"officer", "treasurer"}),
+        "payments",
+        "Payments",
+        "payment confirmation",
+        "A payment needs your confirmation",
+        "/payments/{id}",
+    ),
+    CASH_DEPOSIT: ActionSpec(
+        frozenset({"treasurer"}),
+        "payments",
+        "Payments",
+        "cash deposit",
+        "Cash needs to be banked",
+        "/payments/{id}",
     ),
     DISBURSEMENT_RECORD: ActionSpec(
         frozenset({"treasurer"}),
@@ -146,6 +164,18 @@ _CANDIDATE_SQL = {
         WHERE r.cooperative_id=:cooperative_id AND r.status='posted'
           AND (CAST(:entity_id AS uuid) IS NULL OR r.id=CAST(:entity_id AS uuid))
           AND NOT EXISTS (SELECT 1 FROM payroll_items pi WHERE pi.cooperative_id=r.cooperative_id AND pi.run_id=r.id AND pi.classification<>'matched' AND pi.resolution_note IS NULL)
+    """,
+    PAYMENT_CONFIRMATION: """
+        SELECT p.id AS entity_id, ARRAY[p.recorded_by]::uuid[] AS excluded_user_ids
+        FROM payments p
+        WHERE p.cooperative_id=:cooperative_id AND p.channel='bank_transfer' AND p.status='pending'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
+    """,
+    CASH_DEPOSIT: """
+        SELECT p.id AS entity_id, ARRAY[p.recorded_by]::uuid[] AS excluded_user_ids
+        FROM payments p
+        WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
     """,
     DISBURSEMENT_RECORD: """
         SELECT d.id AS entity_id, ARRAY[d.prepared_by,d.authorized_by]::uuid[] AS excluded_user_ids
@@ -296,6 +326,12 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
       FROM payroll_runs r
      WHERE r.cooperative_id=:cooperative_id AND r.status='posted'
        AND NOT EXISTS (SELECT 1 FROM payroll_items pi WHERE pi.cooperative_id=r.cooperative_id AND pi.run_id=r.id AND pi.classification<>'matched' AND pi.resolution_note IS NULL)
+    UNION ALL
+    SELECT 'payment_confirmation', p.id, ARRAY[p.recorded_by]::uuid[]
+      FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='bank_transfer' AND p.status='pending'
+    UNION ALL
+    SELECT 'cash_deposit', p.id, ARRAY[p.recorded_by]::uuid[]
+      FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
     UNION ALL
     SELECT 'disbursement_record', d.id, ARRAY[d.prepared_by,d.authorized_by]::uuid[]
       FROM disbursements d WHERE d.cooperative_id=:cooperative_id AND d.status='authorized'

@@ -28,3 +28,14 @@ Write code in normal formatted style, never whole files on one line. Frontend us
 6. When resuming a task, read the PR description and `git log main..HEAD`, continue from the first unchecked step, and do not redo finished work.
 7. Leave the PR as a draft. The owner marks it ready and merges after running the tests.
 8. Task prompts may list test commands. Where they conflict with this file, this file prevails. Do not stop to ask.
+
+## Local agent mode (Kiro, Codex or any agent working in the owner's local clone)
+
+This section applies when you work in a local clone without GitHub access. Where it conflicts with the rules above, this section prevails.
+
+1. Work only on the branch the owner created. If the current branch is main, stop and say so. Never switch branches, never commit on main.
+2. Commit locally after each numbered step with the message "step N: <what>". Do NOT push, do not open or edit pull requests, do not run gh. The owner pushes.
+3. Never end a turn with uncommitted work. If your budget is running low, commit what exists ("wip: <what>") and print a STATE block: steps done, steps remaining, next action. An agent resuming the task reads `git log main..HEAD` and continues from the first unfinished step without redoing finished work.
+4. The owner starts the test database before the session. You may run TARGETED tests only: `cd backend && source .venv/bin/activate && pytest <files or -k expression> -q 2>&1 | tail -25`, plus ruff, mypy, `python -c "import app.main"`, `alembic heads` (exactly one head), and for the frontend `npm run typecheck` and `node --test <file>`. Never run the whole suite, never start or stop Docker, never pull images, never install packages or dependencies, never use the network except git operations the owner approved.
+5. Never open, print or copy .env files or anything that looks like a secret. If a task seems to need one, stop and ask.
+6. Ask before any command that deletes files, rewrites git history or changes files outside this repository.

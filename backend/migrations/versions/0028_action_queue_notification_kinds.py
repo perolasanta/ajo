@@ -21,6 +21,8 @@ _ACTION_KINDS = (
     "disbursement_record",
     "disbursement_confirmation",
     "loan_decision",
+    "cash_deposit",
+    "payment_confirmation",
 )
 
 
