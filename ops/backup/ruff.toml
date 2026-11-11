@@ -1,1 +1,5 @@
 extend = "../../backend/pyproject.toml"
+
+# notify.py posts to operator-configured https webhooks (Slack, Telegram); the URL never comes from user input.
+[lint.extend-per-file-ignores]
+"notify.py" = ["S310"]
