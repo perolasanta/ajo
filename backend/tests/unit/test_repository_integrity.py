@@ -37,7 +37,9 @@ def test_action_specs_has_no_repeated_keys() -> None:
         node
         for node in tree.body
         if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "ACTION_SPECS" for target in node.targets)
+        and any(
+            isinstance(target, ast.Name) and target.id == "ACTION_SPECS" for target in node.targets
+        )
     )
     assert isinstance(action_specs.value, ast.Dict)
     keys = [
@@ -55,7 +57,8 @@ def test_test_function_names_are_unique_per_module() -> None:
         names = [
             node.name
             for node in _module(path).body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
         ]
         duplicates.extend(
             f"{path.relative_to(TESTS_ROOT)}::{name}"
