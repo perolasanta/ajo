@@ -95,7 +95,9 @@ Manual member payments are recorded by an officer or treasurer and are tenant-sc
 
 Payments use the shared action-eligibility rules so the menu badge, action queue, and notification recipients all expose the same entity IDs. The payment confirmation alert reads `A payment needs your confirmation`; the cash banking alert reads `Cash needs to be banked`; both messages omit member names, amounts, and other identifiers. The recorder can never be eligible as the confirmer for the same payment or receipt set, regardless of multi-role membership.
 
-**Follow-up work:** implement the dedicated Payments page and inbox; add Paystack sub-accounts and virtual account support; support member-initiated payments and exit fees once the product and payment routing model are approved.
+The staff Payments page is available to officers, treasurers, admins, and auditors; committee users have no access. Officers and treasurers may record payments, while admins and auditors are read-only. The recording form accepts naira and converts it exactly to integer kobo, requires a bank reference for transfers, and records the received date. Loan repayments are selected from the chosen member's loans. Disputed or deduction-paused repayments follow the existing manual treasurer-only path and require a reason. The form retains its idempotency key and values for a retry of the same attempt, and clears only after a successful response.
+
+**Follow-up work:** add Paystack sub-accounts and virtual account support; support member-initiated payments and exit fees once the product and payment routing model are approved.
 
 ## 3. Disputed or paused loans and repayments
 
