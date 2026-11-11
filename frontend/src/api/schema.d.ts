@@ -305,6 +305,7 @@ export type PayrollSignOffResponse = { csv_base64: string; json_base64: string }
 
 export type NotificationSummary = {
   payroll?: { awaiting_posting?: number; awaiting_sign_off?: number };
+  payments?: { awaiting_confirmation?: number; awaiting_deposit?: number };
   disbursements?: {
     awaiting_authorization?: number;
     awaiting_confirmation?: number;

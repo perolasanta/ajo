@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -61,6 +62,22 @@ async def record_transfer(cooperative_id, actor_id, member_id, reference, key="t
         provider_reference=reference,
         received_on=today_wat(),
         idempotency_key=key,
+    )
+
+
+async def test_notifications_constraint_matches_action_specs(db: asyncpg.Connection) -> None:
+    definition = await db.fetchval(
+        "SELECT pg_get_constraintdef(oid, true) FROM pg_constraint "
+        "WHERE conname = 'notifications_action_fields_check'"
+    )
+    assert definition is not None
+    match = re.search(r"kind\s*=\s*ANY\s*\(\s*\(?ARRAY\[(.*?)\]", definition, re.S)
+    assert match is not None, definition
+    kinds = set(re.findall(r"'([^']+)'", match.group(1)))
+    specs = set(ACTION_SPECS)
+    assert kinds == specs, (
+        f"in constraint only: {sorted(kinds - specs)}; "
+        f"in ACTION_SPECS only: {sorted(specs - kinds)}"
     )
 
 

@@ -52,13 +52,14 @@ def _candidates() -> list[dict[str, Any]]:
         (
             "treasurer",
             {
+                "payments": {"awaiting_confirmation": 2, "awaiting_deposit": 2},
                 "payroll": {"awaiting_posting": 2},
                 "disbursements": {"ready_to_record": 2},
                 "loans": {"disputed_or_paused": 2},
                 "withdrawal_requests": {"awaiting_approval": 2},
             },
         ),
-        ("officer", {}),
+        ("officer", {"payments": {"awaiting_confirmation": 2}}),
         ("committee", {"loans": {"awaiting_decision": 2}}),
         ("auditor", {}),
         ("member", {}),
@@ -112,6 +113,7 @@ async def test_notification_summary_unions_roles_but_never_duplicates_entities(
         response = await client.get("/api/v1/notifications/summary")
     assert response.status_code == 200
     assert response.json() == {
+        "payments": {"awaiting_confirmation": 2, "awaiting_deposit": 2},
         "payroll": {"awaiting_posting": 2, "awaiting_sign_off": 2},
         "disbursements": {
             "awaiting_authorization": 2,
