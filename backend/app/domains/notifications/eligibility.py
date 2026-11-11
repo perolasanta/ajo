@@ -18,6 +18,8 @@ ROLE_CHANGE_APPROVAL = "role_change_approval"
 LOAN_DECISION = "loan_decision"
 LOAN_DISPUTED = "loan_disputed"
 WITHDRAWAL_APPROVAL = "withdrawal_approval"
+CASH_DEPOSIT = "cash_deposit"
+PAYMENT_CONFIRMATION = "payment_confirmation"
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,22 @@ ACTION_SPECS = {
         "withdrawal approval",
         "A withdrawal request needs your approval.",
         "/members/{member_id}?withdrawal_request={id}",
+    ),
+    CASH_DEPOSIT: ActionSpec(
+        frozenset({"treasurer"}),
+        "payments",
+        "Payments",
+        "cash deposit",
+        "Cash needs to be banked",
+        "/payments/{id}",
+    ),
+    PAYMENT_CONFIRMATION: ActionSpec(
+        frozenset({"member"}),
+        "payments",
+        "Payments",
+        "payment confirmation",
+        "A payment needs your confirmation",
+        "/payments/{id}",
     ),
 }
 

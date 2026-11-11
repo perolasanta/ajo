@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -254,6 +255,29 @@ async def test_admin_is_read_only_for_payment_writes(db: asyncpg.Connection) -> 
             received_on=today_wat(),
             idempotency_key="admin-write-denied",
         )
+
+
+async def test_notifications_constraint_matches_action_specs(db: asyncpg.Connection) -> None:
+    definition = await db.fetchval(
+        """
+        SELECT pg_get_constraintdef(c.oid, true)
+        FROM pg_constraint c
+        JOIN pg_class rel ON rel.oid = c.conrelid
+        WHERE rel.relname = 'notifications' AND c.conname = 'notifications_action_fields_check'
+        """
+    )
+    assert definition is not None
+
+    match = re.search(r"kind\s*=\s*ANY\s*\(\s*ARRAY\[(.*?)\]", definition, re.S)
+    assert match is not None, definition
+
+    kinds = set(re.findall(r"'([^']+)'", match.group(1)))
+    expected = set(ACTION_SPECS)
+    assert kinds == expected, (
+        f"{definition}\n"
+        f"in constraint only: {sorted(kinds - expected)}\n"
+        f"in ACTION_SPECS only: {sorted(expected - kinds)}"
+    )
 
 
 def test_payment_alerts_name_only_the_action_kind() -> None:
