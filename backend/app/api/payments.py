@@ -6,7 +6,7 @@ import uuid
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.auth import current_session, require_csrf
@@ -76,6 +76,33 @@ async def record_payment(
         reason=body.reason,
         idempotency_key=_action_key(idempotency_key),
         ip=_ip(request),
+    )
+
+
+@router.get("/payments")
+async def list_payments(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    status: Literal["pending", "received", "confirmed", "rejected", "banked"] | None = None,
+    channel: Literal[
+        "cash", "bank_transfer", "paystack", "virtual_account"
+    ] | None = None,
+    purpose: Literal["savings", "shares", "dues", "loan_repayment"] | None = None,
+    member: uuid.UUID | None = None,
+    mine: bool = False,
+    action: Literal["needed"] | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+) -> dict[str, object]:
+    return await service.list_payments(
+        current,
+        status=status,
+        channel=channel,
+        purpose=purpose,
+        member_id=member,
+        mine=mine,
+        action=action,
+        page=page,
+        page_size=page_size,
     )
 
 

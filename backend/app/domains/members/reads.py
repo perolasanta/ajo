@@ -89,7 +89,7 @@ STATEMENT_QUERY = text(
 LOANS_QUERY = text(
     """
     SELECT a.id AS application_id, l.id AS loan_id, a.status AS application_status,
-           l.status AS loan_status, a.principal_kobo,
+           l.status AS loan_status, l.deductions_paused, a.principal_kobo,
            COALESCE(next_due.balance_kobo, 0)::bigint AS outstanding_balance_kobo,
            next_due.due_at AS next_installment_at,
            next_due.payment_kobo AS next_installment_amount_kobo,
@@ -193,6 +193,7 @@ async def list_loans(
         for row in rows:
             for field in (
                 "loan_id",
+                "deductions_paused",
                 "outstanding_balance_kobo",
                 "next_installment_at",
                 "next_installment_amount_kobo",
