@@ -130,22 +130,6 @@ ACTION_SPECS = {
         "A withdrawal request needs your approval.",
         "/members/{member_id}?withdrawal_request={id}",
     ),
-    CASH_DEPOSIT: ActionSpec(
-        frozenset({"treasurer"}),
-        "payments",
-        "Payments",
-        "cash deposit",
-        "Cash needs to be banked",
-        "/payments/{id}",
-    ),
-    PAYMENT_CONFIRMATION: ActionSpec(
-        frozenset({"member"}),
-        "payments",
-        "Payments",
-        "payment confirmation",
-        "A payment needs your confirmation",
-        "/payments/{id}",
-    ),
 }
 
 _CANDIDATE_SQL = {
