@@ -41,6 +41,11 @@ class WithdrawalRequestActionCounts(BaseModel):
     awaiting_approval: int | None = None
 
 
+class SettingsActionCounts(BaseModel):
+    policy_approval: int | None = None
+    product_approval: int | None = None
+
+
 class NotificationSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -50,6 +55,7 @@ class NotificationSummaryResponse(BaseModel):
     role_changes: RoleChangeActionCounts | None = None
     loans: LoanActionCounts | None = None
     withdrawal_requests: WithdrawalRequestActionCounts | None = None
+    settings: SettingsActionCounts | None = None
 
 
 @router.get(

@@ -83,7 +83,13 @@ Audit and role-change actor labels for their authorized readers use `Full Name (
 
 Menu action badges count only entity IDs returned by the shared action eligibility rules in sections their existing roles can open: treasurers see payroll posting, disbursement recording, disputed/paused manual repayments, and withdrawal approvals; admins see payroll sign-off (excluding the poster or legacy importer), disbursement authorization/confirmation, and eligible role approvals; committee users see loan decisions; multi-role users receive the union of their eligible counts, with self-actions excluded.
 
-## 2. Payments
+### 2b. Settings approval review
+
+Pending cooperative policy and loan-product versions are reviewed in a dedicated Settings panel. The panel compares the proposal with the currently effective or superseded version, renders changed values in human units, and includes the WAT effective date, reason, proposer, and proposed time. Approve and reject controls exist only in this panel; rejection requires a reason and approval confirms the changed fields and effective date. A proposer sees an informational message and cannot approve or reject their own proposal.
+
+Policy and product approvals are admin-only actions through the shared action-eligibility function. Proposers are excluded from candidates, badges, queues, email, and Telegram notifications. Settings action kinds are `policy_approval` and `product_approval`; alerts use the generic text `A settings change needs your approval` and a direct proposal link, without names or amounts. Settings history joins users at read time: authorized admin viewers see `Full Name (email)`, other authorized viewers see `Full Name`, with `Unnamed user` and `Unknown user` fallbacks. Stored proposal and audit rows are not rewritten.
+
+### 2c. Payments
 
 Manual member payments are recorded by an officer or treasurer and are tenant-scoped by the cooperative. A bank transfer waits for confirmation by a different officer or treasurer; the payment recorder can never confirm or reject their own transfer. Cash receipts are recorded by an officer or treasurer, and a different treasurer must confirm the bank deposit. The treasurer who confirms the deposit must differ from every receipt recorder in the batch; a deposit can include only cash receipts with status `received` on the same cooperative and cannot be dated before any included receipt. The cooperative policy's `cash_banking_days` sets the banking window (default two WAT calendar days); receipts older than that threshold are marked overdue in the needs-my-action queue and on the cash-deposit list.
 
