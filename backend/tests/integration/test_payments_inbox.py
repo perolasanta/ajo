@@ -66,14 +66,19 @@ async def record_transfer(cooperative_id, actor_id, member_id, reference, key="t
 
 
 async def test_notifications_constraint_matches_action_specs(db: asyncpg.Connection) -> None:
-    row = await db.fetchrow(
-        "SELECT pg_get_constraintdef(oid, true) AS definition FROM pg_constraint WHERE conname = 'notifications_action_fields_check'"
+    definition = await db.fetchval(
+        "SELECT pg_get_constraintdef(oid, true) FROM pg_constraint "
+        "WHERE conname = 'notifications_action_fields_check'"
     )
-    assert row is not None
-    match = re.search(r"kind IN \((.*)\)", row["definition"])
-    assert match is not None
-    constraint_kinds = {value for value in re.findall(r"'([^']+)'", match.group(1))}
-    assert constraint_kinds == set(ACTION_SPECS)
+    assert definition is not None
+    match = re.search(r"kind\s*=\s*ANY\s*\(\s*\(?ARRAY\[(.*?)\]", definition, re.S)
+    assert match is not None, definition
+    kinds = set(re.findall(r"'([^']+)'", match.group(1)))
+    specs = set(ACTION_SPECS)
+    assert kinds == specs, (
+        f"in constraint only: {sorted(kinds - specs)}; "
+        f"in ACTION_SPECS only: {sorted(specs - kinds)}"
+    )
 
 
 async def test_transfer_requires_a_different_confirmer(db: asyncpg.Connection) -> None:
