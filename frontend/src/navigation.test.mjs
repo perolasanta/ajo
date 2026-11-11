@@ -263,7 +263,10 @@ test("mobile menu total sums action counts across visible sections", () => {
 
 test("withdrawal action badges count only for treasurers", () => {
   const summary = { withdrawal_requests: { awaiting_approval: 3 } };
-  assert.equal(totalVisibleActionCount(visibleNavigation(["treasurer"]), summary, ["treasurer"]), 3);
+  assert.equal(
+    totalVisibleActionCount(visibleNavigation(["treasurer"]), summary, ["treasurer"]),
+    3,
+  );
   assert.equal(totalVisibleActionCount(visibleNavigation(["officer"]), summary, ["officer"]), 0);
 });
 
@@ -307,7 +310,6 @@ test("mobile menu excludes counts for hidden or non-actionable sections", () => 
   assert.equal(total, 0);
 });
 
-
 test("action badges open their filtered queue, not an unfiltered section", () => {
   assert.equal(navigationTarget("Withdrawal requests", 1), "/withdrawal-requests?mine=needed");
   assert.equal(navigationTarget("Payroll", 2), "/payroll?action=needed");
@@ -315,9 +317,10 @@ test("action badges open their filtered queue, not an unfiltered section", () =>
   assert.equal(navigationTarget("Members", 0), "/members");
 });
 
-
 test("action deep links remain behind the normal route permission checks", () => {
-  assert.deepEqual(getRouteDecision(["treasurer"], "/members/abc?withdrawal_request=req"), { allowed: true });
+  assert.deepEqual(getRouteDecision(["treasurer"], "/members/abc?withdrawal_request=req"), {
+    allowed: true,
+  });
   assert.deepEqual(getRouteDecision(["committee"], "/withdrawal-requests?request=req"), {
     allowed: false,
     redirectTo: DEFAULT_LANDING_PATH,

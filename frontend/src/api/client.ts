@@ -12,6 +12,7 @@ import type {
   MemberLoanPage,
   MemberActivityPage,
   WithdrawalQueuePage,
+  PaymentsListPage,
   NotificationSummary,
   DashboardSummary,
   PayrollDryRunResponse,
@@ -155,6 +156,30 @@ export function getWithdrawalRequests(
   query.set("page", String(params.page ?? 1));
   query.set("page_size", String(params.pageSize ?? 25));
   return request<WithdrawalQueuePage>(`/withdrawal-requests?${query.toString()}`);
+}
+
+export function getPayments(
+  params: {
+    status?: string;
+    channel?: string;
+    purpose?: string;
+    member?: string;
+    mine?: boolean;
+    action?: "needed";
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<PaymentsListPage> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.purpose) query.set("purpose", params.purpose);
+  if (params.member) query.set("member", params.member);
+  if (params.mine) query.set("mine", "true");
+  if (params.action) query.set("action", params.action);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<PaymentsListPage>(`/payments?${query.toString()}`);
 }
 
 export async function getMember(memberId: string): Promise<MemberDetail> {

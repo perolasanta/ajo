@@ -316,6 +316,29 @@ export type PayrollImportResponse = {
 export type PayrollPostResponse = { posted: number };
 export type PayrollSignOffResponse = { csv_base64: string; json_base64: string };
 
+export type PaymentListItem = {
+  id: string;
+  member_id: string;
+  member_no: string;
+  member_name: string;
+  loan_id: string | null;
+  loan_name: string | null;
+  purpose: string;
+  amount_kobo: number;
+  channel: string;
+  status: string;
+  recorded_by_name: string;
+  recorded_at: string;
+  received_on: string;
+  receipt_no: number | null;
+};
+export type PaymentsListPage = {
+  items: PaymentListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
 export type NotificationSummary = {
   payroll?: { awaiting_posting?: number; awaiting_sign_off?: number };
   payments?: { awaiting_confirmation?: number; awaiting_deposit?: number };
@@ -374,6 +397,23 @@ export interface paths {
   "/notifications/summary": {
     get: {
       responses: { 200: { content: { "application/json": NotificationSummary } } };
+    };
+  };
+  "/payments": {
+    get: {
+      parameters?: {
+        query?: {
+          status?: string;
+          channel?: string;
+          purpose?: string;
+          member?: string;
+          mine?: boolean;
+          action?: "needed";
+          page?: number;
+          page_size?: number;
+        };
+      };
+      responses: { 200: { content: { "application/json": PaymentsListPage } } };
     };
   };
   "/auth/csrf": Record<string, never>;
