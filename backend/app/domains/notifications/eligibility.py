@@ -244,6 +244,36 @@ _CANDIDATE_SQL = {
 }
 
 
+PAYMENT_ACTION_TYPES = (PAYMENT_CONFIRMATION, CASH_DEPOSIT)
+
+
+def payment_action_candidates_sql() -> str:
+    """Return the existing payment action candidate queries as one SQL fragment."""
+    parts = []
+    for event_type in PAYMENT_ACTION_TYPES:
+        parts.append(
+            f"""SELECT '{event_type}'::text AS event_type,
+                       candidate.entity_id, candidate.excluded_user_ids
+                  FROM ({_CANDIDATE_SQL[event_type]}) AS candidate"""
+        )
+    return " UNION ALL ".join(parts)
+
+
+def eligible_action_types_for_user(
+    user_id: uuid.UUID, roles: set[str], event_types: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Return action types accepted for a user by the shared role/exclusion rules."""
+    roles_by_user = {user_id: roles}
+    return tuple(
+        event_type
+        for event_type in event_types
+        if user_id
+        in eligible_recipients_for_action(
+            event_type, excluded_user_ids=set(), roles_by_user=roles_by_user
+        )
+    )
+
+
 def eligible_recipients_for_action(
     event_type: str,
     *,
