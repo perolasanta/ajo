@@ -20,6 +20,8 @@ LOAN_DISPUTED = "loan_disputed"
 WITHDRAWAL_APPROVAL = "withdrawal_approval"
 CASH_DEPOSIT = "cash_deposit"
 PAYMENT_CONFIRMATION = "payment_confirmation"
+POLICY_APPROVAL = "policy_approval"
+PRODUCT_APPROVAL = "product_approval"
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,22 @@ ACTION_SPECS = {
         "payment confirmation",
         "A payment needs your confirmation",
         "/payments/{id}",
+    ),
+    POLICY_APPROVAL: ActionSpec(
+        frozenset({"admin"}),
+        "settings",
+        "Settings",
+        "policy approval",
+        "A policy change needs your approval.",
+        "/settings?policy={id}",
+    ),
+    PRODUCT_APPROVAL: ActionSpec(
+        frozenset({"admin"}),
+        "settings",
+        "Settings",
+        "product approval",
+        "A product change needs your approval.",
+        "/settings?product={id}",
     ),
 }
 
