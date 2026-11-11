@@ -36,9 +36,11 @@ test-db-down:
 	cd $(ROOT) && docker compose -f ops/docker-compose.test.yml down --remove-orphans
 
 lint:
-	cd $(ROOT) && $(RUFF) check backend ops/backup
-	cd $(ROOT) && $(RUFF) format --check backend ops/backup
-	cd $(ROOT) && $(MYPY) backend/app
+	cd $(ROOT) && cd backend && .venv/bin/ruff check .
+	cd $(ROOT) && cd ops/backup && ../../backend/.venv/bin/ruff check .
+	cd $(ROOT) && cd backend && .venv/bin/ruff format --check .
+	cd $(ROOT) && cd ops/backup && ../../backend/.venv/bin/ruff format --check .
+	cd $(ROOT) && cd backend && .venv/bin/mypy app
 
 fmt:
 	cd $(ROOT) && $(RUFF) format backend ops/backup
@@ -46,9 +48,11 @@ fmt:
 check-fast:
 	@set -e; \
 	step() { name="$$1"; shift; printf 'CHECK-FAST: %s\n' "$$name"; if ! "$$@"; then printf 'CHECK-FAST: FAILED at %s\n' "$$name"; exit 1; fi; }; \
-	step 'ruff check' $(RUFF) check backend ops/backup; \
-	step 'ruff format --check' $(RUFF) format --check backend ops/backup; \
-	step 'mypy app' $(MYPY) backend/app; \
+	step 'ruff check backend' sh -c 'cd "$(BACKEND)" && .venv/bin/ruff check .'; \
+	step 'ruff check ops/backup' sh -c 'cd "$(ROOT)ops/backup" && ../../backend/.venv/bin/ruff check .'; \
+	step 'ruff format --check backend' sh -c 'cd "$(BACKEND)" && .venv/bin/ruff format --check .'; \
+	step 'ruff format --check ops/backup' sh -c 'cd "$(ROOT)ops/backup" && ../../backend/.venv/bin/ruff format --check .'; \
+	step 'mypy app' sh -c 'cd "$(BACKEND)" && .venv/bin/mypy app'; \
 	step 'import app.main' sh -c 'cd "$(BACKEND)" && .venv/bin/python -c "import app.main"'; \
 	step 'migration heads' $(ROOT)scripts/check_migrations.sh; \
 	step 'frontend typecheck' sh -c 'cd "$(FRONTEND)" && npm run typecheck'; \
