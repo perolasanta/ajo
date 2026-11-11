@@ -28,4 +28,7 @@ def test_retention_keeps_daily_weekly_and_monthly_windows() -> None:
 
 def test_zero_retention_deletes_dated_files() -> None:
     names = ["ajo-20261102T021700Z.age"]
-    assert files_to_delete(names, today=date(2026, 11, 2), daily=0, weekly=0, monthly=0) == names
+    assert (
+        files_to_delete(names, today=date(2026, 11, 2), daily=0, weekly=0, monthly=0)
+        == names
+    )
