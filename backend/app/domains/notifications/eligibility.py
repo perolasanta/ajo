@@ -139,23 +139,23 @@ ACTION_SPECS = {
         "A share purchase needs your approval.",
         "/share-purchases/{id}",
     ),
-    POLICY_APPROVAL: ActionSpec(
+        POLICY_APPROVAL: ActionSpec(
         frozenset({"admin"}),
         "settings",
         "Settings",
-        "settings change approval",
-        "A settings change needs your approval",
-        "/settings?proposal={id}",
+        "policy approval",
+        "A policy change needs your approval.",
+        "/settings?policy={id}",
     ),
     PRODUCT_APPROVAL: ActionSpec(
         frozenset({"admin"}),
         "settings",
         "Settings",
-        "settings change approval",
-        "A settings change needs your approval",
-        "/settings?proposal={id}",
+        "product approval",
+        "A product change needs your approval.",
+        "/settings?product={id}",
     ),
-}
+    }
 
 _CANDIDATE_SQL = {
     PAYROLL_POSTING: """
