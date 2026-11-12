@@ -20,6 +20,7 @@ from app.core.db import connection, transaction
 from app.domains.notifications.eligibility import ACTION_SPECS
 from app.domains.notifications.outbox import decrypt_payload
 from app.worker.email_sender import PermanentEmailDeliveryError, build_action_email
+from app.worker.smtp_email_sender import RetryableEmailDeliveryError
 from app.worker.telegram_sender import TelegramRateLimited, TelegramRejected
 
 _E164 = re.compile(r"^\+[1-9][0-9]{7,14}$")
@@ -399,6 +400,17 @@ async def process_next_notification(
             cooperative_id=str(cooperative_id),
             notification_id=str(claim.id),
             kind=claim.kind,
+            error_code=exc.code,
+            **_masked_recipient_fields(claim.channel, recipient),
+        )
+    except RetryableEmailDeliveryError as exc:
+        await _finish_failure(claim, current_settings, exc.code, permanent=False)
+        log.warning(
+            "notification_delivery_failed",
+            cooperative_id=str(cooperative_id),
+            notification_id=str(claim.id),
+            kind=claim.kind,
+            attempt=claim.attempts,
             error_code=exc.code,
             **_masked_recipient_fields(claim.channel, recipient),
         )
