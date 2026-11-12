@@ -6,9 +6,10 @@ import asyncio
 import smtplib
 import socket
 import ssl
+from collections.abc import Callable
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
-from typing import Any, Callable
+from typing import Any
 
 from app.core.config import Settings
 from app.worker.email_sender import PermanentEmailDeliveryError
