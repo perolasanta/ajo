@@ -9,6 +9,7 @@ import {
   navigation,
   navigationTarget,
   formatMenuBadge,
+  menuActionCount,
   menuButtonLabel,
   totalVisibleActionCount,
   visibleNavigation,
