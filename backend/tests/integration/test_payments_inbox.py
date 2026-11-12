@@ -284,9 +284,10 @@ async def test_cash_on_hand_summary_by_officer_reconciles_to_ledger(db: asyncpg.
     for role in ("treasurer", "admin", "auditor"):
         summary = await service.cash_on_hand_summary(session(cid, treasurer, role))
         assert summary["ledger_balance_kobo"] == await service.cash_on_hand_balance(cid)
-        assert sum(item["amount_kobo"] for item in summary["officers"]) == summary[
-            "ledger_balance_kobo"
-        ]
+        assert (
+            sum(item["amount_kobo"] for item in summary["officers"])
+            == summary["ledger_balance_kobo"]
+        )
         assert summary["officers"] == [
             {
                 "user_id": str(officer),
@@ -384,9 +385,7 @@ async def test_payment_list_role_visibility_and_read_only_roles(db: asyncpg.Conn
     await record_transfer(cid, officer, member_id, "BANK-LIST-ROLES")
 
     for role in ("admin", "auditor"):
-        result = await service.list_payments(
-            session(cid, treasurer, role), page=1, page_size=20
-        )
+        result = await service.list_payments(session(cid, treasurer, role), page=1, page_size=20)
         assert result["total"] == 1
         assert result["items"][0]["channel"] == "bank_transfer"
         with pytest.raises(Forbidden):
@@ -403,9 +402,7 @@ async def test_payment_list_role_visibility_and_read_only_roles(db: asyncpg.Conn
             )
 
     with pytest.raises(Forbidden):
-        await service.list_payments(
-            session(cid, officer, "committee"), page=1, page_size=20
-        )
+        await service.list_payments(session(cid, officer, "committee"), page=1, page_size=20)
 
 
 async def test_payment_list_is_tenant_scoped_named_and_never_returns_bank_numbers(

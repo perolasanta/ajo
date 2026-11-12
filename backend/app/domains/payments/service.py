@@ -68,7 +68,9 @@ _PAYMENT_LIST_QUERY = text(
     )
     SELECT page.*, total.total
       FROM total LEFT JOIN page ON true
-     ORDER BY page.recorded_at DESC NULLS LAST, page.id DESC NULLS LAST""".replace("__PAYMENT_ACTION_CANDIDATES__", eligibility.payment_action_candidates_sql())  # noqa: S608 - candidate SQL is built only from fixed action constants.
+      ORDER BY page.recorded_at DESC NULLS LAST, page.id DESC NULLS LAST""".replace(
+        "__PAYMENT_ACTION_CANDIDATES__", eligibility.payment_action_candidates_sql()
+    )  # noqa: S608 - candidate SQL is built only from fixed action constants.
 )
 
 
@@ -674,11 +676,7 @@ async def list_payments(
         eligible_ids_by_action = eligibility.action_entity_ids_for_candidate_rows(
             candidate_rows, current.user_id, roles
         )
-        eligible_ids = {
-            entity_id
-            for ids in eligible_ids_by_action.values()
-            for entity_id in ids
-        }
+        eligible_ids = {entity_id for ids in eligible_ids_by_action.values() for entity_id in ids}
         rows = [row for row in rows if row["id"] in eligible_ids]
 
     items = []

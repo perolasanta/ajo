@@ -83,9 +83,7 @@ async def record_payment(
 async def list_payments(
     current: Annotated[CurrentSession, Depends(current_session)],
     status: Literal["pending", "received", "confirmed", "rejected", "banked"] | None = None,
-    channel: Literal[
-        "cash", "bank_transfer", "paystack", "virtual_account"
-    ] | None = None,
+    channel: Literal["cash", "bank_transfer", "paystack", "virtual_account"] | None = None,
     purpose: Literal["savings", "shares", "dues", "loan_repayment"] | None = None,
     member: uuid.UUID | None = None,
     mine: bool = False,
