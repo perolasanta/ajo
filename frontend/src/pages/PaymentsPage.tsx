@@ -5,6 +5,8 @@ import { ApiError, getNotificationSummary, getPayments, request } from "../api/c
 import type { PaymentListItem } from "../api/schema";
 import { menuActionCount } from "../navigation";
 import { PaymentRecordForm } from "./PaymentRecordForm";
+import { PaymentCashPanel } from "./PaymentCashPanel";
+import { PaymentDecisionActions } from "./PaymentDecisionActions";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState, Skeleton } from "../ui/Feedback";
@@ -13,7 +15,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { ResponsiveTable, type ResponsiveColumn } from "../ui/Table";
 
 type Session = { user_id: string; roles: string[] };
-type PaymentsTab = "needed" | "all";
+type PaymentsTab = "needed" | "all" | "cash";
 
 const pageSize = 25;
 const recordedTimeFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -127,7 +129,14 @@ const columns: ResponsiveColumn<PaymentListItem>[] = [
     key: "receipt",
     header: "Receipt no.",
     role: "meta",
-    render: (payment) => payment.receipt_no ?? "—",
+    render: (payment) =>
+      payment.receipt_no ? (
+        <Link className="text-primary underline" to={`/payments/${payment.id}`}>
+          {payment.receipt_no}
+        </Link>
+      ) : (
+        "—"
+      ),
   },
 ];
 
@@ -148,6 +157,7 @@ export default function PaymentsPage() {
     refetchOnWindowFocus: true,
   });
   const roles = session.data?.roles ?? [];
+  const userId = session.data?.user_id ?? "";
   const actionCount = menuActionCount("Payments", summary.data, roles);
   const requestedAction = searchParams.get("action") === "needed";
   useEffect(() => {
@@ -165,7 +175,7 @@ export default function PaymentsPage() {
         page,
         pageSize,
       }),
-    enabled: Boolean(session.data),
+    enabled: Boolean(session.data) && activeTab !== "cash",
     retry: false,
   });
   const totalPages = Math.max(1, Math.ceil((payments.data?.total ?? 0) / pageSize));
@@ -203,6 +213,17 @@ export default function PaymentsPage() {
         >
           All
         </Button>
+        <Button
+          role="tab"
+          aria-selected={activeTab === "cash"}
+          variant={activeTab === "cash" ? "primary" : "secondary"}
+          onClick={() => selectTab("cash")}
+        >
+          Cash awaiting deposit
+          {roles.includes("treasurer") && summary.data?.payments?.awaiting_deposit
+            ? ` (${summary.data.payments.awaiting_deposit})`
+            : ""}
+        </Button>
       </div>
 
       {session.isPending && <PaymentsSkeleton />}
@@ -213,12 +234,15 @@ export default function PaymentsPage() {
           action={<Button onClick={() => void session.refetch()}>Try again</Button>}
         />
       )}
-      {!session.isPending && !session.isError && payments.isPending && <PaymentsSkeleton />}
-      {!session.isPending && !session.isError && payments.isError && (
+      {!session.isPending && !session.isError && activeTab !== "cash" && payments.isPending && (
+        <PaymentsSkeleton />
+      )}
+      {!session.isPending && !session.isError && activeTab !== "cash" && payments.isError && (
         <PaymentsError error={payments.error} retry={() => void payments.refetch()} />
       )}
       {!session.isPending &&
         !session.isError &&
+        activeTab !== "cash" &&
         payments.data &&
         (payments.data.items.length === 0 ? (
           <EmptyState
@@ -233,7 +257,26 @@ export default function PaymentsPage() {
           <>
             <ResponsiveTable
               data={payments.data.items}
-              columns={columns}
+              columns={[
+                ...columns,
+                {
+                  key: "transfer-actions",
+                  header: "Transfer action",
+                  role: "meta",
+                  render: (payment) => (
+                    <PaymentDecisionActions payment={payment} userId={userId} roles={roles} />
+                  ),
+                },
+                {
+                  key: "rejection-reason",
+                  header: "Rejection reason",
+                  role: "meta",
+                  render: (payment) =>
+                    payment.recorded_by === userId && payment.rejected_reason
+                      ? payment.rejected_reason
+                      : "—",
+                },
+              ]}
               getRowKey={(payment) => payment.id}
             />
             {payments.data.total > 0 && (
@@ -263,6 +306,9 @@ export default function PaymentsPage() {
             )}
           </>
         ))}
+      {!session.isPending && !session.isError && activeTab === "cash" && (
+        <PaymentCashPanel roles={roles} userId={userId} />
+      )}
     </>
   );
 }

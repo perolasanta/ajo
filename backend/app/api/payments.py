@@ -145,6 +145,13 @@ async def list_cash_awaiting_deposit(
     return await service.list_cash_awaiting_deposit(current)
 
 
+@router.get("/payments/cash-on-hand")
+async def get_cash_on_hand_summary(
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, object]:
+    return await service.cash_on_hand_summary(current)
+
+
 @router.get("/payments/{payment_id}")
 async def get_payment(
     payment_id: uuid.UUID,
