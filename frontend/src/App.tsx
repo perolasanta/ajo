@@ -57,6 +57,7 @@ const StaffPage = lazy(() => import("./pages/StaffPage"));
 const CooperativeSettingsPage = lazy(() => import("./pages/CooperativeSettingsPage"));
 const WithdrawalRequestsPage = lazy(() => import("./pages/WithdrawalRequestsPage"));
 const PaymentsPage = lazy(() => import("./pages/PaymentsPage"));
+const PaymentReceiptPage = lazy(() => import("./pages/PaymentReceiptPage"));
 const AccountPage = lazy(() => import("./pages/AccountPage"));
 
 const fakeMembers: MemberListItem[] = [
@@ -402,7 +403,7 @@ export default function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/members" element={<MembersPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
-        <Route path="/payments/:paymentId" element={<PaymentsPage />} />
+        <Route path="/payments/:paymentId" element={<PaymentReceiptPage />} />
         <Route path="/withdrawal-requests" element={<WithdrawalRequestsPage />} />
         <Route path="/members/:memberId" element={<MemberDetailPage />} />
         <Route path="/loans" element={<LoansPage />} />
