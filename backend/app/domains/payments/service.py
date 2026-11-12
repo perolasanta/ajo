@@ -649,11 +649,7 @@ async def list_payments(
         eligible_ids_by_action = eligibility.action_entity_ids_for_candidate_rows(
             candidate_rows, current.user_id, roles
         )
-        eligible_ids = {
-            entity_id
-            for ids in eligible_ids_by_action.values()
-            for entity_id in ids
-        }
+        eligible_ids = {entity_id for ids in eligible_ids_by_action.values() for entity_id in ids}
         rows = [row for row in rows if row["id"] in eligible_ids]
 
     items = []

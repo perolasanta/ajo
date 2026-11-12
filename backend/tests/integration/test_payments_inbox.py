@@ -287,9 +287,7 @@ async def test_payment_list_role_visibility_and_read_only_roles(db: asyncpg.Conn
     await record_transfer(cid, officer, member_id, "BANK-LIST-ROLES")
 
     for role in ("admin", "auditor"):
-        result = await service.list_payments(
-            session(cid, treasurer, role), page=1, page_size=20
-        )
+        result = await service.list_payments(session(cid, treasurer, role), page=1, page_size=20)
         assert result["total"] == 1
         assert result["items"][0]["channel"] == "bank_transfer"
         with pytest.raises(Forbidden):
@@ -306,9 +304,7 @@ async def test_payment_list_role_visibility_and_read_only_roles(db: asyncpg.Conn
             )
 
     with pytest.raises(Forbidden):
-        await service.list_payments(
-            session(cid, officer, "committee"), page=1, page_size=20
-        )
+        await service.list_payments(session(cid, officer, "committee"), page=1, page_size=20)
 
 
 async def test_payment_list_is_tenant_scoped_named_and_never_returns_bank_numbers(
