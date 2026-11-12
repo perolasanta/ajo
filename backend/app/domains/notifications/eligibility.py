@@ -251,11 +251,9 @@ def payment_action_candidates_sql() -> str:
     """Return the existing payment action candidate queries as one SQL fragment."""
     parts = []
     for event_type in PAYMENT_ACTION_TYPES:
-        parts.append(
-            f"""SELECT '{event_type}'::text AS event_type,
-                       candidate.entity_id, candidate.excluded_user_ids
-                  FROM ({_CANDIDATE_SQL[event_type]}) AS candidate"""
-        )
+        candidate_sql = _CANDIDATE_SQL[event_type]
+        part = "SELECT '{event_type}'::text AS event_type, candidate.entity_id, candidate.excluded_user_ids FROM ({candidate_sql}) AS candidate".format(event_type=event_type, candidate_sql=candidate_sql)  # noqa: S608 - both interpolated values are module-level constants.
+        parts.append(part)
     return " UNION ALL ".join(parts)
 
 

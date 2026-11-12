@@ -26,8 +26,8 @@ _PAYMENT_READ_ROLES = {"officer", "treasurer", "admin", "auditor"}
 _PAYMENT_WRITE_ROLES = {"officer", "treasurer"}
 
 _PAYMENT_LIST_QUERY = text(
-    f"""WITH payment_action_candidates AS (
-        {eligibility.payment_action_candidates_sql()}
+    """WITH payment_action_candidates AS (
+        __PAYMENT_ACTION_CANDIDATES__
     ), filtered AS (
         SELECT p.id, p.member_id, m.member_no, m.full_name AS member_name,
                p.loan_id, loan_product.name AS loan_name, p.purpose,
@@ -68,7 +68,7 @@ _PAYMENT_LIST_QUERY = text(
     )
     SELECT page.*, total.total
       FROM total LEFT JOIN page ON true
-     ORDER BY page.recorded_at DESC NULLS LAST, page.id DESC NULLS LAST"""
+     ORDER BY page.recorded_at DESC NULLS LAST, page.id DESC NULLS LAST""".replace("__PAYMENT_ACTION_CANDIDATES__", eligibility.payment_action_candidates_sql())  # noqa: S608 - candidate SQL is built only from fixed action constants.
 )
 
 
@@ -774,7 +774,7 @@ async def cash_on_hand_summary(current: CurrentSession) -> dict[str, Any]:
             }
         )
     ledger_balance = int(rows[0]["ledger_balance_kobo"]) if rows else 0
-    officer_total = sum(row["amount_kobo"] for row in officers)
+    officer_total = sum(int(row["amount_kobo"]) for row in officers)
     return {
         "ledger_balance_kobo": ledger_balance,
         "officers": officers,

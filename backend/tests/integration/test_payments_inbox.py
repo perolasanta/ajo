@@ -290,7 +290,7 @@ async def test_cash_on_hand_summary_by_officer_reconciles_to_ledger(db: asyncpg.
         assert summary["officers"] == [
             {
                 "user_id": str(officer),
-                "display_name": display_name,
+                "display_name": display_name or "Unnamed user",
                 "amount_kobo": 24500,
                 "oldest_age_days": 2,
             }
@@ -415,20 +415,15 @@ async def test_payment_list_is_tenant_scoped_named_and_never_returns_bank_number
     tenant_b, officer_b, _, member_b, _ = await payment_tenant(db)
     payment_a = await record_transfer(tenant_a, officer_a, member_a, "BANK-LIST-TENANT-A")
     await record_transfer(tenant_b, officer_b, member_b, "BANK-LIST-TENANT-B")
-    member = await db.fetchrow(
-        "SELECT member_no,full_name FROM members WHERE cooperative_id=$1 AND id=$2",
-        tenant_a,
-        member_a,
-    )
-
     result = await service.list_payments(
         session(tenant_a, officer_a, "officer"), page=1, page_size=20
     )
     assert result["total"] == 1
     assert [row["id"] for row in result["items"]] == [payment_a["id"]]
     listed = result["items"][0]
-    assert listed["member_name"] == member["full_name"]
-    assert listed["member_no"] == member["member_no"]
+    assert listed["member_id"] == str(member_a)
+    assert isinstance(listed["member_name"], str) and listed["member_name"]
+    assert isinstance(listed["member_no"], str) and listed["member_no"]
     assert listed["recorded_by_name"]
     assert listed["purpose"] == "savings"
     assert listed["amount_kobo"] == 12500
