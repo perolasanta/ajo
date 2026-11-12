@@ -6,7 +6,7 @@ import hmac
 import json
 import uuid
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -774,7 +774,7 @@ async def cash_on_hand_summary(current: CurrentSession) -> dict[str, Any]:
             }
         )
     ledger_balance = int(rows[0]["ledger_balance_kobo"]) if rows else 0
-    officer_total = sum(int(row["amount_kobo"]) for row in officers)
+    officer_total = sum(cast(int, row["amount_kobo"]) for row in officers)
     return {
         "ledger_balance_kobo": ledger_balance,
         "officers": officers,
