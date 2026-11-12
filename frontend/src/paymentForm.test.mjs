@@ -65,7 +65,7 @@ test("disputed or paused loan repayments use the treasurer-only reason path", ()
     loanStatus: "disputed",
   };
   assert.match(validatePaymentDraft(disputed), /treasurer/i);
-  assert.equal(validatePaymentDraft({ ...disputed, roles: ["treasurer"] }), /reason/i);
+  assert.match(validatePaymentDraft({ ...disputed, roles: ["treasurer"] }), /reason/i);
   assert.equal(
     validatePaymentDraft({ ...disputed, roles: ["treasurer"], reason: "Reviewed manually" }),
     null,
