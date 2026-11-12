@@ -10,6 +10,11 @@ export const navigation = [
   },
   { name: "Members", path: "/members", roles: ["officer", "treasurer", "auditor", "admin"] },
   {
+    name: "Payments",
+    path: "/payments",
+    roles: ["officer", "treasurer", "admin", "auditor"],
+  },
+  {
     name: "Withdrawal requests",
     path: "/withdrawal-requests",
     roles: ["officer", "treasurer", "admin"],
@@ -53,6 +58,12 @@ export function menuActionCount(name, summary, roles) {
     if (roles.includes("treasurer")) count += summary?.payroll?.awaiting_posting ?? 0;
     if (roles.includes("admin")) count += summary?.payroll?.awaiting_sign_off ?? 0;
   }
+  if (name === "Payments") {
+    if (roles.includes("officer") || roles.includes("treasurer")) {
+      count += summary?.payments?.awaiting_confirmation ?? 0;
+    }
+    if (roles.includes("treasurer")) count += summary?.payments?.awaiting_deposit ?? 0;
+  }
   if (name === "Disbursements") {
     if (roles.includes("admin")) {
       count +=
@@ -65,6 +76,10 @@ export function menuActionCount(name, summary, roles) {
   }
   if (name === "Staff" && roles.includes("admin")) {
     count += summary?.role_changes?.awaiting_approval ?? 0;
+  }
+  if (name === "Settings" && roles.includes("admin")) {
+    count += summary?.settings?.policy_approval ?? 0;
+    count += summary?.settings?.product_approval ?? 0;
   }
   if (name === "Withdrawal requests" && roles.includes("treasurer")) {
     count += summary?.withdrawal_requests?.awaiting_approval ?? 0;
@@ -82,7 +97,9 @@ export function navigationTarget(name, count) {
   if (name === "Loans") return "/loans?action=needed";
   if (name === "Disbursements") return "/disbursements?action=needed";
   if (name === "Payroll") return "/payroll?action=needed";
+  if (name === "Payments") return "/payments?action=needed";
   if (name === "Staff") return "/staff?action=needed";
+  if (name === "Settings") return "/settings?tab=approval";
   return navigation.find((item) => item.name === name)?.path ?? "/dashboard";
 }
 
@@ -107,6 +124,7 @@ const routePatterns = [
   ["/dashboard", /^\/dashboard$/],
   ["/members", /^\/members(?:\/[^/]+)?$/],
   ["/withdrawal-requests", /^\/withdrawal-requests$/],
+  ["/payments", /^\/payments(?:\/[^/]+)?$/],
   ["/loans", /^\/loans(?:\/[^/]+)?$/],
   ["/disbursements", /^\/disbursements(?:\/[^/]+)?$/],
   ["/payroll", /^\/payroll(?:\/runs\/[^/]+)?$/],

@@ -15,13 +15,62 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
+from app.domains.auth.display_names import staff_actor_display_name
 from app.domains.auth.service import CurrentSession
 from app.domains.members.service import record_contribution
+from app.domains.notifications import eligibility
 from app.domains.payments.providers import MANUAL_PROVIDER
 from app.domains.repayments.service import post_repayment
 
 _PAYMENT_READ_ROLES = {"officer", "treasurer", "admin", "auditor"}
 _PAYMENT_WRITE_ROLES = {"officer", "treasurer"}
+
+_PAYMENT_LIST_QUERY = text(
+    """WITH payment_action_candidates AS (
+        __PAYMENT_ACTION_CANDIDATES__
+    ), filtered AS (
+        SELECT p.id, p.member_id, m.member_no, m.full_name AS member_name,
+               p.loan_id, loan_product.name AS loan_name, p.purpose,
+               p.amount_kobo, p.channel, p.status, p.recorded_at, p.received_on,
+               p.receipt_no, recorder.full_name AS recorder_full_name,
+               (recorder.id IS NOT NULL) AS recorder_exists,
+               candidate.event_type AS action_event_type,
+               candidate.entity_id AS action_entity_id,
+               candidate.excluded_user_ids AS action_excluded_user_ids
+          FROM payments p
+          JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+          LEFT JOIN loans loan
+            ON loan.cooperative_id=p.cooperative_id AND loan.id=p.loan_id
+          LEFT JOIN loan_products loan_product
+            ON loan_product.cooperative_id=loan.cooperative_id
+           AND loan_product.id=loan.product_id
+          LEFT JOIN users recorder
+            ON recorder.cooperative_id=p.cooperative_id AND recorder.id=p.recorded_by
+          LEFT JOIN payment_action_candidates candidate ON candidate.entity_id=p.id
+         WHERE p.cooperative_id=:cooperative_id
+           AND (CAST(:status AS text) IS NULL OR p.status=CAST(:status AS text))
+           AND (CAST(:channel AS text) IS NULL OR p.channel=CAST(:channel AS text))
+           AND (CAST(:purpose AS text) IS NULL OR p.purpose=CAST(:purpose AS text))
+           AND (CAST(:member_id AS uuid) IS NULL OR p.member_id=CAST(:member_id AS uuid))
+           AND (NOT :mine OR p.recorded_by=:user_id)
+           AND (NOT :action_needed OR (
+                candidate.event_type=ANY(CAST(:action_event_types AS text[]))
+                AND NOT (:user_id=ANY(COALESCE(
+                    candidate.excluded_user_ids, ARRAY[]::uuid[]))))
+           )
+    ), page AS (
+        SELECT * FROM filtered
+         ORDER BY recorded_at DESC, id DESC
+         LIMIT :page_size OFFSET :offset
+    ), total AS (
+        SELECT count(*) AS total FROM filtered
+    )
+    SELECT page.*, total.total
+      FROM total LEFT JOIN page ON true
+     ORDER BY page.recorded_at DESC NULLS LAST, page.id DESC NULLS LAST""".replace(
+        "__PAYMENT_ACTION_CANDIDATES__", eligibility.payment_action_candidates_sql()
+    )  # noqa: S608 - candidate SQL is built only from fixed action constants.
+)
 
 
 def _role(current: CurrentSession, allowed: set[str]) -> str:
@@ -541,6 +590,98 @@ async def get_payment(current: CurrentSession, payment_id: uuid.UUID) -> dict[st
         if row is None:
             raise NotFound("Payment not found")
         return _payment_dict(row)
+
+
+async def list_payments(
+    current: CurrentSession,
+    *,
+    page: int,
+    page_size: int,
+    status: str | None = None,
+    channel: str | None = None,
+    purpose: str | None = None,
+    member_id: uuid.UUID | None = None,
+    mine: bool = False,
+    action: str | None = None,
+) -> dict[str, Any]:
+    _role(current, _PAYMENT_READ_ROLES)
+    if page < 1 or not 1 <= page_size <= 100:
+        raise ValueError("Page must be positive and page size must be between 1 and 100")
+    if action not in {None, "needed"}:
+        raise ValueError("Unsupported payment list action filter")
+
+    roles = set(current.roles)
+    eligible_action_types = eligibility.eligible_action_types_for_user(
+        current.user_id, roles, eligibility.PAYMENT_ACTION_TYPES
+    )
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            _PAYMENT_LIST_QUERY,
+            {
+                "cooperative_id": current.cooperative_id,
+                "entity_id": None,
+                "status": status,
+                "channel": channel,
+                "purpose": purpose,
+                "member_id": member_id,
+                "mine": mine,
+                "action_needed": action == "needed",
+                "action_event_types": list(eligible_action_types),
+                "user_id": current.user_id,
+                "page_size": page_size,
+                "offset": (page - 1) * page_size,
+            },
+        )
+        result_rows = list(result.mappings().all())
+
+    total = int(result_rows[0]["total"]) if result_rows else 0
+    rows = [row for row in result_rows if row["id"] is not None]
+    if action == "needed":
+        candidate_rows = [
+            {
+                "event_type": row["action_event_type"],
+                "entity_id": row["action_entity_id"],
+                "excluded_user_ids": row["action_excluded_user_ids"],
+            }
+            for row in rows
+            if row["action_event_type"] is not None
+        ]
+        eligible_ids_by_action = eligibility.action_entity_ids_for_candidate_rows(
+            candidate_rows, current.user_id, roles
+        )
+        eligible_ids = {
+            entity_id
+            for ids in eligible_ids_by_action.values()
+            for entity_id in ids
+        }
+        rows = [row for row in rows if row["id"] in eligible_ids]
+
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": str(row["id"]),
+                "member_id": str(row["member_id"]),
+                "member_no": row["member_no"],
+                "member_name": row["member_name"],
+                "loan_id": str(row["loan_id"]) if row["loan_id"] is not None else None,
+                "loan_name": row["loan_name"],
+                "purpose": row["purpose"],
+                "amount_kobo": int(row["amount_kobo"]),
+                "channel": row["channel"],
+                "status": row["status"],
+                "recorded_by_name": staff_actor_display_name(
+                    row["recorder_full_name"],
+                    None,
+                    user_exists=bool(row["recorder_exists"]),
+                    include_email=False,
+                ),
+                "recorded_at": row["recorded_at"],
+                "received_on": row["received_on"],
+                "receipt_no": row["receipt_no"],
+            }
+        )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 async def cash_on_hand_balance(cooperative_id: uuid.UUID) -> int:

@@ -83,6 +83,22 @@ Audit and role-change actor labels for their authorized readers use `Full Name (
 
 Menu action badges count only entity IDs returned by the shared action eligibility rules in sections their existing roles can open: treasurers see payroll posting, disbursement recording, disputed/paused manual repayments, and withdrawal approvals; admins see payroll sign-off (excluding the poster or legacy importer), disbursement authorization/confirmation, and eligible role approvals; committee users see loan decisions; multi-role users receive the union of their eligible counts, with self-actions excluded.
 
+### 2b. Settings approval review
+
+Pending cooperative policy and loan-product versions are reviewed in a dedicated Settings panel. The panel compares the proposal with the currently effective or superseded version, renders changed values in human units, and includes the WAT effective date, reason, proposer, and proposed time. Approve and reject controls exist only in this panel; rejection requires a reason and approval confirms the changed fields and effective date. A proposer sees an informational message and cannot approve or reject their own proposal.
+
+Policy and product approvals are admin-only actions through the shared action-eligibility function. Proposers are excluded from candidates, badges, queues, email, and Telegram notifications. Settings action kinds are `policy_approval` and `product_approval`; alerts use the generic text `A settings change needs your approval` and a direct proposal link, without names or amounts. Settings history joins users at read time: authorized admin viewers see `Full Name (email)`, other authorized viewers see `Full Name`, with `Unnamed user` and `Unknown user` fallbacks. Stored proposal and audit rows are not rewritten.
+
+### 2c. Payments
+
+Manual member payments are recorded by an officer or treasurer and are tenant-scoped by the cooperative. A bank transfer waits for confirmation by a different officer or treasurer; the payment recorder can never confirm or reject their own transfer. Cash receipts are recorded by an officer or treasurer, and a different treasurer must confirm the bank deposit. The treasurer who confirms the deposit must differ from every receipt recorder in the batch; a deposit can include only cash receipts with status `received` on the same cooperative and cannot be dated before any included receipt. The cooperative policy's `cash_banking_days` sets the banking window (default two WAT calendar days); receipts older than that threshold are marked overdue in the needs-my-action queue and on the cash-deposit list.
+
+Payments use the shared action-eligibility rules so the menu badge, action queue, and notification recipients all expose the same entity IDs. The payment confirmation alert reads `A payment needs your confirmation`; the cash banking alert reads `Cash needs to be banked`; both messages omit member names, amounts, and other identifiers. The recorder can never be eligible as the confirmer for the same payment or receipt set, regardless of multi-role membership.
+
+The staff Payments page is available to officers, treasurers, admins, and auditors; committee users have no access. Officers and treasurers may record payments, while admins and auditors are read-only. The recording form accepts naira and converts it exactly to integer kobo, requires a bank reference for transfers, and records the received date. Loan repayments are selected from the chosen member's loans. Disputed or deduction-paused repayments follow the existing manual treasurer-only path and require a reason. The form retains its idempotency key and values for a retry of the same attempt, and clears only after a successful response.
+
+**Follow-up work:** add Paystack sub-accounts and virtual account support; support member-initiated payments and exit fees once the product and payment routing model are approved.
+
 ## 3. Disputed or paused loans and repayments
 
 Loans that are disputed or marked deduction-paused must be excluded from automated payroll deductions and automated payroll posting. Repayment on such a loan is allowed only as a manual repayment posted by a treasurer, with a reason recorded in the audit/transaction record.

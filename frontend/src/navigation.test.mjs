@@ -9,6 +9,7 @@ import {
   navigation,
   navigationTarget,
   formatMenuBadge,
+  menuActionCount,
   menuButtonLabel,
   totalVisibleActionCount,
   visibleNavigation,
@@ -120,6 +121,36 @@ for (const [role, expected] of [
     assert.equal(names.includes("Audit"), expected);
   });
 }
+
+for (const [role, expected] of [
+  ["officer", true],
+  ["treasurer", true],
+  ["admin", true],
+  ["auditor", true],
+  ["committee", false],
+  ["member", false],
+]) {
+  test(`${role} ${expected ? "sees" : "does not see"} Payments navigation and route`, () => {
+    const names = visibleNavigation([role]).map((item) => item.name);
+    assert.equal(names.includes("Payments"), expected);
+    assert.equal(getRouteDecision([role], "/payments").allowed, expected);
+  });
+}
+
+test("Payments badge counts only the current user's shared action kinds", () => {
+  const summary = { payments: { awaiting_confirmation: 4, awaiting_deposit: 3 } };
+  assert.equal(menuActionCount("Payments", summary, ["officer"]), 4);
+  assert.equal(menuActionCount("Payments", summary, ["treasurer"]), 7);
+  assert.equal(menuActionCount("Payments", summary, ["officer", "treasurer"]), 7);
+  assert.equal(menuActionCount("Payments", summary, ["admin"]), 0);
+  assert.equal(menuActionCount("Payments", summary, ["auditor"]), 0);
+  assert.equal(menuActionCount("Payments", summary, ["committee"]), 0);
+});
+
+test("Payments action badge deep-links to the needs-my-action list", () => {
+  assert.equal(navigationTarget("Payments", 2), "/payments?action=needed");
+  assert.equal(navigationTarget("Payments", 0), "/payments");
+});
 
 for (const [role, expected] of loanCases) {
   test(`${role} ${expected ? "sees" : "does not see"} Loans navigation`, () => {
@@ -233,7 +264,10 @@ test("mobile menu total sums action counts across visible sections", () => {
 
 test("withdrawal action badges count only for treasurers", () => {
   const summary = { withdrawal_requests: { awaiting_approval: 3 } };
-  assert.equal(totalVisibleActionCount(visibleNavigation(["treasurer"]), summary, ["treasurer"]), 3);
+  assert.equal(
+    totalVisibleActionCount(visibleNavigation(["treasurer"]), summary, ["treasurer"]),
+    3,
+  );
   assert.equal(totalVisibleActionCount(visibleNavigation(["officer"]), summary, ["officer"]), 0);
 });
 
@@ -277,7 +311,6 @@ test("mobile menu excludes counts for hidden or non-actionable sections", () => 
   assert.equal(total, 0);
 });
 
-
 test("action badges open their filtered queue, not an unfiltered section", () => {
   assert.equal(navigationTarget("Withdrawal requests", 1), "/withdrawal-requests?mine=needed");
   assert.equal(navigationTarget("Payroll", 2), "/payroll?action=needed");
@@ -285,9 +318,10 @@ test("action badges open their filtered queue, not an unfiltered section", () =>
   assert.equal(navigationTarget("Members", 0), "/members");
 });
 
-
 test("action deep links remain behind the normal route permission checks", () => {
-  assert.deepEqual(getRouteDecision(["treasurer"], "/members/abc?withdrawal_request=req"), { allowed: true });
+  assert.deepEqual(getRouteDecision(["treasurer"], "/members/abc?withdrawal_request=req"), {
+    allowed: true,
+  });
   assert.deepEqual(getRouteDecision(["committee"], "/withdrawal-requests?request=req"), {
     allowed: false,
     redirectTo: DEFAULT_LANDING_PATH,

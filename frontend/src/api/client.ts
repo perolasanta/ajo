@@ -12,6 +12,9 @@ import type {
   MemberLoanPage,
   MemberActivityPage,
   WithdrawalQueuePage,
+  PaymentsListPage,
+  PaymentRecordBody,
+  PaymentRecordResponse,
   NotificationSummary,
   DashboardSummary,
   PayrollDryRunResponse,
@@ -157,6 +160,44 @@ export function getWithdrawalRequests(
   return request<WithdrawalQueuePage>(`/withdrawal-requests?${query.toString()}`);
 }
 
+export function getPayments(
+  params: {
+    status?: string;
+    channel?: string;
+    purpose?: string;
+    member?: string;
+    mine?: boolean;
+    action?: "needed";
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<PaymentsListPage> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.purpose) query.set("purpose", params.purpose);
+  if (params.member) query.set("member", params.member);
+  if (params.mine) query.set("mine", "true");
+  if (params.action) query.set("action", params.action);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<PaymentsListPage>(`/payments?${query.toString()}`);
+}
+
+export function recordPayment(
+  body: PaymentRecordBody,
+  idempotencyKey: string,
+): Promise<PaymentRecordResponse> {
+  return request<PaymentRecordResponse>("/payments", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getMember(memberId: string): Promise<MemberDetail> {
   return unwrap(
     await api.GET("/members/{member_id}", { params: { path: { member_id: memberId } } }),
@@ -242,12 +283,25 @@ export type SettingsPolicyVersion = {
   settings: Record<string, unknown>;
   proposed_by?: string;
   approved_by?: string | null;
+  proposed_by_name?: string;
+  proposed_by_email?: string | null;
+  approved_by_name?: string;
+  approved_by_email?: string | null;
+  created_at?: string;
 };
 
 export type SettingsLoanProduct = LoanProduct & {
   status: string;
   supersedes_id: string | null;
   approved_at: string | null;
+  created_at?: string;
+  effective_from?: string | null;
+  proposed_by?: string;
+  proposed_by_name?: string;
+  proposed_by_email?: string | null;
+  approved_by?: string | null;
+  approved_by_name?: string;
+  approved_by_email?: string | null;
 };
 
 export function getPolicyVersions(): Promise<SettingsPolicyVersion[]> {
@@ -281,6 +335,14 @@ export function decidePolicy(
   });
 }
 
+export function rejectPolicy(policyId: string, reason: string): Promise<unknown> {
+  return request(`/policies/${encodeURIComponent(policyId)}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function submitLoanProductProposal(
   body: Record<string, unknown>,
 ): Promise<{ loan_product_id: string }> {
@@ -294,6 +356,14 @@ export function submitLoanProductProposal(
 export function approveSettingsLoanProduct(productId: string, reason: string): Promise<unknown> {
   const date = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
   return request(`/loan-products/${encodeURIComponent(productId)}/approve?on_date=${date}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function rejectSettingsLoanProduct(productId: string, reason: string): Promise<unknown> {
+  return request(`/loan-products/${encodeURIComponent(productId)}/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({ reason }),

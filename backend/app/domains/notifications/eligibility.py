@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 PAYROLL_POSTING = "payroll_posting"
 PAYROLL_SIGN_OFF = "payroll_sign_off"
+PAYMENT_CONFIRMATION = "payment_confirmation"
+CASH_DEPOSIT = "cash_deposit"
 DISBURSEMENT_RECORD = "disbursement_record"
 DISBURSEMENT_AUTHORIZATION = "disbursement_authorization"
 DISBURSEMENT_CONFIRMATION = "disbursement_confirmation"
@@ -18,6 +20,8 @@ ROLE_CHANGE_APPROVAL = "role_change_approval"
 LOAN_DECISION = "loan_decision"
 LOAN_DISPUTED = "loan_disputed"
 WITHDRAWAL_APPROVAL = "withdrawal_approval"
+POLICY_APPROVAL = "policy_approval"
+PRODUCT_APPROVAL = "product_approval"
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,22 @@ ACTION_SPECS = {
         "payroll sign-off",
         "A payroll run needs your sign-off.",
         "/payroll/runs/{id}",
+    ),
+    PAYMENT_CONFIRMATION: ActionSpec(
+        frozenset({"officer", "treasurer"}),
+        "payments",
+        "Payments",
+        "payment confirmation",
+        "A payment needs your confirmation",
+        "/payments/{id}",
+    ),
+    CASH_DEPOSIT: ActionSpec(
+        frozenset({"treasurer"}),
+        "payments",
+        "Payments",
+        "cash deposit",
+        "Cash needs to be banked",
+        "/payments/{id}",
     ),
     DISBURSEMENT_RECORD: ActionSpec(
         frozenset({"treasurer"}),
@@ -110,6 +130,22 @@ ACTION_SPECS = {
         "A withdrawal request needs your approval.",
         "/members/{member_id}?withdrawal_request={id}",
     ),
+    POLICY_APPROVAL: ActionSpec(
+        frozenset({"admin"}),
+        "settings",
+        "Settings",
+        "settings change approval",
+        "A settings change needs your approval",
+        "/settings?proposal={id}",
+    ),
+    PRODUCT_APPROVAL: ActionSpec(
+        frozenset({"admin"}),
+        "settings",
+        "Settings",
+        "settings change approval",
+        "A settings change needs your approval",
+        "/settings?proposal={id}",
+    ),
 }
 
 _CANDIDATE_SQL = {
@@ -128,6 +164,18 @@ _CANDIDATE_SQL = {
         WHERE r.cooperative_id=:cooperative_id AND r.status='posted'
           AND (CAST(:entity_id AS uuid) IS NULL OR r.id=CAST(:entity_id AS uuid))
           AND NOT EXISTS (SELECT 1 FROM payroll_items pi WHERE pi.cooperative_id=r.cooperative_id AND pi.run_id=r.id AND pi.classification<>'matched' AND pi.resolution_note IS NULL)
+    """,
+    PAYMENT_CONFIRMATION: """
+        SELECT p.id AS entity_id, ARRAY[p.recorded_by]::uuid[] AS excluded_user_ids
+        FROM payments p
+        WHERE p.cooperative_id=:cooperative_id AND p.channel='bank_transfer' AND p.status='pending'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
+    """,
+    CASH_DEPOSIT: """
+        SELECT p.id AS entity_id, ARRAY[p.recorded_by]::uuid[] AS excluded_user_ids
+        FROM payments p
+        WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
     """,
     DISBURSEMENT_RECORD: """
         SELECT d.id AS entity_id, ARRAY[d.prepared_by,d.authorized_by]::uuid[] AS excluded_user_ids
@@ -176,7 +224,52 @@ _CANDIDATE_SQL = {
         WHERE wr.cooperative_id=:cooperative_id AND wr.status='pending'
           AND (CAST(:entity_id AS uuid) IS NULL OR wr.id=CAST(:entity_id AS uuid))
     """,
+    POLICY_APPROVAL: """
+        SELECT p.id AS entity_id, ARRAY[p.proposed_by]::uuid[] AS excluded_user_ids
+        FROM cooperative_policy_versions p
+        WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
+    """,
+    PRODUCT_APPROVAL: """
+        SELECT p.id AS entity_id,
+               coalesce((SELECT array_agg(al.actor_user_id) FROM audit_logs al
+                         WHERE al.cooperative_id=p.cooperative_id
+                           AND al.entity_type='loan_product' AND al.entity_id=p.id::text
+                           AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
+                 AS excluded_user_ids
+        FROM loan_products p
+        WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
+          AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
+    """,
 }
+
+
+PAYMENT_ACTION_TYPES = (PAYMENT_CONFIRMATION, CASH_DEPOSIT)
+
+
+def payment_action_candidates_sql() -> str:
+    """Return the existing payment action candidate queries as one SQL fragment."""
+    parts = []
+    for event_type in PAYMENT_ACTION_TYPES:
+        candidate_sql = _CANDIDATE_SQL[event_type]
+        part = f"SELECT '{event_type}'::text AS event_type, candidate.entity_id, candidate.excluded_user_ids FROM ({candidate_sql}) AS candidate"  # noqa: S608 - both interpolated values are module-level constants.
+        parts.append(part)
+    return " UNION ALL ".join(parts)
+
+
+def eligible_action_types_for_user(
+    user_id: uuid.UUID, roles: set[str], event_types: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Return action types accepted for a user by the shared role/exclusion rules."""
+    roles_by_user = {user_id: roles}
+    return tuple(
+        event_type
+        for event_type in event_types
+        if user_id
+        in eligible_recipients_for_action(
+            event_type, excluded_user_ids=set(), roles_by_user=roles_by_user
+        )
+    )
 
 
 def eligible_recipients_for_action(
@@ -262,6 +355,12 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
      WHERE r.cooperative_id=:cooperative_id AND r.status='posted'
        AND NOT EXISTS (SELECT 1 FROM payroll_items pi WHERE pi.cooperative_id=r.cooperative_id AND pi.run_id=r.id AND pi.classification<>'matched' AND pi.resolution_note IS NULL)
     UNION ALL
+    SELECT 'payment_confirmation', p.id, ARRAY[p.recorded_by]::uuid[]
+      FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='bank_transfer' AND p.status='pending'
+    UNION ALL
+    SELECT 'cash_deposit', p.id, ARRAY[p.recorded_by]::uuid[]
+      FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+    UNION ALL
     SELECT 'disbursement_record', d.id, ARRAY[d.prepared_by,d.authorized_by]::uuid[]
       FROM disbursements d WHERE d.cooperative_id=:cooperative_id AND d.status='authorized'
     UNION ALL
@@ -291,6 +390,17 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
     UNION ALL
     SELECT 'withdrawal_approval', wr.id, ARRAY[wr.requested_by]::uuid[]
       FROM withdrawal_requests wr WHERE wr.cooperative_id=:cooperative_id AND wr.status='pending'
+    UNION ALL
+    SELECT 'policy_approval', p.id, ARRAY[p.proposed_by]::uuid[]
+      FROM cooperative_policy_versions p
+     WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
+    UNION ALL
+    SELECT 'product_approval', p.id,
+           coalesce((SELECT array_agg(al.actor_user_id) FROM audit_logs al
+                     WHERE al.cooperative_id=p.cooperative_id
+                       AND al.entity_type='loan_product' AND al.entity_id=p.id::text
+                       AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
+      FROM loan_products p WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
 """)
 
 

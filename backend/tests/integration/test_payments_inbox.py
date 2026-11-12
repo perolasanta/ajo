@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -61,6 +62,22 @@ async def record_transfer(cooperative_id, actor_id, member_id, reference, key="t
         provider_reference=reference,
         received_on=today_wat(),
         idempotency_key=key,
+    )
+
+
+async def test_notifications_constraint_matches_action_specs(db: asyncpg.Connection) -> None:
+    definition = await db.fetchval(
+        "SELECT pg_get_constraintdef(oid, true) FROM pg_constraint "
+        "WHERE conname = 'notifications_action_fields_check'"
+    )
+    assert definition is not None
+    match = re.search(r"kind\s*=\s*ANY\s*\(\s*\(?ARRAY\[(.*?)\]", definition, re.S)
+    assert match is not None, definition
+    kinds = set(re.findall(r"'([^']+)'", match.group(1)))
+    specs = set(ACTION_SPECS)
+    assert kinds == specs, (
+        f"in constraint only: {sorted(kinds - specs)}; "
+        f"in ACTION_SPECS only: {sorted(specs - kinds)}"
     )
 
 
@@ -263,3 +280,90 @@ def test_payment_alerts_name_only_the_action_kind() -> None:
         sentence = ACTION_SPECS[kind].sentence
         assert "₦" not in sentence
         assert not any(character.isdigit() for character in sentence)
+
+
+async def test_payment_list_role_visibility_and_read_only_roles(db: asyncpg.Connection) -> None:
+    cid, officer, treasurer, member_id, _ = await payment_tenant(db)
+    await record_transfer(cid, officer, member_id, "BANK-LIST-ROLES")
+
+    for role in ("admin", "auditor"):
+        result = await service.list_payments(
+            session(cid, treasurer, role), page=1, page_size=20
+        )
+        assert result["total"] == 1
+        assert result["items"][0]["channel"] == "bank_transfer"
+        with pytest.raises(Forbidden):
+            await service.record_payment(
+                session(cid, treasurer, role),
+                member_id=member_id,
+                channel="cash",
+                purpose="savings",
+                amount_kobo=100,
+                provider="manual",
+                provider_reference=None,
+                received_on=today_wat(),
+                idempotency_key=f"{role}-list-read-only",
+            )
+
+    with pytest.raises(Forbidden):
+        await service.list_payments(
+            session(cid, officer, "committee"), page=1, page_size=20
+        )
+
+
+async def test_payment_list_is_tenant_scoped_named_and_never_returns_bank_numbers(
+    db: asyncpg.Connection,
+) -> None:
+    tenant_a, officer_a, _, member_a, _ = await payment_tenant(db)
+    tenant_b, officer_b, _, member_b, _ = await payment_tenant(db)
+    payment_a = await record_transfer(tenant_a, officer_a, member_a, "BANK-LIST-TENANT-A")
+    await record_transfer(tenant_b, officer_b, member_b, "BANK-LIST-TENANT-B")
+    result = await service.list_payments(
+        session(tenant_a, officer_a, "officer"), page=1, page_size=20
+    )
+    assert result["total"] == 1
+    assert [row["id"] for row in result["items"]] == [payment_a["id"]]
+    listed = result["items"][0]
+    assert listed["member_id"] == str(member_a)
+    assert isinstance(listed["member_name"], str) and listed["member_name"]
+    assert isinstance(listed["member_no"], str) and listed["member_no"]
+    assert listed["recorded_by_name"]
+    assert listed["purpose"] == "savings"
+    assert listed["amount_kobo"] == 12500
+    assert listed["received_on"] == today_wat()
+    assert listed["recorded_at"] is not None
+    assert "receipt_no" in listed
+
+    cash = await service.record_payment(
+        session(tenant_a, officer_a, "officer"),
+        member_id=member_a,
+        channel="cash",
+        purpose="dues",
+        amount_kobo=500,
+        provider="manual",
+        provider_reference=None,
+        received_on=today_wat(),
+        idempotency_key="cash-list-safe-response",
+    )
+    responses = [
+        result,
+        await service.get_payment(session(tenant_a, officer_a, "officer"), payment_a["id"]),
+        await service.list_cash_awaiting_deposit(session(tenant_a, officer_a, "officer")),
+    ]
+    assert cash["status"] == "received"
+
+    def assert_no_bank_account_numbers(value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                lowered = key.lower()
+                assert "account_number" not in lowered
+                assert "account_no" not in lowered
+                assert "encrypted_account" not in lowered
+                assert "bank_account" not in lowered
+                assert_no_bank_account_numbers(child)
+        elif isinstance(value, list):
+            for child in value:
+                assert_no_bank_account_numbers(child)
+
+    for response in responses:
+        assert_no_bank_account_numbers(response)
