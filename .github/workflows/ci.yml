@@ -28,6 +28,8 @@ jobs:
         working-directory: .
         run: scripts/check_migrations.sh
       - name: Import application
+        env:
+          APP_ENV: development
         run: python -c "import app.main"
       - name: Full backend suite (unit, database, and property tests)
         run: HYPOTHESIS_PROFILE=ci pytest -q
