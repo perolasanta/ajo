@@ -19,6 +19,7 @@ from app.domains.auth.display_names import staff_actor_display_name
 from app.domains.auth.service import CurrentSession
 from app.domains.members.service import record_contribution
 from app.domains.notifications import eligibility
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 from app.domains.payments.providers import MANUAL_PROVIDER
 from app.domains.repayments.service import post_repayment
 
@@ -292,6 +293,14 @@ async def record_payment(
             channel="api",
             ip=ip,
         )
+        if channel == "cash":
+            await enqueue_action_notifications_safely(
+                session, cid, eligibility.CASH_DEPOSIT, payment_id
+            )
+        else:
+            await enqueue_action_notifications_safely(
+                session, cid, eligibility.PAYMENT_CONFIRMATION, payment_id
+            )
         if channel == "cash":
             ledger_entry_id = await _post_confirmed_payment(
                 session,
