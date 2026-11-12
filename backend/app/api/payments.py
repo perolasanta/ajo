@@ -83,9 +83,7 @@ async def record_payment(
 async def list_payments(
     current: Annotated[CurrentSession, Depends(current_session)],
     status: Literal["pending", "received", "confirmed", "rejected", "banked"] | None = None,
-    channel: Literal[
-        "cash", "bank_transfer", "paystack", "virtual_account"
-    ] | None = None,
+    channel: Literal["cash", "bank_transfer", "paystack", "virtual_account"] | None = None,
     purpose: Literal["savings", "shares", "dues", "loan_repayment"] | None = None,
     member: uuid.UUID | None = None,
     mine: bool = False,
@@ -145,6 +143,13 @@ async def list_cash_awaiting_deposit(
     current: Annotated[CurrentSession, Depends(current_session)],
 ) -> list[dict[str, object]]:
     return await service.list_cash_awaiting_deposit(current)
+
+
+@router.get("/payments/cash-on-hand")
+async def get_cash_on_hand_summary(
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, object]:
+    return await service.cash_on_hand_summary(current)
 
 
 @router.get("/payments/{payment_id}")

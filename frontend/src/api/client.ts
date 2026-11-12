@@ -15,6 +15,13 @@ import type {
   PaymentsListPage,
   PaymentRecordBody,
   PaymentRecordResponse,
+  PaymentDetail,
+  PaymentDecisionBody,
+  PaymentDecisionResponse,
+  CashReceipt,
+  CashOnHandSummary,
+  CashDepositBody,
+  CashDepositResponse,
   NotificationSummary,
   DashboardSummary,
   PayrollDryRunResponse,
@@ -189,6 +196,62 @@ export function recordPayment(
   idempotencyKey: string,
 ): Promise<PaymentRecordResponse> {
   return request<PaymentRecordResponse>("/payments", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getPayment(paymentId: string): Promise<PaymentDetail> {
+  return request<PaymentDetail>(`/payments/${paymentId}`);
+}
+
+export function confirmPayment(
+  paymentId: string,
+  body: PaymentDecisionBody,
+  idempotencyKey: string,
+): Promise<PaymentDecisionResponse> {
+  return request<PaymentDecisionResponse>(`/payments/${paymentId}/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function rejectPayment(
+  paymentId: string,
+  body: PaymentDecisionBody,
+  idempotencyKey: string,
+): Promise<PaymentDecisionResponse> {
+  return request<PaymentDecisionResponse>(`/payments/${paymentId}/reject`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getCashAwaitingDeposit(): Promise<CashReceipt[]> {
+  return request<CashReceipt[]>("/payments/cash-awaiting-deposit");
+}
+
+export function getCashOnHandSummary(): Promise<CashOnHandSummary> {
+  return request<CashOnHandSummary>("/payments/cash-on-hand");
+}
+
+export function recordCashDeposit(
+  body: CashDepositBody,
+  idempotencyKey: string,
+): Promise<CashDepositResponse> {
+  return request<CashDepositResponse>("/payments/cash-deposits", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
