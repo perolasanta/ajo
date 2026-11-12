@@ -84,9 +84,7 @@ def _smtp_factory(
     failure: Exception | dict[str, tuple[int, bytes]] | None = None,
     timeout_values: list[float] | None = None,
 ) -> Callable[..., FakeSMTP]:
-    def factory(
-        host: str, port: int, *, timeout: float, context: Any = None
-    ) -> FakeSMTP:
+    def factory(host: str, port: int, *, timeout: float, context: Any = None) -> FakeSMTP:
         assert host == "smtp.example.test"
         assert port == 587
         return FakeSMTP(
@@ -158,7 +156,11 @@ async def test_smtp_outcomes_use_outbox_retry_or_dead_letter_mapping(
     result = await _run_worker_delivery(monkeypatch, smtp_settings, sender)
 
     status_write = next(
-        (params for statement, params in result["writes"] if "UPDATE notifications SET status" in statement),
+        (
+            params
+            for statement, params in result["writes"]
+            if "UPDATE notifications SET status" in statement
+        ),
         None,
     )
     assert status_write is not None
@@ -179,7 +181,9 @@ async def test_smtp_timeout_retries_and_logs_only_masked_recipient(
     result = await _run_worker_delivery(monkeypatch, smtp_settings, sender)
 
     status_write = next(
-        params for statement, params in result["writes"] if "UPDATE notifications SET status" in statement
+        params
+        for statement, params in result["writes"]
+        if "UPDATE notifications SET status" in statement
     )
     assert status_write["status"] == "pending"
     assert status_write["error_code"] == "smtp_timeout"
@@ -269,7 +273,9 @@ async def _run_worker_delivery(
         },
     )
     monkeypatch.setattr(notification_worker, "transaction", fake_transaction)
-    monkeypatch.setattr(notification_worker.structlog, "get_logger", lambda *args, **kwargs: Logger())
+    monkeypatch.setattr(
+        notification_worker.structlog, "get_logger", lambda *args, **kwargs: Logger()
+    )
 
     assert await notification_worker.process_next_notification(
         cooperative_id, {"email": sender}, settings

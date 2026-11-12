@@ -49,8 +49,7 @@ class SmtpEmailSender:
             missing.append("SMTP_SECURITY")
         if missing:
             raise RuntimeError(
-                "Required when EMAIL_ENABLED is true and EMAIL_PROVIDER=smtp: "
-                + ", ".join(missing)
+                "Required when EMAIL_ENABLED is true and EMAIL_PROVIDER=smtp: " + ", ".join(missing)
             )
         if not settings.email_from_address.strip():
             raise RuntimeError("EMAIL_FROM_ADDRESS is required when EMAIL_ENABLED is true")
