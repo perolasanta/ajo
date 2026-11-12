@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import smtplib
-import socket
 import ssl
 from collections.abc import Callable
 from email.message import EmailMessage
@@ -92,7 +91,7 @@ class SmtpEmailSender:
 
         try:
             await asyncio.to_thread(self._send_sync, message)
-        except (TimeoutError, socket.timeout):
+        except TimeoutError:
             raise RetryableEmailDeliveryError("smtp_timeout") from None
         except smtplib.SMTPRecipientsRefused as exc:
             self._map_recipient_refusal(exc.recipients.values())
