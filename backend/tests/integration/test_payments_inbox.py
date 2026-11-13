@@ -486,9 +486,7 @@ async def test_recorded_transfer_queues_one_confirmation_per_enabled_channel(
         PAYMENT_CONFIRMATION,
     )
 
-    assert [(row["recipient_user_id"], row["channel"]) for row in rows] == [
-        (treasurer, "email")
-    ]
+    assert [(row["recipient_user_id"], row["channel"]) for row in rows] == [(treasurer, "email")]
     assert officer not in {row["recipient_user_id"] for row in rows}
     payload = decrypt_payload(rows[0]["payload_encrypted"])
     assert set(payload) == {"section", "action_kind", "message", "url"}
@@ -523,9 +521,7 @@ async def test_recorded_cash_queues_one_deposit_alert_per_enabled_channel(
         CASH_DEPOSIT,
     )
 
-    assert [(row["recipient_user_id"], row["channel"]) for row in rows] == [
-        (treasurer, "email")
-    ]
+    assert [(row["recipient_user_id"], row["channel"]) for row in rows] == [(treasurer, "email")]
     assert officer not in {row["recipient_user_id"] for row in rows}
     payload = decrypt_payload(rows[0]["payload_encrypted"])
     assert set(payload) == {"section", "action_kind", "message", "url"}
