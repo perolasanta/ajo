@@ -10,10 +10,10 @@ Read docs/context.md before any task. It is the source of truth.
 ## Cost and test discipline
 - Read only the sections of docs/context.md that the task names. Do not re-read the whole file.
 - Tests never run against Neon. Database tests use a local Postgres (see make test). Neon is only for `make migrate` on dev and `make smoke`.
-- While working, run only the tests for the code you touched (pytest path::test or -k). Run `make test` once at the end. `make test-all` only when I ask.
-- If a test fails twice for the same reason, stop and report instead of trying a third fix.
- - Write only the tests the task lists. Do not add extra tests.
- - Final report: at most 12 lines (what changed, test result, anything I must decide).
+ - While working, run only the tests for the code you touched (pytest path::test or -k). Run `make test` once at the end. `make test-all` only when I ask.
+ - If a test fails twice for the same reason, stop and report instead of trying a third fix.
+- Write only the tests the task lists. Do not add extra tests.
+- Final report: at most 12 lines (what changed, test result, anything I must decide).
 
 ## Test-writing rules
 
