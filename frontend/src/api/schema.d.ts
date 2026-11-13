@@ -45,6 +45,7 @@ export type MemberStatementItem = {
 };
 export type MemberStatementPage = {
   items: MemberStatementItem[];
+  shares_balance_kobo: number;
   page: number;
   page_size: number;
   total: number;

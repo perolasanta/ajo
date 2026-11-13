@@ -171,7 +171,18 @@ async def list_statement(
                 "offset": (page - 1) * page_size,
             },
         )
-        return _page([dict(row) for row in result.mappings()], page, page_size)
+        items = [dict(row) for row in result.mappings()]
+        shares_balance = await session.scalar(
+            text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)
+                FROM journal_lines l JOIN accounts a
+                  ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
+                WHERE l.cooperative_id=:cid AND l.member_id=:mid
+                  AND a.code='member_shares'"""),
+            {"cid": current.cooperative_id, "mid": member_id},
+        )
+        page_data = _page(items, page, page_size)
+        page_data["shares_balance_kobo"] = int(shares_balance or 0)
+        return page_data
 
 
 async def list_loans(

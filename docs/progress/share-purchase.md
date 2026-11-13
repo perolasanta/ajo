@@ -5,7 +5,7 @@
 - [x] 3. Add backend service, API, and tests
 - [x] 4. Add notifications and tests
 - [x] 5. Add the frontend page, actions, navigation badge, and tests
-- [ ] 6. Add share purchases and shares balance to member overview and statement
+- [x] 6. Add share purchases and shares balance to member overview and statement
 - [ ] 7. Update decisions, run final checks, and confirm draft PR
 
 ## Plan
@@ -35,3 +35,5 @@ Backend files and the contract tests pass Python compilation and `git diff --che
 Notification migration `0038` keeps the action-kind allowlist aligned with `ACTION_SPECS`, preserves channel-aware deduplication, and the request path uses the shared eligibility/notification enqueue function.
 
 Frontend navigation tests pass (`79` tests). `npm run format`/`npm run typecheck` could not run because `prettier` is absent from the repository environment; no dependencies were installed per `AGENTS.md`.
+
+Member overview already sourced `shares_kobo` from the ledger; it now displays it explicitly, and the statement includes a ledger-derived `shares_balance_kobo` plus `share purchase` entries.
