@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -21,6 +20,7 @@ from app.domains.notifications.eligibility import (
 )
 from app.domains.notifications.outbox import decrypt_payload
 from app.domains.payments import service
+from tests.helpers.postgres import check_constraint_array_values
 from tests.integration.test_members import session, setup_tenant
 
 pytestmark = pytest.mark.db
@@ -77,9 +77,7 @@ async def test_notifications_constraint_matches_action_specs(db: asyncpg.Connect
         "WHERE conname = 'notifications_action_fields_check'"
     )
     assert definition is not None
-    match = re.search(r"kind\s*=\s*ANY\s*\(\s*\(?ARRAY\[(.*?)\]", definition, re.S)
-    assert match is not None, definition
-    kinds = set(re.findall(r"'([^']+)'", match.group(1)))
+    kinds = check_constraint_array_values(definition, column="kind")
     specs = set(ACTION_SPECS)
     assert kinds == specs, (
         f"in constraint only: {sorted(kinds - specs)}; "
