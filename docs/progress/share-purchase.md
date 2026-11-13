@@ -6,7 +6,7 @@
 - [x] 4. Add notifications and tests
 - [x] 5. Add the frontend page, actions, navigation badge, and tests
 - [x] 6. Add share purchases and shares balance to member overview and statement
-- [ ] 7. Update decisions, run final checks, and confirm draft PR
+- [x] 7. Update decisions, run final checks, and confirm draft PR
 
 ## Plan
 
@@ -37,3 +37,5 @@ Notification migration `0038` keeps the action-kind allowlist aligned with `ACTI
 Frontend navigation tests pass (`79` tests). `npm run format`/`npm run typecheck` could not run because `prettier` is absent from the repository environment; no dependencies were installed per `AGENTS.md`.
 
 Member overview already sourced `shares_kobo` from the ledger; it now displays it explicitly, and the statement includes a ledger-derived `shares_balance_kobo` plus `share purchase` entries.
+
+Final available validation: Python compilation, `git diff --check`, and frontend navigation tests pass (79 tests). Final `make fmt` and `make check-fast` both remain blocked by the missing `backend/.venv/bin/ruff`; `scripts/check_migrations.sh` is blocked by missing Alembic. PR #73 is confirmed draft.
