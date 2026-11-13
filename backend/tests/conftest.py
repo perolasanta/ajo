@@ -19,6 +19,8 @@ from hypothesis import settings
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import NullPool
 
+pytest_plugins = ("tests.helpers.settings",)
+
 # Test-only secrets must exist before any module can load cached application settings.
 os.environ["APP_ENV"] = "development"
 os.environ["PUBLIC_BASE_URL"] = "https://app.example.test"
