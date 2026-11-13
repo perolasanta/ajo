@@ -85,6 +85,7 @@ class MemberStatementItem(_MemberResponse):
 
 class MemberStatementPage(_MemberResponse):
     items: list[MemberStatementItem]
+    shares_balance_kobo: int = 0
     page: int
     page_size: int
     total: int

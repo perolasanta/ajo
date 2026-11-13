@@ -26,6 +26,9 @@ async def get_action_counts(current: CurrentSession) -> dict[str, dict[str, int]
         summary["withdrawal_requests"] = {
             "awaiting_approval": count(eligibility.WITHDRAWAL_APPROVAL)
         }
+        summary["share_purchases"] = {
+            "awaiting_approval": count(eligibility.SHARE_PURCHASE_APPROVAL)
+        }
         summary.setdefault("payments", {})["awaiting_deposit"] = count(eligibility.CASH_DEPOSIT)
     if "admin" in roles:
         summary.setdefault("payroll", {})["awaiting_sign_off"] = count(eligibility.PAYROLL_SIGN_OFF)

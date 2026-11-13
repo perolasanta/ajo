@@ -222,3 +222,13 @@ Payroll run detail displays the sign-off actor using the existing payroll name-o
 ## 14. Cooperative settings screens
 
 The staff Settings navigation is available only to admins and officers. Officers may propose policy and loan-product versions; only admins may approve or supersede, and existing service-layer actor-separation and immutability rules remain authoritative. Settings reads are tenant-scoped and restricted to admin/officer. The UI accepts naira, percentages, months and loan-to-savings multiples, converting them to integer kobo/basis points/x100 at the API boundary. Effective dates are entered and displayed as WAT calendar dates. Policy versions are not edited in place; loan product changes create a new version.
+
+## 15. Share purchases from savings
+
+Share purchases cost one naira per share by default. Each cooperative stores its integer naira unit price setting; requests snapshot that price and the computed integer-kobo amount. Purchases may be requested for any positive number of shares by an officer or treasurer, and only for an active member.
+
+The only payment source in this flow is the member's withdrawable savings ledger balance. Approval rechecks that balance and, in the same transaction, posts a balanced journal entry debiting the member's savings account and crediting the member's shares account. Ajo records and enforces the approval; it never moves money. Shares balances and statements are always derived from journal lines.
+
+Requests use maker-checker separation: the requester can never approve or reject their own request, and only a different treasurer may decide. Admin, committee, and auditor are read-only. Requests have `pending`, `approved`, `rejected`, and `cancelled` statuses; rejection requires a note, the requester may cancel while pending, and only one pending request per member is allowed.
+
+**TODO:** salary-deduction-funded share purchases are intentionally out of scope. Define and approve that payment source, payroll interaction, and separation-of-duties rules before implementing it.

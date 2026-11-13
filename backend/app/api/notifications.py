@@ -41,6 +41,10 @@ class WithdrawalRequestActionCounts(BaseModel):
     awaiting_approval: int | None = None
 
 
+class SharePurchaseActionCounts(BaseModel):
+    awaiting_approval: int | None = None
+
+
 class SettingsActionCounts(BaseModel):
     policy_approval: int | None = None
     product_approval: int | None = None
@@ -55,6 +59,7 @@ class NotificationSummaryResponse(BaseModel):
     role_changes: RoleChangeActionCounts | None = None
     loans: LoanActionCounts | None = None
     withdrawal_requests: WithdrawalRequestActionCounts | None = None
+    share_purchases: SharePurchaseActionCounts | None = None
     settings: SettingsActionCounts | None = None
 
 
