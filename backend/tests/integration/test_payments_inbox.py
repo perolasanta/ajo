@@ -20,8 +20,8 @@ from app.domains.notifications.eligibility import (
 )
 from app.domains.notifications.outbox import decrypt_payload
 from app.domains.payments import service
-from tests.integration.test_members import session, setup_tenant
 from tests.helpers.postgres import check_constraint_array_values
+from tests.integration.test_members import session, setup_tenant
 
 pytestmark = pytest.mark.db
 
