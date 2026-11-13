@@ -62,6 +62,13 @@ def test_every_action_spec_has_an_enqueue_call_site() -> None:
                 wired.add(event.value)
             elif isinstance(event, ast.Name) and event.id in constants:
                 wired.add(constants[event.id])
+            elif (
+                isinstance(event, ast.Attribute)
+                and isinstance(event.value, ast.Name)
+                and event.value.id == "eligibility"
+                and event.attr in constants
+            ):
+                wired.add(constants[event.attr])
 
     missing = sorted(_action_spec_keys() - wired)
     assert not missing, f"ACTION_SPECS kinds without enqueue call sites: {missing}"
