@@ -271,6 +271,16 @@ test("withdrawal action badges count only for treasurers", () => {
   assert.equal(totalVisibleActionCount(visibleNavigation(["officer"]), summary, ["officer"]), 0);
 });
 
+test("Share purchases badge counts only treasurer approval actions", () => {
+  const summary = { share_purchases: { awaiting_approval: 3 } };
+  assert.equal(menuActionCount("Share purchases", summary, ["officer"]), 0);
+  assert.equal(menuActionCount("Share purchases", summary, ["treasurer"]), 3);
+});
+
+test("Share purchases action badge deep-links to the needs-my-action list", () => {
+  assert.match(navigationTarget("Share purchases", 1), /^\/share-purchases\?mine=needed$/);
+});
+
 test("mobile menu badge caps totals at 99+", () => {
   const roles = ["treasurer"];
   const total = totalVisibleActionCount(

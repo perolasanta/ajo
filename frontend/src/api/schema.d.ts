@@ -438,6 +438,7 @@ export type NotificationSummary = {
   role_changes?: { awaiting_approval?: number };
   loans?: { awaiting_decision?: number; disputed_or_paused?: number };
   withdrawal_requests?: { awaiting_approval?: number };
+  share_purchases?: { awaiting_approval?: number };
   settings?: { policy_approval?: number; product_approval?: number };
 };
 

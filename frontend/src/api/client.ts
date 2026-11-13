@@ -167,6 +167,51 @@ export function getWithdrawalRequests(
   return request<WithdrawalQueuePage>(`/withdrawal-requests?${query.toString()}`);
 }
 
+export type SharePurchaseItem = {
+  id: string;
+  member_id: string;
+  member_name: string;
+  shares_count: number;
+  unit_price_naira: number;
+  amount_kobo: number;
+  status: string;
+  requested_by: string;
+  requester_name: string;
+  decided_by?: string | null;
+  decision_note?: string | null;
+  created_at: string;
+  decided_at?: string | null;
+  cancelled_at?: string | null;
+  journal_entry_id?: string | null;
+};
+
+export type SharePurchasePage = {
+  items: SharePurchaseItem[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
+export function getSharePurchases(
+  params: { status?: string; mine?: "all" | "needed" } = {},
+): Promise<SharePurchasePage> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.mine) query.set("mine", params.mine);
+  return request<SharePurchasePage>(`/share-purchases?${query.toString()}`);
+}
+
+export function requestSharePurchase(body: {
+  member_id: string;
+  shares_count: number;
+}): Promise<{ share_purchase_request_id: string }> {
+  return request<{ share_purchase_request_id: string }>("/share-purchases", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export function getPayments(
   params: {
     status?: string;

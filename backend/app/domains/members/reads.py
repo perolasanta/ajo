@@ -76,6 +76,7 @@ STATEMENT_QUERY = text(
              WHEN source_type IN ('contribution','member_contribution') THEN 'contribution'
              WHEN source_type IN ('payroll','payroll_deduction') THEN 'payroll deduction'
              WHEN source_type IN ('withdrawal','member_withdrawal') THEN 'withdrawal'
+             WHEN source_type = 'share_purchase' THEN 'share purchase'
              WHEN source_type IN ('repayment','loan_repayment') THEN 'repayment'
              ELSE source_type
            END AS type,

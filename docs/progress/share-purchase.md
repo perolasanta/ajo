@@ -4,7 +4,7 @@
 - [x] 2. Add the migration and shares ledger account
 - [x] 3. Add backend service, API, and tests
 - [x] 4. Add notifications and tests
-- [ ] 5. Add the frontend page, actions, navigation badge, and tests
+- [x] 5. Add the frontend page, actions, navigation badge, and tests
 - [ ] 6. Add share purchases and shares balance to member overview and statement
 - [ ] 7. Update decisions, run final checks, and confirm draft PR
 
@@ -33,3 +33,5 @@ Migration `0037_share_purchase_requests.py` is syntactically valid. `scripts/che
 Backend files and the contract tests pass Python compilation and `git diff --check`. Database-backed tests and the required `make fmt`/`make check-fast` remain unavailable because the repository virtualenv/dependencies are absent.
 
 Notification migration `0038` keeps the action-kind allowlist aligned with `ACTION_SPECS`, preserves channel-aware deduplication, and the request path uses the shared eligibility/notification enqueue function.
+
+Frontend navigation tests pass (`79` tests). `npm run format`/`npm run typecheck` could not run because `prettier` is absent from the repository environment; no dependencies were installed per `AGENTS.md`.
