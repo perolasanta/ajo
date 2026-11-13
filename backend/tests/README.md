@@ -85,27 +85,25 @@ async def test_member_list_contains_only_the_current_tenant(
 
 ## Service test with a database
 
-Source: `integration/test_payments_inbox.py::test_cash_on_hand_equals_unbanked_receipts`.
+Source: `integration/test_payments_inbox.py::test_member_balance_matches_cash_contribution_ledger`.
 
 ```python
-async def test_service_behavior_uses_a_fresh_tenant(
+async def test_member_balance_matches_cash_contribution_ledger(
     db: asyncpg.Connection, notification_settings: Settings
 ) -> None:
-    cooperative_id, officer, _, member_id, _ = await payment_tenant(db)
-    result = await service.record_payment(
-        session(cooperative_id, officer, "officer"),
+    cid, officer, _, member_id, _ = await payment_tenant(db)
+    await service.record_payment(
+        session(cid, officer, "officer"),
         member_id=member_id,
         channel="cash",
-        purpose="shares",
-        amount_kobo=24_500,
+        purpose="savings",
+        amount_kobo=9876,
         provider="manual",
         provider_reference=None,
         received_on=today_wat(),
-        idempotency_key="service-test-payment",
+        idempotency_key="cash-balance-1",
     )
-
-    assert result["status"] == "received"
-    assert await service.cash_on_hand_balance(cooperative_id) == 24_500
+    assert (await member_balances(cid, member_id))["savings_kobo"] == 9876
 ```
 
 This test requests `notification_settings` even though the channels are disabled, so behavior does not inherit a developer's local channel settings.
@@ -149,8 +147,14 @@ Use `tests.helpers.postgres.check_constraint_array_values` rather than asserting
 Source: `../../frontend/src/payrollPolicy.test.mjs`.
 
 ```javascript
-test("payroll file validation rejects non-CSV files with a useful message", () => {
-  const file = { name: "payroll.xlsx", type: "text/csv", size: 1024 };
-  assert.match(validatePayrollFile(file), /\.csv/);
+test("payroll file validation accepts just under 5 MiB and rejects just over or non-CSV files", () => {
+  const valid = { name: "payroll.csv", type: "text/csv", size: maxPayrollUploadBytes - 1 };
+  assert.equal(validatePayrollFile(valid), null);
+  assert.equal(
+    validatePayrollFile({ ...valid, size: maxPayrollUploadBytes + 1 }),
+    "Payroll files must be 5 MiB (5 × 1024 × 1024 bytes) or smaller.",
+  );
+  assert.match(validatePayrollFile({ ...valid, name: "payroll.xlsx" }), /\.csv/);
+  assert.match(validatePayrollFile({ ...valid, type: "application/vnd.ms-excel" }), /text\/csv/);
 });
 ```
