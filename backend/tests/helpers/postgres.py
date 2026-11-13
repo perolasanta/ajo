@@ -18,8 +18,7 @@ def check_constraint_array_values(definition: str, *, column: str) -> set[str]:
         raise ValueError(f"No = ANY (ARRAY[...]) expression found for {column!r}")
 
     values = {
-        literal.replace("''", "'")
-        for literal in _STRING_LITERAL.findall(match.group("values"))
+        literal.replace("''", "'") for literal in _STRING_LITERAL.findall(match.group("values"))
     }
     if not values:
         raise ValueError(f"No string values found in {column!r} constraint array")
