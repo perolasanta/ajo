@@ -44,9 +44,7 @@ async def test_forbidden_role_receives_403(role: str, monkeypatch: pytest.Monkey
     app.include_router(audit_api.router, prefix="/api/v1")
     app.dependency_overrides[audit_api.current_session] = lambda: _session(role)
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/api/v1/audit-events")
 
     assert response.status_code == 403
