@@ -1,7 +1,7 @@
 # Share purchase from savings — progress
 
 - [x] 1. Read existing patterns and write the implementation plan
-- [ ] 2. Add the migration and shares ledger account
+- [x] 2. Add the migration and shares ledger account
 - [ ] 3. Add backend service, API, and tests
 - [ ] 4. Add notifications and tests
 - [ ] 5. Add the frontend page, actions, navigation badge, and tests
@@ -27,3 +27,5 @@
 - `ledger.chart.DEFAULT_CHART` already includes `member_shares`; the migration must ensure existing cooperatives have that account without duplicating it.
 
 Checks: `make fmt`/`make check-fast` could not run because the repository's `backend/.venv/bin/ruff` is absent; no dependencies were installed per `AGENTS.md`.
+
+Migration `0037_share_purchase_requests.py` is syntactically valid. `scripts/check_migrations.sh` could not read Alembic because the repository environment is not installed (`No module named alembic`).
