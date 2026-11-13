@@ -40,6 +40,9 @@ def test_request_enqueues_the_shared_action_notification() -> None:
     source = inspect.getsource(service.request_purchase)
     assert "enqueue_action_notifications_safely" in source
     assert "SHARE_PURCHASE_APPROVAL" in source
-    migration = Path("backend/migrations/versions/0038_share_purchase_notification_kind.py").read_text()
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "migrations/versions/0038_share_purchase_notification_kind.py"
+    ).read_text()
     assert "share_purchase_needs_approval" in migration
     assert "channel IN ('email','telegram')" in migration
