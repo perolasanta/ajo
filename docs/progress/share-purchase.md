@@ -2,7 +2,7 @@
 
 - [x] 1. Read existing patterns and write the implementation plan
 - [x] 2. Add the migration and shares ledger account
-- [ ] 3. Add backend service, API, and tests
+- [x] 3. Add backend service, API, and tests
 - [ ] 4. Add notifications and tests
 - [ ] 5. Add the frontend page, actions, navigation badge, and tests
 - [ ] 6. Add share purchases and shares balance to member overview and statement
@@ -29,3 +29,5 @@
 Checks: `make fmt`/`make check-fast` could not run because the repository's `backend/.venv/bin/ruff` is absent; no dependencies were installed per `AGENTS.md`.
 
 Migration `0037_share_purchase_requests.py` is syntactically valid. `scripts/check_migrations.sh` could not read Alembic because the repository environment is not installed (`No module named alembic`).
+
+Backend files and the contract tests pass Python compilation and `git diff --check`. Database-backed tests and the required `make fmt`/`make check-fast` remain unavailable because the repository virtualenv/dependencies are absent.

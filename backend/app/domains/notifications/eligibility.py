@@ -20,6 +20,7 @@ ROLE_CHANGE_APPROVAL = "role_change_approval"
 LOAN_DECISION = "loan_decision"
 LOAN_DISPUTED = "loan_disputed"
 WITHDRAWAL_APPROVAL = "withdrawal_approval"
+SHARE_PURCHASE_APPROVAL = "share_purchase_needs_approval"
 POLICY_APPROVAL = "policy_approval"
 PRODUCT_APPROVAL = "product_approval"
 
@@ -130,6 +131,14 @@ ACTION_SPECS = {
         "A withdrawal request needs your approval.",
         "/members/{member_id}?withdrawal_request={id}",
     ),
+    SHARE_PURCHASE_APPROVAL: ActionSpec(
+        frozenset({"treasurer"}),
+        "share_purchases",
+        "Share purchases",
+        "share purchase approval",
+        "A share purchase needs your approval.",
+        "/share-purchases/{id}",
+    ),
     POLICY_APPROVAL: ActionSpec(
         frozenset({"admin"}),
         "settings",
@@ -223,6 +232,12 @@ _CANDIDATE_SQL = {
         FROM withdrawal_requests wr
         WHERE wr.cooperative_id=:cooperative_id AND wr.status='pending'
           AND (CAST(:entity_id AS uuid) IS NULL OR wr.id=CAST(:entity_id AS uuid))
+    """,
+    SHARE_PURCHASE_APPROVAL: """
+        SELECT r.id AS entity_id, ARRAY[r.requested_by]::uuid[] AS excluded_user_ids
+        FROM share_purchase_requests r
+        WHERE r.cooperative_id=:cooperative_id AND r.status='pending'
+          AND (CAST(:entity_id AS uuid) IS NULL OR r.id=CAST(:entity_id AS uuid))
     """,
     POLICY_APPROVAL: """
         SELECT p.id AS entity_id, ARRAY[p.proposed_by]::uuid[] AS excluded_user_ids
@@ -390,6 +405,9 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
     UNION ALL
     SELECT 'withdrawal_approval', wr.id, ARRAY[wr.requested_by]::uuid[]
       FROM withdrawal_requests wr WHERE wr.cooperative_id=:cooperative_id AND wr.status='pending'
+    UNION ALL
+    SELECT 'share_purchase_needs_approval', r.id, ARRAY[r.requested_by]::uuid[]
+      FROM share_purchase_requests r WHERE r.cooperative_id=:cooperative_id AND r.status='pending'
     UNION ALL
     SELECT 'policy_approval', p.id, ARRAY[p.proposed_by]::uuid[]
       FROM cooperative_policy_versions p
