@@ -12,8 +12,20 @@ Read docs/context.md before any task. It is the source of truth.
 - Tests never run against Neon. Database tests use a local Postgres (see make test). Neon is only for `make migrate` on dev and `make smoke`.
 - While working, run only the tests for the code you touched (pytest path::test or -k). Run `make test` once at the end. `make test-all` only when I ask.
 - If a test fails twice for the same reason, stop and report instead of trying a third fix.
-- Write only the tests the task lists. Do not add extra tests.
-- Final report: at most 12 lines (what changed, test result, anything I must decide).
+ - Write only the tests the task lists. Do not add extra tests.
+ - Final report: at most 12 lines (what changed, test result, anything I must decide).
+
+## Test-writing rules
+
+1. Copy the structure of the closest existing passing test in the same module and use the templates in `tests/README.md`.
+2. Never assert on formatting you have not seen: do not parse Postgres output (constraint definitions render as `kind = ANY (ARRAY[...])`); use the helpers in `tests/helpers`; never compare a string with a regex using `strictEqual` or `==`; use `assert.match` or `re.search`.
+3. Assert behaviour, not shapes that evolve: check the keys the feature owns instead of full-dict equality, match a stable phrase in messages, and use the shared constants for fallbacks (`"Unnamed user"`, `"Unknown user"`).
+4. One definition per name: no repeated dictionary keys, no test function defined twice.
+5. Tests must not depend on the environment: set required settings (`EMAIL_ENABLED`, `TELEGRAM_ENABLED`, `PUBLIC_BASE_URL` and similar) explicitly through a fixture, create your own cooperative per test, no ordering dependence, no real clock, no Hypothesis deadline on database tests.
+6. Changing behaviour means changing its tests in the same commit: grep `tests/` and `frontend/src` for the old key, text, status or import and update every hit.
+7. Red-first tests must fail for the intended reason and must never import names that do not exist yet in a module CI collects (put a minimal stub in the same commit), and a PR is never ready while collection is broken.
+8. Run `make check-fast` before every commit that ends a step, and if you cannot run tests say so in the first line of your report and keep new tests to the templates.
+9. When you cannot run database tests, use CI as the runner: push, read the failing job, fix, repeat, at most 5 cycles.
 
 ## Checks
 Agents run `make check-fast` before every commit that ends a step. The owner runs `make check` before every push. Never report a task as finished if `make check-fast` fails. In the final report, list which checks could not run.
