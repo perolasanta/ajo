@@ -10,10 +10,16 @@ from zoneinfo import ZoneInfo
 import asyncpg
 import pytest
 
+from app.core.config import get_settings
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.members.service import member_balances
-from app.domains.notifications.eligibility import ACTION_SPECS, CASH_DEPOSIT, PAYMENT_CONFIRMATION
+from app.domains.notifications.eligibility import (
+    ACTION_SPECS,
+    CASH_DEPOSIT,
+    PAYMENT_CONFIRMATION,
+)
+from app.domains.notifications.outbox import decrypt_payload
 from app.domains.payments import service
 from tests.integration.test_members import session, setup_tenant
 
@@ -461,3 +467,63 @@ async def test_payment_list_is_tenant_scoped_named_and_never_returns_bank_number
 
     for response in responses:
         assert_no_bank_account_numbers(response)
+
+
+async def test_recorded_transfer_queues_one_confirmation_per_enabled_channel(
+    db: asyncpg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "email_enabled", True)
+    monkeypatch.setattr(settings, "telegram_enabled", False)
+    cid, officer, treasurer, member_id, _ = await payment_tenant(db)
+
+    payment = await record_transfer(cid, officer, member_id, "BANK-ALERT-1")
+    rows = await db.fetch(
+        """SELECT recipient_user_id,kind,entity_id,channel,payload_encrypted
+           FROM notifications WHERE cooperative_id=$1 AND entity_id=$2 AND kind=$3""",
+        cid,
+        payment["id"],
+        PAYMENT_CONFIRMATION,
+    )
+
+    assert [(row["recipient_user_id"], row["channel"]) for row in rows] == [(treasurer, "email")]
+    assert officer not in {row["recipient_user_id"] for row in rows}
+    payload = decrypt_payload(rows[0]["payload_encrypted"])
+    assert set(payload) == {"section", "action_kind", "message", "url"}
+    assert "12500" not in str(payload)
+    assert str(member_id) not in str(payload)
+
+
+async def test_recorded_cash_queues_one_deposit_alert_per_enabled_channel(
+    db: asyncpg.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "email_enabled", True)
+    monkeypatch.setattr(settings, "telegram_enabled", False)
+    cid, officer, treasurer, member_id, _ = await payment_tenant(db)
+
+    payment = await service.record_payment(
+        session(cid, officer, "officer"),
+        member_id=member_id,
+        channel="cash",
+        purpose="shares",
+        amount_kobo=24500,
+        provider="manual",
+        provider_reference=None,
+        received_on=today_wat(),
+        idempotency_key="cash-alert-1",
+    )
+    rows = await db.fetch(
+        """SELECT recipient_user_id,kind,entity_id,channel,payload_encrypted
+           FROM notifications WHERE cooperative_id=$1 AND entity_id=$2 AND kind=$3""",
+        cid,
+        payment["id"],
+        CASH_DEPOSIT,
+    )
+
+    assert [(row["recipient_user_id"], row["channel"]) for row in rows] == [(treasurer, "email")]
+    assert officer not in {row["recipient_user_id"] for row in rows}
+    payload = decrypt_payload(rows[0]["payload_encrypted"])
+    assert set(payload) == {"section", "action_kind", "message", "url"}
+    assert "24500" not in str(payload)
+    assert str(member_id) not in str(payload)
