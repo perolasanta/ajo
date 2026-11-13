@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 from app.api import share_purchases
 from app.domains.notifications import eligibility
@@ -33,3 +34,12 @@ def test_approval_posts_one_atomic_ledger_entry() -> None:
     assert "member_savings" in source
     assert "member_shares" in source
     assert "savings are insufficient" in source
+
+
+def test_request_enqueues_the_shared_action_notification() -> None:
+    source = inspect.getsource(service.request_purchase)
+    assert "enqueue_action_notifications_safely" in source
+    assert "SHARE_PURCHASE_APPROVAL" in source
+    migration = Path("backend/migrations/versions/0038_share_purchase_notification_kind.py").read_text()
+    assert "share_purchase_needs_approval" in migration
+    assert "channel IN ('email','telegram')" in migration
