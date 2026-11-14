@@ -1,13 +1,13 @@
 # Bank statement import progress
 
-STATE: Date serialization bug fixed; the bank-statement integration slice passes the targeted DB tests, and the PR remains draft.
+STATE: Matching logic added for bank-statement credit lines, with the targeted integration slice passing and the draft work continuing on accept/ignore and frontend.
 
 ## Checklist
 
 - [x] 1. Read payments inbox, payment confirmation, ledger, payroll CSV import, and list-page patterns; write implementation plan.
 - [x] 2. Add the bank statement migration with tables, constraints, unique indexes, and RLS.
 - [x] 3. Add parser tests and implementation with preview/import endpoint and duplicate handling.
-- [ ] 4. Add matcher tests and implementation with list/get endpoints and tenant isolation.
+- [x] 4. Add matcher tests and implementation with list/get endpoints and tenant isolation.
 - [ ] 5. Add accept/ignore tests and implementation using existing payment confirmation.
 - [ ] 6. Add the Bank statements frontend page, navigation, and frontend tests.
 - [ ] 7. Update docs, run final checks, push, and keep the PR draft.

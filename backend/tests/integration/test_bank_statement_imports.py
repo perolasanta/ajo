@@ -11,6 +11,7 @@ import pytest
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.domains.auth.service import CurrentSession
 from app.domains.bank_statements import service
+from app.domains.payments import service as payment_service
 from tests.conftest import create_tenant
 
 pytestmark = pytest.mark.db
@@ -162,3 +163,184 @@ async def test_import_keeps_line_dates_as_date_objects(db):
         date(2024, 2, 27),
         date(2024, 2, 28),
     ]
+
+
+async def test_match_statement_lines_classifies_exact_likely_and_ambiguous_matches(db):
+    seed = await create_tenant(
+        db,
+        slug_prefix="bankstmt-match",
+        roles=("treasurer", "officer"),
+        include_member=True,
+    )
+    cid = seed.cooperative_id
+    actor = seed.user_ids[0]
+    member_id = seed.member_id
+    current = session(cid, actor, "treasurer")
+
+    await payment_service.record_payment(
+        current,
+        member_id=member_id,
+        channel="bank_transfer",
+        purpose="savings",
+        amount_kobo=125000,
+        provider="manual",
+        provider_reference="REF-123",
+        received_on=date(2024, 3, 1),
+        idempotency_key="match-exact",
+    )
+    likely = await payment_service.record_payment(
+        current,
+        member_id=member_id,
+        channel="bank_transfer",
+        purpose="dues",
+        amount_kobo=150000,
+        provider="manual",
+        provider_reference="LIKELY-001",
+        received_on=date(2024, 3, 4),
+        idempotency_key="match-likely",
+    )
+    await payment_service.record_payment(
+        current,
+        member_id=member_id,
+        channel="bank_transfer",
+        purpose="shares",
+        amount_kobo=180000,
+        provider="manual",
+        provider_reference="AMB-1",
+        received_on=date(2024, 3, 4),
+        idempotency_key="match-ambiguous-a",
+    )
+    await payment_service.record_payment(
+        current,
+        member_id=member_id,
+        channel="bank_transfer",
+        purpose="savings",
+        amount_kobo=180000,
+        provider="manual",
+        provider_reference="AMB-2",
+        received_on=date(2024, 3, 5),
+        idempotency_key="match-ambiguous-b",
+    )
+    await payment_service.record_payment(
+        current,
+        member_id=member_id,
+        channel="bank_transfer",
+        purpose="savings",
+        amount_kobo=200000,
+        provider="manual",
+        provider_reference="OUT-OF-WINDOW",
+        received_on=date(2024, 3, 12),
+        idempotency_key="match-outside-window",
+    )
+
+    csv_text = (
+        "Date,Narration,Amount,Reference\n"
+        "2024-03-01,Transfer for REF-123,1250.00,REF-123\n"
+        "2024-03-05,Transfer from family savings,1500.00,\n"
+        "2024-03-03,Transfer from member name,1800.00,AMB-1\n"
+        "2024-03-09,Transfer with no match,900.00,REF-Z\n"
+        "2024-03-02,Transfer with one kobo off,1250.01,REF-ONE-KOBO-OFF\n"
+        "2024-03-20,Outside window amount,2000.00,OUT-OF-WINDOW\n"
+        "2024-03-01,Duplicate exact line,1250.00,REF-123\n"
+    )
+    imported = await service.import_statement_file(
+        current,
+        content=csv_text.encode(),
+        filename="match.csv",
+        column_map={
+            "date": "Date",
+            "narration": "Narration",
+            "amount": "Amount",
+            "reference": "Reference",
+        },
+    )
+    assert imported["inserted_count"] == 7
+
+    result = await service.match_statement_lines(current)
+    assert result["updated_count"] == 2
+    assert result["matched_count"] == 2
+
+    rows = await db.fetch(
+        "SELECT id, status, matched_payment_id, line_date, narration FROM bank_statement_lines WHERE cooperative_id=$1 ORDER BY line_date, narration",
+        cid,
+    )
+    suggested = [row for row in rows if row["status"] == "suggested"]
+    assert len(suggested) == 2
+    assert any(row["narration"] == "Transfer from family savings" for row in suggested)
+    exact_set = {"Transfer for REF-123", "Duplicate exact line"}
+    assert len({row["narration"] for row in suggested}.intersection(exact_set)) == 1
+    assert all(
+        row["status"] == "unmatched"
+        for row in rows
+        if row["narration"] not in {"Transfer from family savings"}
+        and row["narration"] not in exact_set
+    )
+
+    exact_rows = await db.fetch(
+        "SELECT matched_payment_id FROM bank_statement_lines WHERE cooperative_id=$1 AND narration = ANY($2)",
+        cid,
+        ["Transfer for REF-123", "Duplicate exact line"],
+    )
+    assert sum(1 for row in exact_rows if row["matched_payment_id"] is not None) == 1
+    likely_row = await db.fetchrow(
+        "SELECT matched_payment_id FROM bank_statement_lines WHERE cooperative_id=$1 AND narration=$2",
+        cid,
+        "Transfer from family savings",
+    )
+    assert likely_row is not None and str(likely_row["matched_payment_id"]) == str(likely["id"])
+    ambiguous_row = await db.fetchrow(
+        "SELECT status, matched_payment_id FROM bank_statement_lines WHERE cooperative_id=$1 AND narration=$2",
+        cid,
+        "Transfer from member name",
+    )
+    assert ambiguous_row["status"] == "unmatched"
+    assert ambiguous_row["matched_payment_id"] is None
+
+
+async def test_match_statement_lines_is_tenant_scoped(db):
+    seed = await create_tenant(
+        db,
+        slug_prefix="bankstmt-match-other",
+        roles=("treasurer", "officer"),
+        include_member=True,
+    )
+    other = await create_tenant(
+        db,
+        slug_prefix="bankstmt-match-tenant-b",
+        roles=("treasurer", "officer"),
+        include_member=True,
+    )
+    current = session(seed.cooperative_id, seed.user_ids[0], "treasurer")
+    other_current = session(other.cooperative_id, other.user_ids[0], "treasurer")
+
+    await payment_service.record_payment(
+        other_current,
+        member_id=other.member_id,
+        channel="bank_transfer",
+        purpose="savings",
+        amount_kobo=125000,
+        provider="manual",
+        provider_reference="REF-OTHER",
+        received_on=date(2024, 3, 2),
+        idempotency_key="match-tenant-other",
+    )
+
+    csv_text = (
+        "Date,Narration,Amount,Reference\n2024-03-01,Transfer for REF-OTHER,1250.00,REF-OTHER\n"
+    )
+    imported = await service.import_statement_file(
+        current,
+        content=csv_text.encode(),
+        filename="tenant-isolation.csv",
+        column_map={
+            "date": "Date",
+            "narration": "Narration",
+            "amount": "Amount",
+            "reference": "Reference",
+        },
+    )
+    assert imported["inserted_count"] == 1
+
+    result = await service.match_statement_lines(current)
+    assert result["updated_count"] == 0
+    assert result["matched_count"] == 0

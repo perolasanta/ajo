@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.auth import current_session, require_csrf
 from app.domains.auth.service import CurrentSession
@@ -94,6 +94,36 @@ async def import_bank_statement(
     )
 
 
+@router.post("/bank-statements/match", dependencies=[Depends(require_csrf)])
+async def match_bank_statements(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    window_days: int = Query(default=5, ge=0, le=30),
+) -> dict[str, Any]:
+    return await service.match_statement_lines(current, window_days=window_days)
+
+
+@router.get("/bank-statements/lines")
+async def list_bank_statement_lines(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    status: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+) -> dict[str, Any]:
+    return await service.list_statement_lines(
+        current, status=status, page=page, page_size=page_size
+    )
+
+
+@router.get("/bank-statements/lines/{line_id}")
+async def get_bank_statement_line(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    line_id: str,
+) -> dict[str, Any]:
+    import uuid
+
+    return await service.get_statement_line(current, uuid.UUID(line_id))
+
+
 @router.post("/payments/bank-statements/preview", dependencies=[Depends(require_csrf)])
 async def preview_bank_statement_alias(
     current: Annotated[CurrentSession, Depends(current_session)],
@@ -108,3 +138,33 @@ async def import_bank_statement_alias(
     request: Request,
 ) -> dict[str, Any]:
     return await import_bank_statement(current, request)
+
+
+@router.post("/payments/bank-statements/match", dependencies=[Depends(require_csrf)])
+async def match_bank_statements_alias(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    window_days: int = Query(default=5, ge=0, le=30),
+) -> dict[str, Any]:
+    return await service.match_statement_lines(current, window_days=window_days)
+
+
+@router.get("/payments/bank-statements/lines")
+async def list_bank_statement_lines_alias(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    status: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+) -> dict[str, Any]:
+    return await service.list_statement_lines(
+        current, status=status, page=page, page_size=page_size
+    )
+
+
+@router.get("/payments/bank-statements/lines/{line_id}")
+async def get_bank_statement_line_alias(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    line_id: str,
+) -> dict[str, Any]:
+    import uuid
+
+    return await service.get_statement_line(current, uuid.UUID(line_id))
