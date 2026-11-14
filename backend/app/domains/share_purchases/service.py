@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import lock_cooperative_member, transaction
-from app.core.errors import Conflict, Forbidden, NotFound
+from app.core.errors import Conflict, Forbidden, NotFound, UnprocessableEntity
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
 from app.domains.notifications.eligibility import SHARE_PURCHASE_APPROVAL
@@ -24,12 +24,26 @@ def _role(current: CurrentSession, allowed: tuple[str, ...]) -> str:
     raise Forbidden("Role is not permitted for this share purchase action")
 
 
+async def _member_savings_balance(
+    session: AsyncSession, cooperative_id: uuid.UUID, member_id: uuid.UUID
+) -> int:
+    balance = await session.scalar(
+        text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)
+            FROM journal_lines l JOIN accounts a
+              ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
+            WHERE l.cooperative_id=:cid AND l.member_id=:mid
+              AND a.code='member_savings'"""),
+        {"cid": cooperative_id, "mid": member_id},
+    )
+    return int(balance or 0)
+
+
 async def request_purchase(
     current: CurrentSession, member_id: uuid.UUID, shares_count: int
 ) -> uuid.UUID:
     actor_role = _role(current, ("officer", "treasurer"))
     if shares_count <= 0:
-        raise ValueError("shares count must be positive")
+        raise UnprocessableEntity("Shares count must be positive")
     async with transaction(current.cooperative_id) as session:
         member = (
             await session.execute(
@@ -49,6 +63,11 @@ async def request_purchase(
         if unit_price is None:
             raise NotFound("Cooperative not found")
         amount_kobo = shares_count * int(unit_price) * 100
+        savings = await _member_savings_balance(session, current.cooperative_id, member_id)
+        if amount_kobo > savings:
+            raise UnprocessableEntity(
+                "Requested share purchase amount exceeds the member's available savings"
+            )
         try:
             request_id = (
                 await session.execute(
@@ -108,15 +127,10 @@ async def approve_purchase(current: CurrentSession, request_id: uuid.UUID) -> uu
         if row.status != "pending":
             raise Conflict("Share purchase request is no longer pending")
         await lock_cooperative_member(session, current.cooperative_id, row.member_id)
-        savings = await session.scalar(
-            text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)
-                FROM journal_lines l JOIN accounts a
-                  ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
-                WHERE l.cooperative_id=:cid AND l.member_id=:mid
-                  AND a.code='member_savings'"""),
-            {"cid": current.cooperative_id, "mid": row.member_id},
+        savings = await _member_savings_balance(
+            session, current.cooperative_id, row.member_id
         )
-        if int(savings or 0) < int(row.amount_kobo):
+        if savings < int(row.amount_kobo):
             raise Conflict("Member savings are insufficient for this share purchase")
         accounts = (
             await session.execute(
