@@ -7,10 +7,10 @@ STATE: Date serialization bug fixed; the bank-statement integration slice passes
 - [x] 1. Read payments inbox, payment confirmation, ledger, payroll CSV import, and list-page patterns; write implementation plan.
 - [x] 2. Add the bank statement migration with tables, constraints, unique indexes, and RLS.
 - [x] 3. Add parser tests and implementation with preview/import endpoint and duplicate handling.
-- [ ] 4. Add matcher tests and implementation with list/get endpoints and tenant isolation.
-- [ ] 5. Add accept/ignore tests and implementation using existing payment confirmation.
-- [ ] 6. Add the Bank statements frontend page, navigation, and frontend tests.
-- [ ] 7. Update docs, run final checks, push, and keep the PR draft.
+- [x] 4. Add matcher tests and implementation with list/get endpoints and tenant isolation.
+- [x] 5. Add accept/ignore tests and implementation using existing payment confirmation.
+- [x] 6. Add the Bank statements frontend page, navigation, and frontend tests.
+- [x] 7. Update docs, run final checks, push, and keep the PR draft.
 
 ## Plan
 

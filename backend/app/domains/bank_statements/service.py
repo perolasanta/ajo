@@ -8,7 +8,7 @@ import io
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
@@ -16,11 +16,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import transaction
-from app.core.errors import Forbidden, PayloadTooLarge, UnprocessableEntity
+from app.core.errors import Conflict, Forbidden, NotFound, PayloadTooLarge, UnprocessableEntity
 from app.domains.auth.service import CurrentSession
+from app.domains.payments.service import confirm_payment
 
 MAX_BANK_STATEMENT_UPLOAD_BYTES = 2 * 1024 * 1024
 MAX_BANK_STATEMENT_ROWS = 5_000
+DEFAULT_BANK_STATEMENT_MATCH_WINDOW_DAYS = 5
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 
 
@@ -333,3 +335,355 @@ async def import_statement_file(
             "errors": errors,
             "duplicate_file": False,
         }
+
+
+async def list_statement_lines(
+    current: CurrentSession,
+    *,
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer", "admin", "auditor"})
+    if page < 1 or page_size < 1:
+        raise ValueError("Page and page_size must be positive")
+    if status is not None and status not in {"unmatched", "suggested", "matched", "ignored"}:
+        raise ValueError("Unsupported statement line status")
+    async with transaction(current.cooperative_id) as session:
+        conditions = "WHERE cooperative_id=:cid"
+        params: dict[str, Any] = {
+            "cid": current.cooperative_id,
+            "offset": (page - 1) * page_size,
+            "limit": page_size,
+        }
+        if status is not None:
+            conditions += " AND status=:status"
+            params["status"] = status
+        rows = await session.execute(
+            text(
+                """SELECT id, import_id, line_date, narration, reference, credit_kobo, debit_kobo,
+                    fingerprint, status, matched_payment_id, ignored_note, decided_by, created_at, updated_at
+                    FROM bank_statement_lines WHERE cooperative_id=:cid AND (:status::text IS NULL OR status=:status)
+                    ORDER BY line_date DESC, id DESC LIMIT :limit OFFSET :offset"""
+            ),
+            params,
+        )
+        total = await session.scalar(
+            text(
+                "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=:cid AND (:status::text IS NULL OR status=:status)"
+            ),
+            {"cid": current.cooperative_id, "status": status},
+        )
+    items = [
+        {
+            "id": str(row["id"]),
+            "import_id": str(row["import_id"]),
+            "line_date": row["line_date"].isoformat() if row["line_date"] is not None else None,
+            "narration": row["narration"],
+            "reference": row["reference"],
+            "credit_kobo": int(row["credit_kobo"] or 0),
+            "debit_kobo": int(row["debit_kobo"] or 0),
+            "status": row["status"],
+            "matched_payment_id": str(row["matched_payment_id"])
+            if row["matched_payment_id"]
+            else None,
+            "ignored_note": row["ignored_note"],
+            "decided_by": str(row["decided_by"]) if row["decided_by"] else None,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows.mappings().all()
+    ]
+    return {"items": items, "page": page, "page_size": page_size, "total": int(total or 0)}
+
+
+async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer", "admin", "auditor"})
+    async with transaction(current.cooperative_id) as session:
+        row = await session.execute(
+            text(
+                """SELECT id, import_id, line_date, narration, reference, credit_kobo, debit_kobo,
+                    fingerprint, status, matched_payment_id, ignored_note, decided_by, created_at, updated_at
+                    FROM bank_statement_lines WHERE cooperative_id=:cid AND id=:id"""
+            ),
+            {"cid": current.cooperative_id, "id": line_id},
+        )
+        record = row.mappings().one_or_none()
+    if record is None:
+        raise NotFound("Bank statement line not found")
+    return {
+        "id": str(record["id"]),
+        "import_id": str(record["import_id"]),
+        "line_date": record["line_date"].isoformat(),
+        "narration": record["narration"],
+        "reference": record["reference"],
+        "credit_kobo": int(record["credit_kobo"]),
+        "debit_kobo": int(record["debit_kobo"]),
+        "status": record["status"],
+        "matched_payment_id": str(record["matched_payment_id"])
+        if record["matched_payment_id"]
+        else None,
+        "ignored_note": record["ignored_note"],
+        "decided_by": str(record["decided_by"]) if record["decided_by"] else None,
+        "created_at": record["created_at"],
+        "updated_at": record["updated_at"],
+    }
+
+
+async def _line_candidates_for_match(
+    session: AsyncSession,
+    cooperative_id: uuid.UUID,
+    line_date: date,
+    amount_kobo: int,
+    window_days: int,
+) -> list[dict[str, Any]]:
+    start_date = line_date - timedelta(days=window_days)
+    end_date = line_date + timedelta(days=window_days)
+    rows = await session.execute(
+        text(
+            """
+            SELECT p.id, p.amount_kobo, p.provider_reference, p.recorded_by, p.received_on,
+                   m.full_name AS member_name
+            FROM payments p
+            JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+            WHERE p.cooperative_id=:cid
+              AND p.channel='bank_transfer'
+              AND p.status='pending'
+              AND p.amount_kobo=:amount_kobo
+              AND p.received_on BETWEEN :start_date AND :end_date
+            ORDER BY p.received_on, p.id
+            """
+        ),
+        {
+            "cid": cooperative_id,
+            "amount_kobo": amount_kobo,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
+    return [dict(row) for row in rows.mappings().all()]
+
+
+async def auto_match_statement_lines(
+    current: CurrentSession,
+    *,
+    window_days: int = DEFAULT_BANK_STATEMENT_MATCH_WINDOW_DAYS,
+) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer"})
+    if window_days < 0:
+        raise ValueError("Match window must be non-negative")
+    async with transaction(current.cooperative_id) as session:
+        rows = await session.execute(
+            text(
+                """
+                SELECT id, line_date, narration, reference, credit_kobo, status, matched_payment_id
+                FROM bank_statement_lines
+                WHERE cooperative_id=:cid AND status IN ('unmatched','suggested') AND credit_kobo > 0
+                ORDER BY line_date, id
+                """
+            ),
+            {"cid": current.cooperative_id},
+        )
+        all_rows = rows.mappings().all()
+        used_payments: set[uuid.UUID] = set()
+        matched_count = 0
+        ambiguous_count = 0
+        for row in all_rows:
+            line_date = row["line_date"]
+            amount_kobo = int(row["credit_kobo"])
+            candidates = []
+            for payment in await _line_candidates_for_match(
+                session, current.cooperative_id, line_date, amount_kobo, window_days
+            ):
+                if payment["id"] in used_payments:
+                    continue
+                reference_match = False
+                if row["reference"] and payment["provider_reference"]:
+                    reference_match = _normalize_reference(
+                        str(row["reference"])
+                    ) == _normalize_reference(str(payment["provider_reference"]))
+                member_match = False
+                if row["narration"] and payment["member_name"]:
+                    member_match = _normalize_reference(
+                        str(payment["member_name"])
+                    ) in _normalize_reference(str(row["narration"])) or _normalize_reference(
+                        str(row["narration"])
+                    ) in _normalize_reference(str(payment["member_name"]))
+                if reference_match or member_match:
+                    candidates.append((payment, True))
+                else:
+                    candidates.append((payment, False))
+            if len(candidates) == 1:
+                payment = candidates[0][0]
+                used_payments.add(payment["id"])
+                await session.execute(
+                    text(
+                        "UPDATE bank_statement_lines SET status=:status, matched_payment_id=:payment_id, decided_by=NULL, ignored_note=NULL, updated_at=now() WHERE cooperative_id=:cid AND id=:id"
+                    ),
+                    {
+                        "cid": current.cooperative_id,
+                        "id": row["id"],
+                        "status": "suggested",
+                        "payment_id": payment["id"],
+                    },
+                )
+                matched_count += 1
+            elif len(candidates) > 1:
+                ambiguous_count += 1
+                await session.execute(
+                    text(
+                        "UPDATE bank_statement_lines SET status='unmatched', matched_payment_id=NULL, decided_by=NULL, ignored_note=NULL, updated_at=now() WHERE cooperative_id=:cid AND id=:id"
+                    ),
+                    {"cid": current.cooperative_id, "id": row["id"]},
+                )
+    return {
+        "matched_count": matched_count,
+        "ambiguous_count": ambiguous_count,
+        "window_days": window_days,
+    }
+
+
+async def accept_statement_line(
+    current: CurrentSession,
+    line_id: uuid.UUID,
+    *,
+    idempotency_key: str,
+    payment_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer"})
+    if not idempotency_key.strip():
+        raise ValueError("Idempotency key is required")
+    async with transaction(current.cooperative_id) as session:
+        row = await session.execute(
+            text(
+                "SELECT * FROM bank_statement_lines WHERE cooperative_id=:cid AND id=:id FOR UPDATE"
+            ),
+            {"cid": current.cooperative_id, "id": line_id},
+        )
+        record = row.mappings().one_or_none()
+        if record is None:
+            raise NotFound("Bank statement line not found")
+        if record["status"] == "matched":
+            raise Conflict("This statement line has already been matched")
+        if record["status"] == "ignored":
+            raise Conflict("This statement line was ignored and cannot be accepted")
+        resolved_payment_id = payment_id or record["matched_payment_id"]
+        if resolved_payment_id is None:
+            raise Conflict("No suggested payment is available to accept")
+        payment_row = await session.execute(
+            text(
+                "SELECT id, status, recorded_by FROM payments WHERE cooperative_id=:cid AND id=:id FOR UPDATE"
+            ),
+            {"cid": current.cooperative_id, "id": resolved_payment_id},
+        )
+        payment = payment_row.mappings().one_or_none()
+        if payment is None:
+            raise NotFound("Payment not found")
+        if payment["status"] != "pending":
+            raise Conflict(
+                "This payment is no longer pending and cannot be accepted from the statement"
+            )
+        if payment["recorded_by"] == current.user_id:
+            raise Conflict("A different user must confirm a payment")
+    result = await confirm_payment(current, resolved_payment_id, idempotency_key)
+    async with transaction(current.cooperative_id) as session:
+        row = await session.execute(
+            text(
+                "SELECT * FROM bank_statement_lines WHERE cooperative_id=:cid AND id=:id FOR UPDATE"
+            ),
+            {"cid": current.cooperative_id, "id": line_id},
+        )
+        record = row.mappings().one_or_none()
+        if record is None:
+            raise NotFound("Bank statement line not found")
+        if record["status"] == "matched":
+            raise Conflict("This statement line has already been matched")
+        if record["status"] == "ignored":
+            raise Conflict("This statement line was ignored and cannot be accepted")
+        await session.execute(
+            text(
+                "UPDATE bank_statement_lines SET status='matched', matched_payment_id=:payment_id, decided_by=:actor, ignored_note=NULL, updated_at=now() WHERE cooperative_id=:cid AND id=:id"
+            ),
+            {
+                "cid": current.cooperative_id,
+                "id": line_id,
+                "payment_id": resolved_payment_id,
+                "actor": current.user_id,
+            },
+        )
+    return {
+        "line_id": str(line_id),
+        "payment_id": str(resolved_payment_id),
+        "status": "matched",
+        "confirmation": result,
+    }
+
+
+async def ignore_statement_line(
+    current: CurrentSession,
+    line_id: uuid.UUID,
+    *,
+    note: str,
+) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer"})
+    if not note.strip():
+        raise ValueError("Ignore note is required")
+    async with transaction(current.cooperative_id) as session:
+        row = await session.execute(
+            text(
+                "SELECT * FROM bank_statement_lines WHERE cooperative_id=:cid AND id=:id FOR UPDATE"
+            ),
+            {"cid": current.cooperative_id, "id": line_id},
+        )
+        record = row.mappings().one_or_none()
+        if record is None:
+            raise NotFound("Bank statement line not found")
+        if record["status"] == "matched":
+            raise Conflict("This statement line has already been matched and cannot be ignored")
+        if record["status"] == "ignored":
+            raise Conflict("This statement line is already ignored")
+        await session.execute(
+            text(
+                "UPDATE bank_statement_lines SET status='ignored', matched_payment_id=NULL, ignored_note=:note, decided_by=:actor, updated_at=now() WHERE cooperative_id=:cid AND id=:id"
+            ),
+            {
+                "cid": current.cooperative_id,
+                "id": line_id,
+                "note": note.strip()[:500],
+                "actor": current.user_id,
+            },
+        )
+        return {"line_id": str(line_id), "status": "ignored", "note": note.strip()[:500]}
+
+
+async def undo_statement_decision(current: CurrentSession, line_id: uuid.UUID) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer"})
+    async with transaction(current.cooperative_id) as session:
+        row = await session.execute(
+            text(
+                "SELECT * FROM bank_statement_lines WHERE cooperative_id=:cid AND id=:id FOR UPDATE"
+            ),
+            {"cid": current.cooperative_id, "id": line_id},
+        )
+        record = row.mappings().one_or_none()
+        if record is None:
+            raise NotFound("Bank statement line not found")
+        if record["status"] not in {"matched", "ignored"}:
+            raise Conflict("Only matched or ignored statement lines can be undone")
+        if record["matched_payment_id"] is not None:
+            payment = await session.execute(
+                text("SELECT status FROM payments WHERE cooperative_id=:cid AND id=:id"),
+                {"cid": current.cooperative_id, "id": record["matched_payment_id"]},
+            )
+            payment_record = payment.mappings().one_or_none()
+            if payment_record is not None and payment_record["status"] != "pending":
+                raise Conflict(
+                    "This decision cannot be undone because the payment is already confirmed"
+                )
+        await session.execute(
+            text(
+                "UPDATE bank_statement_lines SET status='unmatched', matched_payment_id=NULL, ignored_note=NULL, decided_by=NULL, updated_at=now() WHERE cooperative_id=:cid AND id=:id"
+            ),
+            {"cid": current.cooperative_id, "id": line_id},
+        )
+        return {"line_id": str(line_id), "status": "unmatched"}
