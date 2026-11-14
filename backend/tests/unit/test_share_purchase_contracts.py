@@ -25,6 +25,7 @@ def test_share_purchase_api_exposes_request_and_all_decisions() -> None:
     assert hasattr(share_purchases, "reject_share_purchase")
     assert hasattr(share_purchases, "cancel_share_purchase")
     assert "note" in share_purchases.SharePurchaseDecisionBody.model_fields
+    assert "current_unit_price_naira" in share_purchases.SharePurchasePage.model_fields
 
 
 def test_approval_posts_one_atomic_ledger_entry() -> None:

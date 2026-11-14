@@ -52,6 +52,7 @@ class SharePurchasePage(BaseModel):
     page: int
     page_size: int
     total: int
+    current_unit_price_naira: int
 
 
 def _can_read(current: CurrentSession) -> bool:
@@ -70,6 +71,12 @@ async def list_share_purchases(
         raise Forbidden("This role cannot read share purchases")
     action_ids: tuple[uuid.UUID, ...] | None = None
     async with transaction(current.cooperative_id) as session:
+        current_unit_price = await session.scalar(
+            text("SELECT share_unit_price_naira FROM cooperatives WHERE id=:cid"),
+            {"cid": current.cooperative_id},
+        )
+        if current_unit_price is None:
+            raise NotFound("Cooperative not found")
         if mine == "needed":
             if "treasurer" not in current.roles:
                 action_ids = ()
@@ -106,6 +113,7 @@ async def list_share_purchases(
         "page": page,
         "page_size": page_size,
         "total": int(records[0]["total"]) if records else 0,
+        "current_unit_price_naira": int(current_unit_price),
     }
 
 

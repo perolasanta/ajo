@@ -190,6 +190,7 @@ export type SharePurchasePage = {
   page: number;
   page_size: number;
   total: number;
+  current_unit_price_naira: number;
 };
 
 export function getSharePurchases(
