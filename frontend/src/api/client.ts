@@ -190,6 +190,26 @@ export type SharePurchasePage = {
   page: number;
   page_size: number;
   total: number;
+  current_unit_price_naira: number;
+};
+
+export type ShareRegisterItem = {
+  member_id: string;
+  member_name: string;
+  shares_held: number;
+  value_kobo: number;
+  last_purchase_date: string | null;
+};
+
+export type ShareRegisterPage = {
+  items: ShareRegisterItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_shares: number;
+  members_holding_shares: number;
+  total_value_kobo: number;
+  current_unit_price_naira: number;
 };
 
 export function getSharePurchases(
@@ -199,6 +219,16 @@ export function getSharePurchases(
   if (params.status) query.set("status", params.status);
   if (params.mine) query.set("mine", params.mine);
   return request<SharePurchasePage>(`/share-purchases?${query.toString()}`);
+}
+
+export function getShareRegister(
+  params: { search?: string; page?: number; pageSize?: number } = {},
+): Promise<ShareRegisterPage> {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<ShareRegisterPage>(`/share-register?${query.toString()}`);
 }
 
 export function requestSharePurchase(body: {

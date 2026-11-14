@@ -227,8 +227,12 @@ The staff Settings navigation is available only to admins and officers. Officers
 
 Share purchases cost one naira per share by default. Each cooperative stores its integer naira unit price setting; requests snapshot that price and the computed integer-kobo amount. Purchases may be requested for any positive number of shares by an officer or treasurer, and only for an active member.
 
+At request time, the requested integer-kobo total must not exceed the member's current withdrawable savings ledger balance; an exact match is allowed. Reject non-positive share counts and requests above available savings with a client validation error. Recheck savings at approval because the balance can change after request creation.
+
 The only payment source in this flow is the member's withdrawable savings ledger balance. Approval rechecks that balance and, in the same transaction, posts a balanced journal entry debiting the member's savings account and crediting the member's shares account. Ajo records and enforces the approval; it never moves money. Shares balances and statements are always derived from journal lines.
 
 Requests use maker-checker separation: the requester can never approve or reject their own request, and only a different treasurer may decide. Admin, committee, and auditor are read-only. Requests have `pending`, `approved`, `rejected`, and `cancelled` statuses; rejection requires a note, the requester may cancel while pending, and only one pending request per member is allowed.
+
+The read-only Share register is available to admins, treasurers, officers, auditors, and committee users; all other roles are denied server-side. It lists only members with positive holdings, derives share units from tenant-scoped `member_shares` ledger movements and the originating purchase's snapshotted unit price, and reversals reduce those holdings. It values shares at the cooperative's current unit price and reports the latest positive share-purchase effective date. Search is by member name; list results are paginated. Cooperative totals cover all holdings, independent of the current search/page. The displayed member label contains only the name (not email or member number), using `Unnamed user` for an existing member without a name and `Unknown user` if the member record is absent. The register does not create, approve, or post transactions.
 
 **TODO:** salary-deduction-funded share purchases are intentionally out of scope. Define and approve that payment source, payroll interaction, and separation-of-duties rules before implementing it.
