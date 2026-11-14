@@ -168,7 +168,7 @@ async def _reset_database() -> None:
     conn = await asyncpg.connect(admin_url)
     try:
         await conn.execute(f"DROP DATABASE IF EXISTS {DATABASE_NAME} WITH (FORCE)")
-        for role in ("ajo_app", "ajo_readonly"):
+        for role in ("ajo_app", "ajo_readonly", "ajo_scheduler"):
             exists = await conn.fetchval(
                 "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1)", role
             )

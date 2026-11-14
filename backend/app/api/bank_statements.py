@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
 
 from app.api.auth import current_session, require_csrf
 from app.domains.auth.service import CurrentSession
 from app.domains.bank_statements import service
 
 router = APIRouter(tags=["bank-statements"])
+
+
+class StatementAcceptBody(BaseModel):
+    payment_id: str | None = None
+    idempotency_key: str = Field(min_length=1, max_length=255)
+
+
+class StatementIgnoreBody(BaseModel):
+    note: str = Field(min_length=1, max_length=500)
 
 
 def _read_mapping(value: Any) -> dict[str, str]:
@@ -108,3 +119,62 @@ async def import_bank_statement_alias(
     request: Request,
 ) -> dict[str, Any]:
     return await import_bank_statement(current, request)
+
+
+@router.get("/bank-statements")
+async def list_bank_statements(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict[str, Any]:
+    return await service.list_statement_lines(
+        current, status=status, page=page, page_size=page_size
+    )
+
+
+@router.get("/bank-statements/{line_id}")
+async def get_bank_statement_line(
+    line_id: str,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, Any]:
+    return await service.get_statement_line(current, uuid.UUID(line_id))
+
+
+@router.post("/bank-statements/match", dependencies=[Depends(require_csrf)])
+async def match_bank_statement_lines(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    window_days: int = 5,
+) -> dict[str, Any]:
+    return await service.auto_match_statement_lines(current, window_days=window_days)
+
+
+@router.post("/bank-statements/{line_id}/accept", dependencies=[Depends(require_csrf)])
+async def accept_bank_statement_line(
+    line_id: str,
+    body: StatementAcceptBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, Any]:
+    return await service.accept_statement_line(
+        current,
+        uuid.UUID(line_id),
+        idempotency_key=body.idempotency_key,
+        payment_id=uuid.UUID(body.payment_id) if body.payment_id else None,
+    )
+
+
+@router.post("/bank-statements/{line_id}/ignore", dependencies=[Depends(require_csrf)])
+async def ignore_bank_statement_line(
+    line_id: str,
+    body: StatementIgnoreBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, Any]:
+    return await service.ignore_statement_line(current, uuid.UUID(line_id), note=body.note)
+
+
+@router.post("/bank-statements/{line_id}/undo", dependencies=[Depends(require_csrf)])
+async def undo_bank_statement_decision(
+    line_id: str,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, Any]:
+    return await service.undo_statement_decision(current, uuid.UUID(line_id))

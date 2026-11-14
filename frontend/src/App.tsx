@@ -51,6 +51,7 @@ const DisbursementDetailPage = lazy(() => import("./pages/DisbursementDetailPage
 const DesignPage = lazy(() => import("./pages/DesignPage"));
 const PayrollPage = lazy(() => import("./pages/PayrollPage"));
 const PayrollDetailPage = lazy(() => import("./pages/PayrollDetailPage"));
+const BankStatementsPage = lazy(() => import("./pages/BankStatementsPage"));
 const AuditPage = lazy(() => import("./pages/AuditPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const StaffPage = lazy(() => import("./pages/StaffPage"));
@@ -406,6 +407,8 @@ export default function App() {
         <Route path="/members" element={<MembersPage />} />
         <Route path="/payments" element={<PaymentsPage />} />
         <Route path="/payments/:paymentId" element={<PaymentReceiptPage />} />
+        <Route path="/bank-statements" element={<BankStatementsPage />} />
+        <Route path="/payments/bank-statements" element={<BankStatementsPage />} />
         <Route path="/withdrawal-requests" element={<WithdrawalRequestsPage />} />
         <Route path="/share-purchases" element={<SharePurchasesPage />} />
         <Route path="/share-register" element={<ShareRegisterPage />} />
