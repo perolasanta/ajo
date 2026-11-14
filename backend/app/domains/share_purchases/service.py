@@ -127,9 +127,7 @@ async def approve_purchase(current: CurrentSession, request_id: uuid.UUID) -> uu
         if row.status != "pending":
             raise Conflict("Share purchase request is no longer pending")
         await lock_cooperative_member(session, current.cooperative_id, row.member_id)
-        savings = await _member_savings_balance(
-            session, current.cooperative_id, row.member_id
-        )
+        savings = await _member_savings_balance(session, current.cooperative_id, row.member_id)
         if savings < int(row.amount_kobo):
             raise Conflict("Member savings are insufficient for this share purchase")
         accounts = (
@@ -171,7 +169,12 @@ async def approve_purchase(current: CurrentSession, request_id: uuid.UUID) -> uu
             text("""UPDATE share_purchase_requests
                 SET status='approved',decided_by=:actor,decided_at=now(),journal_entry_id=:entry
                 WHERE cooperative_id=:cid AND id=:id"""),
-            {"cid": current.cooperative_id, "id": request_id, "actor": current.user_id, "entry": entry},
+            {
+                "cid": current.cooperative_id,
+                "id": request_id,
+                "actor": current.user_id,
+                "entry": entry,
+            },
         )
         await append_audit(
             session,
@@ -188,9 +191,7 @@ async def approve_purchase(current: CurrentSession, request_id: uuid.UUID) -> uu
         return uuid.UUID(str(entry))
 
 
-async def reject_purchase(
-    current: CurrentSession, request_id: uuid.UUID, note: str
-) -> None:
+async def reject_purchase(current: CurrentSession, request_id: uuid.UUID, note: str) -> None:
     actor_role = _role(current, ("treasurer",))
     if not note.strip():
         raise ValueError("A rejection note is required")
@@ -212,7 +213,12 @@ async def reject_purchase(
             text("""UPDATE share_purchase_requests
                 SET status='rejected',decided_by=:actor,decided_at=now(),decision_note=:note
                 WHERE cooperative_id=:cid AND id=:id"""),
-            {"cid": current.cooperative_id, "id": request_id, "actor": current.user_id, "note": note.strip()},
+            {
+                "cid": current.cooperative_id,
+                "id": request_id,
+                "actor": current.user_id,
+                "note": note.strip(),
+            },
         )
         await append_audit(
             session,

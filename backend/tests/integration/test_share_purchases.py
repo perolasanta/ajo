@@ -29,7 +29,9 @@ class ShareContext:
 
 
 def session(cid: uuid.UUID, uid: uuid.UUID, *roles: str) -> CurrentSession:
-    return CurrentSession(cid, "share-test", uuid.uuid4(), uid, "staff@example.test", roles, bytes(32))
+    return CurrentSession(
+        cid, "share-test", uuid.uuid4(), uid, "staff@example.test", roles, bytes(32)
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +61,11 @@ async def share_context(db: asyncpg.Connection) -> ShareContext:
     )
     assert seed.member_id is not None
     cid = seed.cooperative_id
-    bank_account_id, savings_account_id, shares_account_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    bank_account_id, savings_account_id, shares_account_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
     await db.executemany(
         "INSERT INTO accounts(cooperative_id,id,code,name,account_type) VALUES($1,$2,$3,$4,$5)",
         [
@@ -146,10 +152,13 @@ async def test_request_rejects_total_above_current_savings(
         )
 
     assert error.value.status_code == 422
-    assert await db.fetchval(
-        "SELECT count(*) FROM share_purchase_requests WHERE cooperative_id=$1",
-        share_context.cooperative_id,
-    ) == 0
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM share_purchase_requests WHERE cooperative_id=$1",
+            share_context.cooperative_id,
+        )
+        == 0
+    )
 
 
 async def test_request_allows_total_exactly_equal_to_current_savings(
@@ -190,13 +199,19 @@ async def test_approval_rechecks_savings_after_request(
             request_id,
         )
 
-    assert await db.fetchval(
-        "SELECT status FROM share_purchase_requests WHERE cooperative_id=$1 AND id=$2",
-        share_context.cooperative_id,
-        request_id,
-    ) == "pending"
-    assert await db.fetchval(
-        "SELECT count(*) FROM journal_entries WHERE cooperative_id=$1 AND source_type='share_purchase' AND source_id=$2",
-        share_context.cooperative_id,
-        request_id,
-    ) == 0
+    assert (
+        await db.fetchval(
+            "SELECT status FROM share_purchase_requests WHERE cooperative_id=$1 AND id=$2",
+            share_context.cooperative_id,
+            request_id,
+        )
+        == "pending"
+    )
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM journal_entries WHERE cooperative_id=$1 AND source_type='share_purchase' AND source_id=$2",
+            share_context.cooperative_id,
+            request_id,
+        )
+        == 0
+    )

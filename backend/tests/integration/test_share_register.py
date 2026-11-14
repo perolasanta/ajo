@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import date
 import uuid
+from datetime import date
 
 import asyncpg
 import pytest
@@ -43,7 +43,11 @@ async def share_context(db: asyncpg.Connection) -> ShareContext:
     )
     assert seed.member_id is not None
     cid = seed.cooperative_id
-    bank_account_id, savings_account_id, shares_account_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    bank_account_id, savings_account_id, shares_account_id = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
     await db.executemany(
         "INSERT INTO accounts(cooperative_id,id,code,name,account_type) VALUES($1,$2,$3,$4,$5)",
         [
