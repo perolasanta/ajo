@@ -2,7 +2,7 @@
 
 STATE: Steps 1–5 complete; step 6 documentation updated. Final verification is blocked on missing tooling, so step 6 remains open for owner checks.
 
-STOPPED AT: backend targeted reproduction, next action: run the four failing backend tests and existing share-purchase tests with Docker/Postgres and the backend toolchain available, then run ruff, mypy, `make check-fast`, and `make fmt`.
+STOPPED AT: step 1 verification, next action: run Ruff, Ruff format check, mypy, `make check-fast`, and `make fmt` with the backend virtualenv available; owner evidence reports 671 backend tests passed.
 
 ## Checklist
 
@@ -24,4 +24,4 @@ STOPPED AT: backend targeted reproduction, next action: run the four failing bac
 
 ## Verification
 
-The frontend `npm run test:roles` and `node --test` checks passed (112 and 144 tests respectively). Typecheck/build are blocked by the missing `vite/client` dependency. The four failing backend tests and existing share-purchase tests could not run because Docker and pytest are unavailable; `make test-db-up`/`make test-db-down` fail with `docker: not found`. `make check-fast`/`make fmt` are blocked because `backend/.venv/bin/ruff` is missing; direct Ruff and mypy are also unavailable. No dependencies or migrations were run, and no full backend suite was run. Step 6 remains open pending owner-run checks.
+The frontend `npm run test:roles` and `node --test` checks passed (112 and 144 tests respectively). The owner reports 671 backend tests passed. Local Ruff, Ruff format check, and mypy could not run because `backend/.venv` is absent; `make check-fast` and `make fmt` consequently failed at the missing Ruff executable. No dependencies or migrations were run. Step 6 remains open pending owner-run checks.
