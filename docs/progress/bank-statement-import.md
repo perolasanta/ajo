@@ -1,6 +1,6 @@
 # Bank statement import progress
 
-STATE: Item 3 complete; implementation is in the PR, but the DB-backed integration slice still needs the local Postgres test database on 127.0.0.1:55432 to be started before execution.
+STATE: Date serialization bug fixed; the bank-statement integration slice passes the targeted DB tests, and the PR remains draft.
 
 ## Checklist
 

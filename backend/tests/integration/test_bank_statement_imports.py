@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import asyncpg
 import pytest
@@ -78,6 +79,7 @@ async def test_import_rejects_duplicate_files_and_skips_overlaps(db):
     seed = await create_tenant(db, slug_prefix="bankstmt-dup", roles=("treasurer", "officer"))
     cid = seed.cooperative_id
     actor = seed.user_ids[0]
+
     rows = [
         "Date,Narration,Amount,Reference",
         "2024-03-01,Member A transfer,1250.00,REF-A",
@@ -132,3 +134,31 @@ async def test_import_rejects_duplicate_files_and_skips_overlaps(db):
     )
     assert third["inserted_count"] == 1
     assert third["skipped_count"] == 1
+
+
+async def test_import_keeps_line_dates_as_date_objects(db):
+    seed = await create_tenant(db, slug_prefix="bankstmt-dates", roles=("treasurer", "officer"))
+    cid = seed.cooperative_id
+    actor = seed.user_ids[0]
+    payload = (
+        b"Date,Narration,Amount\n"
+        b"27/02/2024,Salary credit,1250.00\n"
+        b"2024-02-28,House rent,1200.00\n"
+        b"03-Feb-2024,School fees,230.00\n"
+    )
+    result = await service.import_statement_file(
+        session(cid, actor, "treasurer"),
+        content=payload,
+        filename="dates.csv",
+        column_map={"date": "Date", "narration": "Narration", "amount": "Amount"},
+    )
+    assert result["inserted_count"] == 3
+    rows = await db.fetch(
+        "SELECT line_date FROM bank_statement_lines WHERE cooperative_id=$1 ORDER BY line_date",
+        cid,
+    )
+    assert [row["line_date"] for row in rows] == [
+        date(2024, 2, 3),
+        date(2024, 2, 27),
+        date(2024, 2, 28),
+    ]

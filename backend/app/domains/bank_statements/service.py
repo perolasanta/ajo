@@ -315,7 +315,7 @@ async def import_statement_file(
                         "id": uuid.uuid4(),
                         "cid": current.cooperative_id,
                         "import_id": import_id,
-                        "line_date": row.line_date.isoformat(),
+                        "line_date": row.line_date,
                         "narration": row.narration,
                         "reference": row.reference,
                         "credit_kobo": row.credit_kobo,
