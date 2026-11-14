@@ -2,6 +2,8 @@
 
 STATE: Steps 1–5 complete; step 6 documentation updated. Final verification is blocked on missing tooling, so step 6 remains open for owner checks.
 
+STOPPED AT: targeted backend verification, next action: run the five specified tests with Docker/Postgres and the backend toolchain available, then run ruff, mypy, `make check-fast`, and `make fmt`.
+
 ## Checklist
 
 - [x] 1. Read the share purchase service, tests, the ledger balance code, and an existing list page for patterns. Write the plan into this file.
@@ -22,4 +24,4 @@ STATE: Steps 1–5 complete; step 6 documentation updated. Final verification is
 
 ## Verification
 
-`node --test src/sharePurchasePolicy.test.mjs` passed earlier (3 tests). Register/backend tests were authored but not run: `AGENTS.md` permanent run mode prohibits pytest and other test suites. Final `make fmt` and `make check-fast` are blocked because `backend/.venv/bin/ruff` is missing; no `mypy` executable or Make target is available. `npm run format` cannot find Prettier, and `npm run typecheck` cannot find the `vite/client` types. No dependencies were installed, no Docker or migration was run, and no full backend suite was run. Step 6 remains open pending the owner-run checks.
+`node --test src/sharePurchasePolicy.test.mjs` passed earlier (3 tests). The five specified backend tests could not run because Docker and pytest are unavailable in this environment; `make test-db-up` and `make test-db-down` both failed with `docker: not found`. Final `make fmt` and `make check-fast` are blocked because `backend/.venv/bin/ruff` is missing; direct `ruff`, `mypy`, and `pytest` commands are also unavailable. No dependencies were installed, no migration was run, and no full backend suite was run. Step 6 remains open pending the owner-run checks.
