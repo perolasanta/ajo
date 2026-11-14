@@ -55,6 +55,7 @@ async def share_context(db: asyncpg.Connection) -> ShareContext:
         slug_prefix="share-purchase",
         roles=("officer", "treasurer"),
         include_member=True,
+        member_status="active",
     )
     assert seed.member_id is not None
     cid = seed.cooperative_id

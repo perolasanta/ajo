@@ -116,6 +116,7 @@ async def create_tenant(
     slug_prefix: str = "test",
     roles: tuple[str, ...] = ("officer", "treasurer"),
     include_member: bool = False,
+    member_status: str = "applicant",
     password_hash: str | None = None,
 ) -> TenantSeed:
     """Create a fresh tenant as ajo_app after setting its RLS context on the connection."""
@@ -149,10 +150,11 @@ async def create_tenant(
     if include_member:
         member_id = uuid.uuid4()
         await conn.execute(
-            """INSERT INTO members(id,cooperative_id,member_no,full_name,phone_e164)
-               VALUES($1,$2,'M-1','Test Member','+2348000000000')""",
+            """INSERT INTO members(id,cooperative_id,member_no,full_name,phone_e164,status)
+               VALUES($1,$2,'M-1','Test Member','+2348000000000',$3)""",
             member_id,
             cooperative_id,
+            member_status,
         )
     return TenantSeed(cooperative_id, tuple(users), member_id)
 
