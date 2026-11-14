@@ -36,10 +36,18 @@ def test_share_register_denies_other_roles(role: str) -> None:
 
 
 def test_share_register_projection_uses_ledger_and_money_name_fallbacks() -> None:
-    source = reads._HOLDINGS_CTE + inspect.getsource(reads.list_share_register)
+    source = "\n".join(
+        (reads._SUMMARY_QUERY, reads._TOTAL_QUERY, reads._REGISTER_QUERY)
+    ) + inspect.getsource(reads.list_share_register)
     assert "member_shares" in source
     assert "journal_lines" in source
     assert "share_purchase_requests" in source
     assert "Unknown user" in source
     assert "Unnamed user" in source
     assert "ILIKE" in source
+
+
+def test_share_register_queries_use_identical_ctes() -> None:
+    queries = (reads._SUMMARY_QUERY, reads._TOTAL_QUERY, reads._REGISTER_QUERY)
+    cte_blocks = [query.rsplit("\n)\n", 1)[0] + "\n)\n" for query in queries]
+    assert cte_blocks[0] == cte_blocks[1] == cte_blocks[2]
