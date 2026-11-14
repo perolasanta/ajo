@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       - run: pip install -e ".[dev]"
+      - name: Backend pytest collection (no database)
+        run: pytest --collect-only -q
       - name: Migration consistency check
         working-directory: .
         run: scripts/check_migrations.sh
@@ -65,6 +67,24 @@ jobs:
         with: { python-version: "3.12", cache: pip }
       - run: pip install -e ".[dev]"
       - run: mypy app
+      - name: Report mypy errors in tests
+        run: |
+          python - <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          result = subprocess.run(
+              [sys.executable, "-m", "mypy", "tests"],
+              capture_output=True,
+              check=False,
+              text=True,
+          )
+          output = result.stdout + result.stderr
+          print(output, end="")
+          error_count = len(re.findall(r"^.*: error:", output, re.MULTILINE))
+          print(f"MYPY-TEST-ERRORS: {error_count} (exit status {result.returncode})")
+          PY
 
   frontend:
     runs-on: ubuntu-latest

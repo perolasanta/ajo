@@ -53,6 +53,7 @@ check-fast:
 	step 'ruff format --check backend' sh -c 'cd "$(BACKEND)" && .venv/bin/ruff format --check .'; \
 	step 'ruff format --check ops/backup' sh -c 'cd "$(ROOT)ops/backup" && ../../backend/.venv/bin/ruff format --check .'; \
 	step 'mypy app' sh -c 'cd "$(BACKEND)" && .venv/bin/mypy app'; \
+	step 'pytest collect-only backend' sh -c 'cd "$(BACKEND)" && .venv/bin/pytest --collect-only -q'; \
 	step 'import app.main' sh -c 'cd "$(BACKEND)" && .venv/bin/python -c "import app.main"'; \
 	step 'migration heads' $(ROOT)scripts/check_migrations.sh; \
 	step 'frontend typecheck' sh -c 'cd "$(FRONTEND)" && npm run typecheck'; \
