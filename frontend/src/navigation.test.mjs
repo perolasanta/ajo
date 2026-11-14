@@ -281,6 +281,20 @@ test("Share purchases action badge deep-links to the needs-my-action list", () =
   assert.match(navigationTarget("Share purchases", 1), /^\/share-purchases\?mine=needed$/);
 });
 
+test("Share register is visible only to the approved read roles", () => {
+  const allowedRoles = ["admin", "treasurer", "officer", "auditor", "committee"];
+  assert.deepEqual(navigation.find((item) => item.name === "Share register")?.roles, allowedRoles);
+  for (const role of allowedRoles) {
+    assert.ok(visibleNavigation([role]).some((item) => item.name === "Share register"));
+    assert.equal(getRouteDecision([role], "/share-register").allowed, true);
+  }
+  assert.equal(getRouteDecision(["member"], "/share-register").allowed, false);
+});
+
+test("Share register navigation opens its read-only route", () => {
+  assert.equal(navigationTarget("Share register", 0), "/share-register");
+});
+
 test("mobile menu badge caps totals at 99+", () => {
   const roles = ["treasurer"];
   const total = totalVisibleActionCount(
