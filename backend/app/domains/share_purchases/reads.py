@@ -158,9 +158,7 @@ def require_register_role(current: CurrentSession) -> None:
         raise Forbidden("This role cannot read the share register")
 
 
-async def _summary(
-    session: AsyncSession, cooperative_id: uuid.UUID
-) -> dict[str, int]:
+async def _summary(session: AsyncSession, cooperative_id: uuid.UUID) -> dict[str, int]:
     result = await session.execute(text(_SUMMARY_QUERY), {"cid": cooperative_id})
     row = result.mappings().one()
     return {
