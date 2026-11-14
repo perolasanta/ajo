@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
@@ -15,6 +15,7 @@ from app.core.db import transaction
 from app.core.errors import Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
 from app.domains.notifications import eligibility
+from app.domains.share_purchases import reads as share_register_reads
 from app.domains.share_purchases import service
 
 router = APIRouter(tags=["share purchases"])
@@ -52,6 +53,25 @@ class SharePurchasePage(BaseModel):
     page: int
     page_size: int
     total: int
+    current_unit_price_naira: int
+
+
+class ShareRegisterItem(BaseModel):
+    member_id: uuid.UUID
+    member_name: str
+    shares_held: int
+    value_kobo: int
+    last_purchase_date: date | None
+
+
+class ShareRegisterPage(BaseModel):
+    items: list[ShareRegisterItem]
+    page: int
+    page_size: int
+    total: int
+    total_shares: int
+    members_holding_shares: int
+    total_value_kobo: int
     current_unit_price_naira: int
 
 
@@ -115,6 +135,21 @@ async def list_share_purchases(
         "total": int(records[0]["total"]) if records else 0,
         "current_unit_price_naira": int(current_unit_price),
     }
+
+
+@router.get("/share-register", response_model=ShareRegisterPage)
+async def list_share_register(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    search: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+) -> dict[str, Any]:
+    return await share_register_reads.list_share_register(
+        current,
+        search=search,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/share-purchases/{request_id}", response_model=SharePurchaseItem)
