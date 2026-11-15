@@ -49,6 +49,7 @@ async def setup_tenant(
     ids = {}
     for code, name, account_type in (
         ("bank", "Bank", "asset"),
+        ("cash_on_hand", "Cash held by officers", "asset"),
         ("member_savings", "Savings", "liability"),
         ("member_shares", "Shares", "equity"),
         ("dues_income", "Dues", "income"),

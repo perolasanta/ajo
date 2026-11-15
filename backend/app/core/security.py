@@ -7,10 +7,11 @@ import hmac
 import secrets
 from functools import lru_cache
 
-from pyotp.totp import TOTP
+import pyotp
 from argon2 import PasswordHasher, Type
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
+from pyotp.totp import TOTP
 
 from app.core.config import get_settings
 
