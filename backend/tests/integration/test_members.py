@@ -43,7 +43,9 @@ async def setup_tenant(
     seed = await create_tenant(
         conn, name="Member test", slug_prefix="member", roles=roles, include_member=True
     )
-    cid, uid, other = seed.cooperative_id, seed.user_ids[0], seed.user_ids[1]
+    cid = seed.cooperative_id
+    uid = seed.user_ids[0]
+    other = seed.user_ids[1] if len(seed.user_ids) > 1 else uid
     ids = {}
     for code, name, account_type in (
         ("bank", "Bank", "asset"),
