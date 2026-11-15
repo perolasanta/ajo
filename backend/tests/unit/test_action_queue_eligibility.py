@@ -150,7 +150,7 @@ async def test_shared_candidate_collection_is_one_tenant_scoped_query() -> None:
         session, cooperative_id, requester_id, {"treasurer", "officer"}
     )
     assert len(session.calls) == 1
-    assert session.calls[0][1] == {"cooperative_id": cooperative_id}
+    assert session.calls[0][1] == {"cooperative_id": cooperative_id, "as_of_date": None}
     assert "UNION ALL" in session.calls[0][0]
     assert items.get("withdrawal_requests", ()) == ()
 

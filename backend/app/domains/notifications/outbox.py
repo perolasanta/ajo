@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 import logging
 import re
 import uuid
@@ -154,8 +155,12 @@ async def get_eligible_action_recipients(
     cooperative_id: uuid.UUID,
     event_type: str,
     entity_id: uuid.UUID,
+    *,
+    as_of_date: date | None = None,
 ) -> tuple[eligibility.ActionRecipient, ...]:
-    return await eligibility.get_action_recipients(session, cooperative_id, event_type, entity_id)
+    return await eligibility.get_action_recipients(
+        session, cooperative_id, event_type, entity_id, as_of_date=as_of_date
+    )
 
 
 async def enqueue_action_notifications(
@@ -163,9 +168,11 @@ async def enqueue_action_notifications(
     cooperative_id: uuid.UUID,
     event_type: str,
     entity_id: uuid.UUID,
+    *,
+    as_of_date: date | None = None,
 ) -> None:
     recipients = await get_eligible_action_recipients(
-        session, cooperative_id, event_type, entity_id
+        session, cooperative_id, event_type, entity_id, as_of_date=as_of_date
     )
     if not recipients:
         return
@@ -223,11 +230,15 @@ async def enqueue_action_notifications_safely(
     cooperative_id: uuid.UUID,
     event_type: str,
     entity_id: uuid.UUID,
+    *,
+    as_of_date: date | None = None,
 ) -> None:
     """Attempt enqueue in a savepoint so notification errors cannot abort the action."""
     try:
         async with session.begin_nested():
-            await enqueue_action_notifications(session, cooperative_id, event_type, entity_id)
+            await enqueue_action_notifications(
+                session, cooperative_id, event_type, entity_id, as_of_date=as_of_date
+            )
     except Exception as exc:
         exception_class = type(exc).__name__
         exception_message = _safe_exception_message(exc)

@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     database_url: str = Field(default="")
     # Direct URL (owner role): one-shot Alembic migrations and pg_dump only.
     database_url_direct: str = Field(default="")
-    # Direct URL (ajo_scheduler role): the scheduler's session advisory lock only.
+    # Direct URL (ajo_scheduler role): scheduler advisory lock and RLS-scoped job queries.
     database_url_scheduler: str = Field(default="")
     database_url_readonly: str = Field(default="")
 
@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     smtp_password: SecretStr = SecretStr("")
     smtp_security: str = ""
     sms_request_timeout_seconds: float = Field(default=10.0, gt=0)
+    scheduler_interval_minutes: int = Field(default=60, gt=0)
     outbox_poll_interval_seconds: float = Field(default=2.0, gt=0)
     outbox_claim_lease_seconds: int = Field(default=120, gt=0)
     outbox_max_attempts: int = Field(default=5, gt=0)
