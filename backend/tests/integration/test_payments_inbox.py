@@ -105,6 +105,32 @@ async def test_transfer_requires_a_different_confirmer(db: asyncpg.Connection) -
     assert confirmed["ledger_entry_id"] is not None
 
 
+async def test_payment_queues_flag_items_without_an_eligible_confirmer(
+    db: asyncpg.Connection,
+) -> None:
+    cid, officer, _, member_id, _ = await payment_tenant(db)
+    pending = await record_transfer(cid, officer, member_id, "BANK-NO-CONFIRMER")
+    cash = await service.record_payment(
+        session(cid, officer, "officer"),
+        member_id=member_id,
+        channel="cash",
+        purpose="savings",
+        amount_kobo=1000,
+        provider="manual",
+        provider_reference=None,
+        received_on=today_wat(),
+        idempotency_key="cash-no-confirmer",
+    )
+
+    payments = await service.list_payments(session(cid, officer, "officer"), page=1, page_size=50)
+    transfer = next(item for item in payments["items"] if item["id"] == str(pending["id"]))
+    assert transfer["no_eligible_confirmer"] is True
+
+    cash_items = await service.list_cash_awaiting_deposit(session(cid, officer, "officer"))
+    receipt = next(item for item in cash_items if item["id"] == str(cash["id"]))
+    assert receipt["no_eligible_confirmer"] is True
+
+
 async def test_duplicate_bank_reference_is_rejected(db: asyncpg.Connection) -> None:
     cid, officer, _, member_id, _ = await payment_tenant(db)
     await record_transfer(cid, officer, member_id, "BANK-DUP-1", "dup-key-1")
