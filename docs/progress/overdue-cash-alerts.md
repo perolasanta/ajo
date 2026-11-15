@@ -1,5 +1,5 @@
 # Overdue cash alerts and no-confirmer warning progress
-STATE: Steps 3–6 complete locally; final checks remain.
+STATE: STOPPED AT step 7; frontend typecheck and tests pass, but backend ruff reports existing branch findings. Next action: resolve the five ruff findings, run the owner checks, and push the draft PR.
 
 ## Checklist
 - [x] 1. Read scheduler, overdue-cash rule, ACTION_SPECS, shared eligibility, and newest migration; record implementation plan.
