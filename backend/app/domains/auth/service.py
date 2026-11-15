@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pyotp
+from pyotp.totp import TOTP
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -405,7 +405,7 @@ async def login(
                 ip=ip,
                 summary={},
             )
-            uri = pyotp.TOTP(secret).provisioning_uri(name=user["email"], issuer_name="Ajo")
+            uri = TOTP(secret).provisioning_uri(name=user["email"], issuer_name="Ajo")
             return LoginResult(
                 {"mfa_enrollment_required": True, "provisioning_uri": uri},
                 cookie,
