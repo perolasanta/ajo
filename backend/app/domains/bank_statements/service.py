@@ -503,6 +503,103 @@ async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dic
         if row["payment_received_on"]
         else None,
     }
+async def import_statement_file(
+    current: CurrentSession,
+    *,
+    content: bytes,
+    filename: str,
+    column_map: dict[str, str],
+) -> dict[str, Any]:
+    _role(current, {"officer", "treasurer"})
+    if len(content) > MAX_BANK_STATEMENT_UPLOAD_BYTES:
+        raise PayloadTooLarge("Bank statement upload exceeds the 2 MiB limit.")
+    rows, errors = _read_statement_csv(content, column_map=column_map)
+    file_hash = hashlib.sha256(content).hexdigest()
+    if not rows and errors:
+        return {
+            "file_sha256": file_hash,
+            "filename": filename,
+            "inserted_count": 0,
+            "skipped_count": 0,
+            "errors": errors,
+        }
+
+    async with transaction(current.cooperative_id) as session:
+        duplicate = await _existing_file_hash(session, current.cooperative_id, file_hash)
+        if duplicate:
+            return {
+                "file_sha256": file_hash,
+                "filename": filename,
+                "inserted_count": 0,
+                "skipped_count": len(rows),
+                "errors": errors,
+                "duplicate_file": True,
+            }
+
+        fingerprint_rows = [row.fingerprint for row in rows]
+        existing_fingerprints = await session.execute(
+            text(
+                "SELECT fingerprint FROM bank_statement_lines WHERE cooperative_id=:cid AND fingerprint = ANY(:fingerprints)"
+            ),
+            {"cid": current.cooperative_id, "fingerprints": fingerprint_rows},
+        )
+        seen = {item["fingerprint"] for item in existing_fingerprints.mappings().all()}
+        new_rows = [row for row in rows if row.fingerprint not in seen]
+        import_id = uuid.uuid4()
+        await session.execute(
+            text(
+                """
+                INSERT INTO bank_statement_imports(
+                    id, cooperative_id, file_hash, filename, uploaded_by, row_count, inserted_count, skipped_count
+                ) VALUES (:id, :cid, :file_hash, :filename, :uploaded_by, :row_count, :inserted_count, :skipped_count)
+                """
+            ),
+            {
+                "id": import_id,
+                "cid": current.cooperative_id,
+                "file_hash": file_hash,
+                "filename": filename,
+                "uploaded_by": current.user_id,
+                "row_count": len(rows),
+                "inserted_count": len(new_rows),
+                "skipped_count": len(rows) - len(new_rows),
+            },
+        )
+        if new_rows:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO bank_statement_lines (
+                        id, cooperative_id, import_id, line_date, narration, reference,
+                        credit_kobo, debit_kobo, fingerprint, status
+                    ) VALUES (:id, :cid, :import_id, :line_date, :narration, :reference, :credit_kobo, :debit_kobo, :fingerprint, 'unmatched')
+                    """
+                ),
+                [
+                    {
+                        "id": uuid.uuid4(),
+                        "cid": current.cooperative_id,
+                        "import_id": import_id,
+                        "line_date": row.line_date,
+                        "narration": row.narration,
+                        "reference": row.reference,
+                        "credit_kobo": row.credit_kobo,
+                        "debit_kobo": row.debit_kobo,
+                        "fingerprint": row.fingerprint,
+                    }
+                    for row in new_rows
+                ],
+            )
+        return {
+            "file_sha256": file_hash,
+            "filename": filename,
+            "inserted_count": len(new_rows),
+            "skipped_count": len(rows) - len(new_rows),
+            "errors": errors,
+            "duplicate_file": False,
+        }
+
+
 async def _line_candidates_for_match(
     session: AsyncSession,
     cooperative_id: uuid.UUID,
