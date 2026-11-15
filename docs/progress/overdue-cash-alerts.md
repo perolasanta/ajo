@@ -1,13 +1,13 @@
 # Overdue cash alerts and no-confirmer warning progress
-STATE: Step 2 complete; `cash_deposit_overdue` is registered and migration 0040 extends the notification-kind constraint.
+STATE: Steps 3–6 complete locally; final checks remain.
 
 ## Checklist
 - [x] 1. Read scheduler, overdue-cash rule, ACTION_SPECS, shared eligibility, and newest migration; record implementation plan.
 - [x] 2. Add `cash_deposit_overdue`, the new notification-kind migration, and kind-parity tests.
-- [ ] 3. Add tests first, then the overdue-cash scheduler job, resilient interval loop, and `--run-once` CLI.
-- [ ] 4. Document the VPS command and product decision/follow-up.
-- [ ] 5. Add backend no-eligible-confirmer flags and tests for payment queues.
-- [ ] 6. Add the frontend warning and tests.
+- [x] 3. Add tests first, then the overdue-cash scheduler job, resilient interval loop, and `--run-once` CLI.
+- [x] 4. Document the VPS command and product decision/follow-up.
+- [x] 5. Add backend no-eligible-confirmer flags and tests for payment queues.
+- [x] 6. Add the frontend warning and tests.
 - [ ] 7. Run the required final checks, review GitHub CI, and keep the PR draft.
 
 ## Plan
