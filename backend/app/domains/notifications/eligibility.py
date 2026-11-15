@@ -13,6 +13,7 @@ PAYROLL_POSTING = "payroll_posting"
 PAYROLL_SIGN_OFF = "payroll_sign_off"
 PAYMENT_CONFIRMATION = "payment_confirmation"
 CASH_DEPOSIT = "cash_deposit"
+CASH_DEPOSIT_OVERDUE = "cash_deposit_overdue"
 DISBURSEMENT_RECORD = "disbursement_record"
 DISBURSEMENT_AUTHORIZATION = "disbursement_authorization"
 DISBURSEMENT_CONFIRMATION = "disbursement_confirmation"
@@ -74,6 +75,14 @@ ACTION_SPECS = {
         "cash deposit",
         "Cash needs to be banked",
         "/payments/{id}",
+    ),
+    CASH_DEPOSIT_OVERDUE: ActionSpec(
+        frozenset({"treasurer"}),
+        "payments",
+        "Payments",
+        "overdue cash deposit",
+        "Cash receipts are overdue for banking.",
+        "/payments",
     ),
     DISBURSEMENT_RECORD: ActionSpec(
         frozenset({"treasurer"}),

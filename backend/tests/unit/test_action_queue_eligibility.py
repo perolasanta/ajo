@@ -117,7 +117,10 @@ def test_all_action_alerts_use_fixed_kind_sentences_and_entity_links() -> None:
         )
         assert payload["action_kind"] == spec.action_kind
         assert payload["message"] == spec.sentence
-        assert str(entity_id) in payload["url"]
+        if event_type == eligibility.CASH_DEPOSIT_OVERDUE:
+            assert payload["url"] == "http://ajo.example.test/payments"
+        else:
+            assert str(entity_id) in payload["url"]
         assert "Ada" not in payload["message"]
         assert "₦" not in payload["message"]
 
