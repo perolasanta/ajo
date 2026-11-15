@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import date
 import logging
 import re
 import uuid
+from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -159,7 +159,9 @@ async def get_eligible_action_recipients(
     as_of_date: date | None = None,
 ) -> tuple[eligibility.ActionRecipient, ...]:
     if as_of_date is None:
-        return await eligibility.get_action_recipients(session, cooperative_id, event_type, entity_id)
+        return await eligibility.get_action_recipients(
+            session, cooperative_id, event_type, entity_id
+        )
     return await eligibility.get_action_recipients(
         session, cooperative_id, event_type, entity_id, as_of_date=as_of_date
     )

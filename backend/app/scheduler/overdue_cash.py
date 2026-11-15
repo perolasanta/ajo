@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import uuid
@@ -19,11 +18,15 @@ from app.domains.payments import service as payment_service
 
 logger = logging.getLogger("scheduler.overdue_cash")
 
+_CASH_DEPOSIT_OVERDUE_NAMESPACE = eligibility.CASH_DEPOSIT_OVERDUE_NAMESPACE
+
 
 def daily_entity_id(cooperative_id: uuid.UUID, as_of_date: date) -> uuid.UUID:
     """One stable entity key per cooperative/day lets the channel-aware index dedupe alerts."""
-    key = f"cash-deposit-overdue:{cooperative_id}:{as_of_date.isoformat()}".encode()
-    return uuid.UUID(hex=hashlib.md5(key).hexdigest())
+    return uuid.uuid5(
+        _CASH_DEPOSIT_OVERDUE_NAMESPACE,
+        f"cash-deposit-overdue:{cooperative_id}:{as_of_date.isoformat()}",
+    )
 
 
 async def list_active_cooperative_ids(

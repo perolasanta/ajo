@@ -166,3 +166,20 @@ def test_cash_deposit_overdue_action_spec_is_generic_and_treasurer_only() -> Non
     assert payload["url"] == "http://ajo.example.test/payments"
     assert payload["action_kind"] == spec.action_kind
     assert payload["message"] == spec.sentence
+
+
+def test_overdue_cash_sql_uses_only_module_constants_and_expected_binds() -> None:
+    candidate_sql = eligibility._CANDIDATE_SQL[eligibility.CASH_DEPOSIT_OVERDUE]
+    all_candidates_sql = str(eligibility._ALL_ACTION_CANDIDATES_SQL)
+    for fragment in (
+        eligibility._CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL,
+        eligibility.CASH_BANKING_POLICY_LATERAL_SQL,
+        eligibility.CASH_OVERDUE_PREDICATE_SQL,
+        eligibility.CASH_DEPOSIT_OVERDUE,
+    ):
+        assert fragment in candidate_sql or fragment in all_candidates_sql
+    assert candidate_sql.count(":cooperative_id") >= 1
+    assert candidate_sql.count(":entity_id") >= 1
+    assert candidate_sql.count(":as_of_date") >= 1
+    assert all_candidates_sql.count(":cooperative_id") >= 1
+    assert all_candidates_sql.count(":as_of_date") >= 1

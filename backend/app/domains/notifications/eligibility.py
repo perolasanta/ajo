@@ -20,6 +20,7 @@ PAYROLL_SIGN_OFF = "payroll_sign_off"
 PAYMENT_CONFIRMATION = "payment_confirmation"
 CASH_DEPOSIT = "cash_deposit"
 CASH_DEPOSIT_OVERDUE = "cash_deposit_overdue"
+CASH_DEPOSIT_OVERDUE_NAMESPACE = uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
 DISBURSEMENT_RECORD = "disbursement_record"
 DISBURSEMENT_AUTHORIZATION = "disbursement_authorization"
 DISBURSEMENT_CONFIRMATION = "disbursement_confirmation"
@@ -172,7 +173,28 @@ ACTION_SPECS = {
     ),
 }
 
-_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL = """md5('cash-deposit-overdue:' || CAST(CAST(:cooperative_id AS uuid) AS text) || ':' || COALESCE(CAST(:as_of_date AS date), (now() AT TIME ZONE 'Africa/Lagos')::date)::text)::uuid"""
+_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL = f"""(
+    SELECT (
+        substr(digest_hex, 1, 8) || '-' || substr(digest_hex, 9, 4) || '-5' ||
+        substr(digest_hex, 14, 3) || '-' ||
+        substr('89ab89ab89ab89ab', strpos('0123456789abcdef', substr(digest_hex, 17, 1)), 1) ||
+        substr(digest_hex, 18, 3) || '-' || substr(digest_hex, 21, 12)
+    )::uuid
+    FROM (
+        SELECT encode(
+            digest(
+                uuid_send('{CASH_DEPOSIT_OVERDUE_NAMESPACE}'::uuid) ||
+                convert_to(
+                    'cash-deposit-overdue:' || CAST(CAST(:cooperative_id AS uuid) AS text) || ':' ||
+                    COALESCE(CAST(:as_of_date AS date), (now() AT TIME ZONE 'Africa/Lagos')::date)::text,
+                    'UTF8'
+                ),
+                'sha1'
+            ),
+            'hex'
+        ) AS digest_hex
+    ) AS uuid_v5_digest
+)"""  # noqa: S608 - fragments are module-level constants, never user input.
 
 _CANDIDATE_SQL = {
     PAYROLL_POSTING: """
@@ -213,7 +235,7 @@ _CANDIDATE_SQL = {
            AND (CAST(:entity_id AS uuid) IS NULL OR
                 CAST(:entity_id AS uuid)={_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL})
         HAVING count(*) > 0
-    """,
+    """,  # noqa: S608 - fragments are module-level constants, never user input.
     DISBURSEMENT_RECORD: """
         SELECT d.id AS entity_id, ARRAY[d.prepared_by,d.authorized_by]::uuid[] AS excluded_user_ids
         FROM disbursements d
@@ -422,7 +444,7 @@ async def get_action_candidates(
     return [dict(row) for row in rows.mappings().all()]
 
 
-_ALL_ACTION_CANDIDATES_SQL = text(
+_ALL_ACTION_CANDIDATES_SQL = text(  # noqa: S608 - fragments are module-level constants, never user input.
     """
     SELECT 'payroll_posting'::text AS event_type, r.id AS entity_id,
            array_remove(ARRAY[r.imported_by]::uuid[], NULL) AS excluded_user_ids
@@ -486,7 +508,7 @@ _ALL_ACTION_CANDIDATES_SQL = text(
                        AND al.entity_type='loan_product' AND al.entity_id=p.id::text
                        AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
       FROM loan_products p WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
-"""
+    """  # noqa: S608 - fragments are module-level constants, never user input.
     + f"""
     UNION ALL
     SELECT '{CASH_DEPOSIT_OVERDUE}'::text, {_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL},
@@ -496,8 +518,8 @@ _ALL_ACTION_CANDIDATES_SQL = text(
      WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
        AND {CASH_OVERDUE_PREDICATE_SQL}
     HAVING count(*) > 0
-"""
-)
+    """  # noqa: S608 - fragments are module-level constants, never user input.
+)  # noqa: S608 - fragments are module-level constants, never user input.
 
 
 async def get_all_action_candidates(
