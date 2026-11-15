@@ -382,126 +382,6 @@ async def match_statement_lines(
     return {"updated_count": updated_count, "matched_count": matched_count, "items": suggestions}
 
 
-async def list_statement_lines(
-    current: CurrentSession,
-    *,
-    status: str | None = None,
-    page: int = 1,
-    page_size: int = 50,
-) -> dict[str, Any]:
-    _role(current, {"officer", "treasurer"})
-    if page < 1:
-        raise ValueError("Page must be at least 1")
-    if page_size < 1:
-        raise ValueError("Page size must be at least 1")
-    cid = current.cooperative_id
-    offset = (page - 1) * page_size
-    async with transaction(cid) as session:
-        total_row = await session.execute(
-            text(
-                """
-                SELECT COUNT(*)
-                FROM bank_statement_lines
-                WHERE cooperative_id=:cid
-                  AND (:status IS NULL OR status=:status)
-                """
-            ),
-            {"cid": cid, "status": status},
-        )
-        total = int(total_row.scalar_one())
-        rows = await session.execute(
-            text(
-                """
-                SELECT l.id, l.line_date, l.narration, l.reference, l.credit_kobo, l.debit_kobo,
-                       l.status, l.matched_payment_id, l.ignored_note, l.created_at, l.updated_at,
-                       p.provider_reference AS payment_reference,
-                       p.received_on AS payment_received_on,
-                       m.full_name AS member_name
-                FROM bank_statement_lines l
-                LEFT JOIN payments p
-                  ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
-                LEFT JOIN members m
-                  ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
-                WHERE l.cooperative_id=:cid
-                  AND (:status IS NULL OR l.status=:status)
-                ORDER BY l.line_date DESC, l.id DESC
-                LIMIT :limit OFFSET :offset
-                """
-            ),
-            {"cid": cid, "status": status, "limit": page_size, "offset": offset},
-        )
-        items = [dict(row) for row in rows.mappings().all()]
-        return {
-            "items": [
-                {
-                    "id": str(item["id"]),
-                    "line_date": item["line_date"].isoformat() if item["line_date"] else None,
-                    "narration": item["narration"],
-                    "reference": item["reference"],
-                    "credit_kobo": int(item["credit_kobo"]),
-                    "debit_kobo": int(item["debit_kobo"]),
-                    "status": item["status"],
-                    "matched_payment_id": str(item["matched_payment_id"])
-                    if item["matched_payment_id"]
-                    else None,
-                    "ignored_note": item["ignored_note"],
-                    "member_name": item["member_name"],
-                    "payment_reference": item["payment_reference"],
-                    "payment_received_on": item["payment_received_on"].isoformat()
-                    if item["payment_received_on"]
-                    else None,
-                }
-                for item in items
-            ],
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-        }
-
-
-async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dict[str, Any]:
-    _role(current, {"officer", "treasurer"})
-    cid = current.cooperative_id
-    async with transaction(cid) as session:
-        row = await session.execute(
-            text(
-                """
-                SELECT l.id, l.line_date, l.narration, l.reference, l.credit_kobo, l.debit_kobo,
-                       l.status, l.matched_payment_id, l.ignored_note, l.decided_by,
-                       p.provider_reference AS payment_reference, p.received_on AS payment_received_on,
-                       m.full_name AS member_name
-                FROM bank_statement_lines l
-                LEFT JOIN payments p ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
-                LEFT JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
-                WHERE l.cooperative_id=:cid AND l.id=:line_id
-                """
-            ),
-            {"cid": cid, "line_id": line_id},
-        )
-        item = row.mappings().one_or_none()
-    if item is None:
-        raise NotFound("Bank statement line not found")
-    return {
-        "id": str(item["id"]),
-        "line_date": item["line_date"].isoformat(),
-        "narration": item["narration"],
-        "reference": item["reference"],
-        "credit_kobo": int(item["credit_kobo"]),
-        "debit_kobo": int(item["debit_kobo"]),
-        "status": item["status"],
-        "matched_payment_id": str(item["matched_payment_id"])
-        if item["matched_payment_id"]
-        else None,
-        "ignored_note": item["ignored_note"],
-        "decided_by": str(item["decided_by"]) if item["decided_by"] else None,
-        "payment_reference": item["payment_reference"],
-        "payment_received_on": item["payment_received_on"].isoformat()
-        if item["payment_received_on"]
-        else None,
-        "member_name": item["member_name"],
-    }
-
-
 async def import_statement_file(
     current: CurrentSession,
     *,
@@ -604,37 +484,62 @@ async def list_statement_lines(
     *,
     status: str | None = None,
     page: int = 1,
-    page_size: int = 25,
+    page_size: int = 50,
 ) -> dict[str, Any]:
     _role(current, {"officer", "treasurer", "admin", "auditor"})
     if page < 1 or page_size < 1:
         raise ValueError("Page and page_size must be positive")
     if status is not None and status not in {"unmatched", "suggested", "matched", "ignored"}:
         raise ValueError("Unsupported statement line status")
-    async with transaction(current.cooperative_id) as session:
-        conditions = "WHERE cooperative_id=:cid"
-        params: dict[str, Any] = {
-            "cid": current.cooperative_id,
-            "offset": (page - 1) * page_size,
-            "limit": page_size,
-        }
-        if status is not None:
-            conditions += " AND status=:status"
-            params["status"] = status
-        rows = await session.execute(
-            text(
-                """SELECT id, import_id, line_date, narration, reference, credit_kobo, debit_kobo,
-                    fingerprint, status, matched_payment_id, ignored_note, decided_by, created_at, updated_at
-                    FROM bank_statement_lines WHERE cooperative_id=:cid AND (:status::text IS NULL OR status=:status)
-                    ORDER BY line_date DESC, id DESC LIMIT :limit OFFSET :offset"""
-            ),
-            params,
+    params: dict[str, Any] = {
+        "cid": current.cooperative_id,
+        "offset": (page - 1) * page_size,
+        "limit": page_size,
+    }
+    if status is not None:
+        params["status"] = status
+        rows_sql = """
+            SELECT l.id, l.import_id, l.line_date, l.narration, l.reference, l.credit_kobo,
+                   l.debit_kobo, l.status, l.matched_payment_id, l.ignored_note, l.decided_by,
+                   l.created_at, l.updated_at,
+                   p.provider_reference AS payment_reference,
+                   p.received_on AS payment_received_on,
+                   m.full_name AS member_name
+            FROM bank_statement_lines l
+            LEFT JOIN payments p
+              ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
+            LEFT JOIN members m
+              ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+            WHERE l.cooperative_id=:cid AND l.status=:status
+            ORDER BY l.line_date DESC, l.id DESC
+            LIMIT :limit OFFSET :offset
+        """
+        count_sql = (
+            "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=:cid AND status=:status"
         )
+    else:
+        rows_sql = """
+            SELECT l.id, l.import_id, l.line_date, l.narration, l.reference, l.credit_kobo,
+                   l.debit_kobo, l.status, l.matched_payment_id, l.ignored_note, l.decided_by,
+                   l.created_at, l.updated_at,
+                   p.provider_reference AS payment_reference,
+                   p.received_on AS payment_received_on,
+                   m.full_name AS member_name
+            FROM bank_statement_lines l
+            LEFT JOIN payments p
+              ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
+            LEFT JOIN members m
+              ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+            WHERE l.cooperative_id=:cid
+            ORDER BY l.line_date DESC, l.id DESC
+            LIMIT :limit OFFSET :offset
+        """
+        count_sql = "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=:cid"
+    async with transaction(current.cooperative_id) as session:
+        rows = await session.execute(text(rows_sql), params)
         total = await session.scalar(
-            text(
-                "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=:cid AND (:status::text IS NULL OR status=:status)"
-            ),
-            {"cid": current.cooperative_id, "status": status},
+            text(count_sql),
+            {"cid": current.cooperative_id, **({"status": status} if status is not None else {})},
         )
     items = [
         {
@@ -653,6 +558,11 @@ async def list_statement_lines(
             "decided_by": str(row["decided_by"]) if row["decided_by"] else None,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "member_name": row["member_name"],
+            "payment_reference": row["payment_reference"],
+            "payment_received_on": row["payment_received_on"].isoformat()
+            if row["payment_received_on"]
+            else None,
         }
         for row in rows.mappings().all()
     ]
@@ -664,9 +574,20 @@ async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dic
     async with transaction(current.cooperative_id) as session:
         row = await session.execute(
             text(
-                """SELECT id, import_id, line_date, narration, reference, credit_kobo, debit_kobo,
-                    fingerprint, status, matched_payment_id, ignored_note, decided_by, created_at, updated_at
-                    FROM bank_statement_lines WHERE cooperative_id=:cid AND id=:id"""
+                """
+                SELECT l.id, l.import_id, l.line_date, l.narration, l.reference, l.credit_kobo,
+                       l.debit_kobo, l.status, l.matched_payment_id, l.ignored_note, l.decided_by,
+                       l.created_at, l.updated_at,
+                       p.provider_reference AS payment_reference,
+                       p.received_on AS payment_received_on,
+                       m.full_name AS member_name
+                FROM bank_statement_lines l
+                LEFT JOIN payments p
+                  ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
+                LEFT JOIN members m
+                  ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+                WHERE l.cooperative_id=:cid AND l.id=:id
+                """
             ),
             {"cid": current.cooperative_id, "id": line_id},
         )
@@ -689,6 +610,11 @@ async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dic
         "decided_by": str(record["decided_by"]) if record["decided_by"] else None,
         "created_at": record["created_at"],
         "updated_at": record["updated_at"],
+        "member_name": record["member_name"],
+        "payment_reference": record["payment_reference"],
+        "payment_received_on": record["payment_received_on"].isoformat()
+        if record["payment_received_on"]
+        else None,
     }
 
 

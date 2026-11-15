@@ -9,7 +9,7 @@ import asyncpg
 import pytest
 
 from app.core.db import asyncpg_dsn, dispose_engine
-from app.core.errors import Conflict
+from app.core.errors import Conflict, Forbidden
 from app.domains.auth.service import CurrentSession
 from app.domains.bank_statements import service
 from app.domains.payments import service as payment_service
@@ -164,6 +164,64 @@ async def test_import_keeps_line_dates_as_date_objects(db):
         date(2024, 2, 27),
         date(2024, 2, 28),
     ]
+
+
+async def test_bank_statement_lines_are_readable_by_admin_and_auditor_but_not_committee(db):
+    seed = await create_tenant(
+        db,
+        slug_prefix="bankstmt-access",
+        roles=("officer", "treasurer", "admin", "auditor"),
+    )
+    cid = seed.cooperative_id
+    actor = seed.user_ids[0]
+    admin = session(cid, seed.user_ids[1], "admin")
+    auditor = session(cid, seed.user_ids[2], "auditor")
+    committee = session(cid, uuid.uuid4(), "committee")
+    current = session(cid, actor, "treasurer")
+    payload = b"Date,Narration,Amount\n2024-03-01,Transfer REF-123,1250.00\n"
+    imported = await service.import_statement_file(
+        current,
+        content=payload,
+        filename="read-access.csv",
+        column_map={"date": "Date", "narration": "Narration", "amount": "Amount"},
+    )
+    assert imported["inserted_count"] == 1
+    rows = await service.list_statement_lines(admin, page=1, page_size=50)
+    assert rows["total"] == 1
+    assert rows["items"][0]["narration"] == "Transfer REF-123"
+    detail = await service.get_statement_line(auditor, uuid.UUID(rows["items"][0]["id"]))
+    assert detail["reference"] is None
+    with pytest.raises(Forbidden):
+        await service.list_statement_lines(committee)
+
+
+async def test_bank_statement_line_access_allows_officer_and_treasurer(db):
+    seed = await create_tenant(
+        db,
+        slug_prefix="bankstmt-role-read",
+        roles=("officer", "treasurer"),
+    )
+    cid = seed.cooperative_id
+    actor = seed.user_ids[0]
+    current = session(cid, actor, "officer")
+    payload = b"Date,Narration,Amount\n2024-03-02,Transfer REF-456,900.00\n"
+    imported = await service.import_statement_file(
+        current,
+        content=payload,
+        filename="officer-read.csv",
+        column_map={"date": "Date", "narration": "Narration", "amount": "Amount"},
+    )
+    assert imported["inserted_count"] == 1
+    row_id = await db.fetchval(
+        "SELECT id FROM bank_statement_lines WHERE cooperative_id=$1 ORDER BY created_at LIMIT 1",
+        cid,
+    )
+    officer_view = await service.list_statement_lines(session(cid, actor, "officer"))
+    treasurer_view = await service.list_statement_lines(session(cid, seed.user_ids[1], "treasurer"))
+    assert officer_view["total"] == 1
+    assert treasurer_view["total"] == 1
+    detail = await service.get_statement_line(session(cid, seed.user_ids[1], "treasurer"), row_id)
+    assert detail["narration"] == "Transfer REF-456"
 
 
 async def test_match_statement_lines_classifies_exact_likely_and_ambiguous_matches(db):
