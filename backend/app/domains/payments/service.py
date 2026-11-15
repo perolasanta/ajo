@@ -673,6 +673,19 @@ async def list_payments(
             },
         )
         result_rows = list(result.mappings().all())
+        recipient_availability = await eligibility.candidate_rows_have_eligible_recipients(
+            session,
+            current.cooperative_id,
+            [
+                {
+                    "event_type": row["action_event_type"],
+                    "entity_id": row["action_entity_id"],
+                    "excluded_user_ids": row["action_excluded_user_ids"],
+                }
+                for row in result_rows
+                if row["action_event_type"] is not None
+            ],
+        )
 
     total = int(result_rows[0]["total"]) if result_rows else 0
     rows = [row for row in result_rows if row["id"] is not None]
@@ -717,6 +730,12 @@ async def list_payments(
                 "recorded_at": row["recorded_at"],
                 "received_on": row["received_on"],
                 "receipt_no": row["receipt_no"],
+                "no_eligible_confirmer": (
+                    row["action_event_type"] in eligibility.PAYMENT_ACTION_TYPES
+                    and not recipient_availability.get(
+                        (row["action_event_type"], row["action_entity_id"]), False
+                    )
+                ),
             }
         )
     return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -817,7 +836,20 @@ async def list_cash_awaiting_deposit(current: CurrentSession) -> list[dict[str, 
             {"cid": current.cooperative_id, "as_of_date": None},
         )
         rows = []
-        for row in result.mappings().all():
+        result_rows = list(result.mappings().all())
+        recipient_availability = await eligibility.candidate_rows_have_eligible_recipients(
+            session,
+            current.cooperative_id,
+            [
+                {
+                    "event_type": eligibility.CASH_DEPOSIT,
+                    "entity_id": row["id"],
+                    "excluded_user_ids": [row["recorded_by"]],
+                }
+                for row in result_rows
+            ],
+        )
+        for row in result_rows:
             item = dict(row)
             for field in ("id", "member_id", "recorded_by"):
                 item[field] = str(item[field])
@@ -826,6 +858,9 @@ async def list_cash_awaiting_deposit(current: CurrentSession) -> list[dict[str, 
                 None,
                 user_exists=bool(item.pop("recorder_exists")),
                 include_email=False,
+            )
+            item["no_eligible_confirmer"] = not recipient_availability.get(
+                (eligibility.CASH_DEPOSIT, row["id"]), False
             )
             rows.append(item)
         return rows

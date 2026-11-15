@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from sqlalchemy import text
@@ -154,7 +154,7 @@ ACTION_SPECS = {
         "A share purchase needs your approval.",
         "/share-purchases/{id}",
     ),
-        POLICY_APPROVAL: ActionSpec(
+    POLICY_APPROVAL: ActionSpec(
         frozenset({"admin"}),
         "settings",
         "Settings",
@@ -170,7 +170,7 @@ ACTION_SPECS = {
         "A product change needs your approval.",
         "/settings?product={id}",
     ),
-    }
+}
 
 _CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL = """md5('cash-deposit-overdue:' || CAST(CAST(:cooperative_id AS uuid) AS text) || ':' || COALESCE(CAST(:as_of_date AS date), (now() AT TIME ZONE 'Africa/Lagos')::date)::text)::uuid"""
 
@@ -363,6 +363,42 @@ def action_items_for_candidate_rows(
     return {section: tuple(dict.fromkeys(ids)) for section, ids in items.items()}
 
 
+async def candidate_rows_have_eligible_recipients(
+    session: AsyncSession,
+    cooperative_id: uuid.UUID,
+    candidates: list[dict[str, Any]],
+) -> dict[tuple[str, uuid.UUID], bool]:
+    """Return whether each shared action candidate has an eligible active recipient."""
+    event_types = {candidate["event_type"] for candidate in candidates}
+    if not event_types:
+        return {}
+    required_roles = sorted(
+        {role for event_type in event_types for role in ACTION_SPECS[event_type].roles}
+    )
+    roles_result = await session.execute(
+        text(
+            """SELECT ur.user_id,ur.role FROM user_roles ur
+                JOIN users u ON u.cooperative_id=ur.cooperative_id AND u.id=ur.user_id
+                WHERE ur.cooperative_id=:cooperative_id AND u.status='active'
+                  AND ur.role=ANY(:required_roles)"""
+        ),
+        {"cooperative_id": cooperative_id, "required_roles": required_roles},
+    )
+    roles_by_user: dict[uuid.UUID, set[str]] = {}
+    for row in roles_result.mappings().all():
+        roles_by_user.setdefault(row["user_id"], set()).add(row["role"])
+    return {
+        (candidate["event_type"], candidate["entity_id"]): bool(
+            eligible_recipients_for_action(
+                candidate["event_type"],
+                excluded_user_ids=set(candidate.get("excluded_user_ids") or ()),
+                roles_by_user=roles_by_user,
+            )
+        )
+        for candidate in candidates
+    }
+
+
 async def get_action_candidates(
     session: AsyncSession,
     cooperative_id: uuid.UUID,
@@ -386,7 +422,8 @@ async def get_action_candidates(
     return [dict(row) for row in rows.mappings().all()]
 
 
-_ALL_ACTION_CANDIDATES_SQL = text("""
+_ALL_ACTION_CANDIDATES_SQL = text(
+    """
     SELECT 'payroll_posting'::text AS event_type, r.id AS entity_id,
            array_remove(ARRAY[r.imported_by]::uuid[], NULL) AS excluded_user_ids
       FROM payroll_runs r
@@ -449,7 +486,8 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
                        AND al.entity_type='loan_product' AND al.entity_id=p.id::text
                        AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
       FROM loan_products p WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
-""" + f"""
+"""
+    + f"""
     UNION ALL
     SELECT '{CASH_DEPOSIT_OVERDUE}'::text, {_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL},
            array_remove(array_agg(DISTINCT p.recorded_by), NULL)
@@ -458,7 +496,8 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
      WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
        AND {CASH_OVERDUE_PREDICATE_SQL}
     HAVING count(*) > 0
-""")
+"""
+)
 
 
 async def get_all_action_candidates(

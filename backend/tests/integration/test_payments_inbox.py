@@ -16,15 +16,15 @@ from app.core.config import get_settings
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.members.service import member_balances
+from app.domains.notifications import outbox
 from app.domains.notifications.eligibility import (
     ACTION_SPECS,
     CASH_DEPOSIT,
     PAYMENT_CONFIRMATION,
 )
-from app.domains.notifications import outbox
 from app.domains.notifications.outbox import decrypt_payload
-from app.scheduler.overdue_cash import run_overdue_cash_alerts
 from app.domains.payments import service
+from app.scheduler.overdue_cash import run_overdue_cash_alerts
 from tests.helpers.postgres import check_constraint_array_values
 from tests.integration.test_members import session, setup_tenant
 
@@ -588,20 +588,36 @@ async def test_overdue_cash_scheduler_dedupes_channels_and_respects_tenant_scope
         )
 
     await add_cash(
-        cooperative_id, officer, member_id, as_of - timedelta(days=3),
-        "scheduler-overdue", 987654,
+        cooperative_id,
+        officer,
+        member_id,
+        as_of - timedelta(days=3),
+        "scheduler-overdue",
+        987654,
     )
     await add_cash(
-        cooperative_id, officer, member_id, as_of - timedelta(days=2),
-        "scheduler-in-window", 555,
+        cooperative_id,
+        officer,
+        member_id,
+        as_of - timedelta(days=2),
+        "scheduler-in-window",
+        555,
     )
     await add_cash(
-        untouched_id, untouched_officer, untouched_member_id,
-        as_of - timedelta(days=3), "scheduler-other-tenant", 888,
+        untouched_id,
+        untouched_officer,
+        untouched_member_id,
+        as_of - timedelta(days=3),
+        "scheduler-other-tenant",
+        888,
     )
     await add_cash(
-        window_id, window_officer, window_member_id,
-        as_of - timedelta(days=2), "scheduler-only-in-window", 777,
+        window_id,
+        window_officer,
+        window_member_id,
+        as_of - timedelta(days=2),
+        "scheduler-only-in-window",
+        777,
     )
 
     async with db.transaction():
@@ -643,9 +659,7 @@ async def test_overdue_cash_scheduler_dedupes_channels_and_respects_tenant_scope
         assert first[1]["overdue_receipts"] == 0
         assert first[1]["queued_notifications"] == 0
 
-        await db.execute(
-            "SELECT set_config('app.cooperative_id', $1, false)", str(cooperative_id)
-        )
+        await db.execute("SELECT set_config('app.cooperative_id', $1, false)", str(cooperative_id))
         rows = await db.fetch(
             "SELECT recipient_user_id,channel,payload_encrypted FROM notifications "
             "WHERE cooperative_id=$1 AND kind='cash_deposit_overdue' ORDER BY channel",
@@ -654,9 +668,9 @@ async def test_overdue_cash_scheduler_dedupes_channels_and_respects_tenant_scope
         assert len(rows) == 2
         assert {row["channel"] for row in rows} == {"email", "telegram"}
         assert {row["recipient_user_id"] for row in rows} == {treasurer}
-        member_name = (await service.list_cash_awaiting_deposit(
-            session(cooperative_id, officer, "officer")
-        ))[0]["member_name"]
+        member_name = (
+            await service.list_cash_awaiting_deposit(session(cooperative_id, officer, "officer"))
+        )[0]["member_name"]
         for row in rows:
             payload = decrypt_payload(row["payload_encrypted"])
             rendered = json.dumps(payload, sort_keys=True)
@@ -670,19 +684,23 @@ async def test_overdue_cash_scheduler_dedupes_channels_and_respects_tenant_scope
             emit=None,
         )
         assert second[0]["queued_notifications"] == 2
-        assert await db.fetchval(
-            "SELECT count(*) FROM notifications WHERE cooperative_id=$1 "
-            "AND kind='cash_deposit_overdue'",
-            cooperative_id,
-        ) == 2
-
-        await db.execute(
-            "SELECT set_config('app.cooperative_id', $1, false)", str(untouched_id)
+        assert (
+            await db.fetchval(
+                "SELECT count(*) FROM notifications WHERE cooperative_id=$1 "
+                "AND kind='cash_deposit_overdue'",
+                cooperative_id,
+            )
+            == 2
         )
-        assert await db.fetchval(
-            "SELECT count(*) FROM notifications WHERE cooperative_id=$1 "
-            "AND kind='cash_deposit_overdue'",
-            untouched_id,
-        ) == 0
+
+        await db.execute("SELECT set_config('app.cooperative_id', $1, false)", str(untouched_id))
+        assert (
+            await db.fetchval(
+                "SELECT count(*) FROM notifications WHERE cooperative_id=$1 "
+                "AND kind='cash_deposit_overdue'",
+                untouched_id,
+            )
+            == 0
+        )
     finally:
         await engine.dispose()
