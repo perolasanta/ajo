@@ -12,6 +12,7 @@ from app.core.logging import configure_logging
 from app.worker.email_sender import BrevoEmailSender
 from app.worker.outbox import run_forever
 from app.worker.sender import HttpSmsSender
+from app.worker.smtp_email_sender import SmtpEmailSender
 from app.worker.telegram_sender import HttpTelegramSender
 
 
@@ -45,7 +46,13 @@ async def main() -> None:
         log.info("sms_delivery_disabled")
 
     if settings.email_enabled:
-        senders["email"] = BrevoEmailSender(settings)
+        email_provider = settings.email_provider.strip().lower() or "brevo_api"
+        if email_provider == "brevo_api":
+            senders["email"] = BrevoEmailSender(settings)
+        elif email_provider == "smtp":
+            senders["email"] = SmtpEmailSender(settings)
+        else:
+            raise RuntimeError("EMAIL_PROVIDER must be brevo_api or smtp")
     else:
         log.info("email_delivery_disabled")
 

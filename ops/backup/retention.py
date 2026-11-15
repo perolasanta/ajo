@@ -1,4 +1,5 @@
 """Small, deterministic helpers for backup manifests and retention selection."""
+
 from __future__ import annotations
 
 import argparse

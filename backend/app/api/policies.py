@@ -115,6 +115,16 @@ async def supersede_policy(
     return {"superseded": True}
 
 
+@router.post("/policies/{policy_id}/reject", dependencies=[Depends(require_csrf)])
+async def reject_policy(
+    policy_id: uuid.UUID,
+    body: ReasonBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, bool]:
+    await service.reject_policy(current, policy_id, body.reason)
+    return {"rejected": True}
+
+
 @router.get("/policies/effective")
 async def effective_policy(
     current: Annotated[CurrentSession, Depends(current_session)],
@@ -163,3 +173,13 @@ async def approve_loan_product(
 ) -> dict[str, bool]:
     await service.approve_loan_product(current, product_id, on_date, body.reason)
     return {"approved": True}
+
+
+@router.post("/loan-products/{product_id}/reject", dependencies=[Depends(require_csrf)])
+async def reject_loan_product(
+    product_id: uuid.UUID,
+    body: ReasonBody,
+    current: Annotated[CurrentSession, Depends(current_session)],
+) -> dict[str, bool]:
+    await service.reject_loan_product(current, product_id, body.reason)
+    return {"rejected": True}

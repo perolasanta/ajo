@@ -14,6 +14,7 @@ from app.core.db import transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 
 _POLICY_FIELDS = (
     "effective_from",
@@ -139,6 +140,9 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
             ip=None,
             reason=reason,
         )
+        await enqueue_action_notifications_safely(
+            session, current.cooperative_id, "policy_approval", policy_id
+        )
     return policy_id
 
 
@@ -209,6 +213,57 @@ async def approve_policy(current: CurrentSession, policy_id: uuid.UUID, reason: 
         raise
 
 
+async def reject_policy(current: CurrentSession, policy_id: uuid.UUID, reason: str) -> None:
+    role = _require_role(current, {"admin"})
+    async with transaction(current.cooperative_id) as session:
+        row = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT proposed_by, version FROM cooperative_policy_versions WHERE cooperative_id=:cid AND id=:id AND status='proposed' FOR UPDATE"
+                    ),
+                    {"cid": current.cooperative_id, "id": policy_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise NotFound("Policy version is not awaiting approval")
+        if row["proposed_by"] == current.user_id:
+            raise Conflict("A different administrator must reject this policy")
+        await session.execute(
+            text(
+                "UPDATE cooperative_policy_versions SET status='rejected' WHERE cooperative_id=:cid AND id=:id"
+            ),
+            {"cid": current.cooperative_id, "id": policy_id},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO policy_change_log (cooperative_id,policy_version_id,action,actor_user_id,reason) VALUES (:cid,:id,'rejected',:actor,:reason)"
+            ),
+            {
+                "cid": current.cooperative_id,
+                "id": policy_id,
+                "actor": current.user_id,
+                "reason": reason,
+            },
+        )
+        await append_audit(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            role=role,
+            action="policy_rejected",
+            entity_type="cooperative_policy_version",
+            entity_id=str(policy_id),
+            summary={"version": row["version"]},
+            channel="api",
+            ip=None,
+            reason=reason,
+        )
+
+
 async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict[str, Any]:
     async with transaction(cooperative_id) as session:
         row = (
@@ -241,15 +296,21 @@ async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
             text("""
-                SELECT id, version, status, effective_from, effective_to, proposed_by,
-                       approved_by, salary_basis, deduction_cap_bps, max_active_loans,
-                       guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
-                       interest_method, payroll_allocation_order,
-                       confirmation_expiry_minutes, otp_validity_seconds, cash_banking_days,
-                       settings, created_at
-                  FROM cooperative_policy_versions
-                 WHERE cooperative_id = :cid
-                 ORDER BY version DESC
+                SELECT p.id, p.version, p.status, p.effective_from, p.effective_to, p.proposed_by,
+                       p.approved_by, p.salary_basis, p.deduction_cap_bps, p.max_active_loans,
+                       p.guarantors_required, p.min_savings_kobo, p.loan_to_savings_multiple_x100,
+                       p.interest_method, p.payroll_allocation_order,
+                       p.confirmation_expiry_minutes, p.otp_validity_seconds,
+                       p.cash_banking_days, p.settings, p.created_at,
+                       CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
+                       proposer.email AS proposed_by_email,
+                       CASE WHEN approver.id IS NULL THEN 'Unknown user' ELSE coalesce(approver.full_name, 'Unnamed user') END AS approved_by_name,
+                       approver.email AS approved_by_email
+                  FROM cooperative_policy_versions p
+                  LEFT JOIN users proposer ON proposer.cooperative_id=p.cooperative_id AND proposer.id=p.proposed_by
+                    LEFT JOIN users approver ON approver.cooperative_id=p.cooperative_id AND approver.id=p.approved_by
+                 WHERE p.cooperative_id = :cid
+                 ORDER BY p.version DESC
             """),
             {"cid": current.cooperative_id},
         )
@@ -261,13 +322,23 @@ async def list_loan_products(current: CurrentSession) -> list[dict[str, Any]]:
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
             text("""
-                SELECT id, code, name, interest_method, annual_rate_bps,
+                SELECT p.id, p.code, p.name, p.interest_method, p.annual_rate_bps,
                        min_amount_kobo, max_amount_kobo, min_tenor_months,
                        max_tenor_months, fee_bps, guarantors_required, status,
-                       supersedes_id, created_at, approved_at
-                  FROM loan_products
-                 WHERE cooperative_id = :cid
-                 ORDER BY code, created_at DESC, id
+                       supersedes_id, p.effective_from, p.created_at, approved_at,
+                       proposed.actor_user_id AS proposed_by,
+                       CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
+                       proposer.email AS proposed_by_email,
+                       approved.actor_user_id AS approved_by,
+                       CASE WHEN approver.id IS NULL THEN 'Unknown user' ELSE coalesce(approver.full_name, 'Unnamed user') END AS approved_by_name,
+                       approver.email AS approved_by_email
+                  FROM loan_products p
+                  LEFT JOIN LATERAL (SELECT actor_user_id FROM audit_logs WHERE cooperative_id=p.cooperative_id AND entity_type='loan_product' AND entity_id=p.id::text AND action='loan_product_proposed' ORDER BY created_at LIMIT 1) proposed ON true
+                  LEFT JOIN LATERAL (SELECT actor_user_id FROM audit_logs WHERE cooperative_id=p.cooperative_id AND entity_type='loan_product' AND entity_id=p.id::text AND action='loan_product_approved' ORDER BY created_at LIMIT 1) approved ON true
+                  LEFT JOIN users proposer ON proposer.cooperative_id=p.cooperative_id AND proposer.id=proposed.actor_user_id
+                  LEFT JOIN users approver ON approver.cooperative_id=p.cooperative_id AND approver.id=approved.actor_user_id
+                 WHERE p.cooperative_id = :cid
+                 ORDER BY p.code, p.created_at DESC, p.id
             """),
             {"cid": current.cooperative_id},
         )
@@ -362,16 +433,17 @@ async def create_loan_product(
                 INSERT INTO loan_products
                   (id, cooperative_id, code, name, interest_method, annual_rate_bps,
                    min_amount_kobo, max_amount_kobo, min_tenor_months, max_tenor_months,
-                   fee_bps, guarantors_required, status, supersedes_id)
+                   fee_bps, guarantors_required, status, supersedes_id, effective_from)
                 VALUES (:id, :cid, :code, :name, :interest_method, :annual_rate_bps,
                    :min_amount_kobo, :max_amount_kobo, :min_tenor_months, :max_tenor_months,
-                   :fee_bps, :guarantors_required, 'proposed', :supersedes_id)
+                   :fee_bps, :guarantors_required, 'proposed', :supersedes_id, :effective_from)
             """),
             {
                 **product,
                 "id": product_id,
                 "cid": current.cooperative_id,
                 "fee_bps": product.get("fee_bps", 0),
+                "effective_from": on_date,
             },
         )
         await append_audit(
@@ -386,6 +458,9 @@ async def create_loan_product(
             channel="api",
             ip=None,
             reason=reason,
+        )
+        await enqueue_action_notifications_safely(
+            session, current.cooperative_id, "product_approval", product_id
         )
     return product_id
 
@@ -434,6 +509,50 @@ async def approve_loan_product(
             actor_user_id=current.user_id,
             role=role,
             action="loan_product_approved",
+            entity_type="loan_product",
+            entity_id=str(product_id),
+            summary={"code": row["code"]},
+            channel="api",
+            ip=None,
+            reason=reason,
+        )
+
+
+async def reject_loan_product(current: CurrentSession, product_id: uuid.UUID, reason: str) -> None:
+    role = _require_role(current, {"admin"})
+    async with transaction(current.cooperative_id) as session:
+        row = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id, code FROM loan_products WHERE cooperative_id=:cid AND id=:id AND status='proposed' FOR UPDATE"
+                    ),
+                    {"cid": current.cooperative_id, "id": product_id},
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise NotFound("Loan product is not awaiting approval")
+        proposer = await session.scalar(
+            text(
+                "SELECT actor_user_id FROM audit_logs WHERE cooperative_id=:cid AND entity_type='loan_product' AND entity_id=:id AND action='loan_product_proposed' ORDER BY created_at LIMIT 1"
+            ),
+            {"cid": current.cooperative_id, "id": str(product_id)},
+        )
+        if proposer == current.user_id:
+            raise Conflict("A different administrator must reject this product")
+        await session.execute(
+            text("UPDATE loan_products SET status='rejected' WHERE cooperative_id=:cid AND id=:id"),
+            {"cid": current.cooperative_id, "id": product_id},
+        )
+        await append_audit(
+            session,
+            cooperative_id=current.cooperative_id,
+            actor_user_id=current.user_id,
+            role=role,
+            action="loan_product_rejected",
             entity_type="loan_product",
             entity_id=str(product_id),
             summary={"code": row["code"]},

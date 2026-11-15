@@ -12,6 +12,16 @@ import type {
   MemberLoanPage,
   MemberActivityPage,
   WithdrawalQueuePage,
+  PaymentsListPage,
+  PaymentRecordBody,
+  PaymentRecordResponse,
+  PaymentDetail,
+  PaymentDecisionBody,
+  PaymentDecisionResponse,
+  CashReceipt,
+  CashOnHandSummary,
+  CashDepositBody,
+  CashDepositResponse,
   NotificationSummary,
   DashboardSummary,
   PayrollDryRunResponse,
@@ -157,6 +167,175 @@ export function getWithdrawalRequests(
   return request<WithdrawalQueuePage>(`/withdrawal-requests?${query.toString()}`);
 }
 
+export type SharePurchaseItem = {
+  id: string;
+  member_id: string;
+  member_name: string;
+  shares_count: number;
+  unit_price_naira: number;
+  amount_kobo: number;
+  status: string;
+  requested_by: string;
+  requester_name: string;
+  decided_by?: string | null;
+  decision_note?: string | null;
+  created_at: string;
+  decided_at?: string | null;
+  cancelled_at?: string | null;
+  journal_entry_id?: string | null;
+};
+
+export type SharePurchasePage = {
+  items: SharePurchaseItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  current_unit_price_naira: number;
+};
+
+export type ShareRegisterItem = {
+  member_id: string;
+  member_name: string;
+  shares_held: number;
+  value_kobo: number;
+  last_purchase_date: string | null;
+};
+
+export type ShareRegisterPage = {
+  items: ShareRegisterItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_shares: number;
+  members_holding_shares: number;
+  total_value_kobo: number;
+  current_unit_price_naira: number;
+};
+
+export function getSharePurchases(
+  params: { status?: string; mine?: "all" | "needed" } = {},
+): Promise<SharePurchasePage> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.mine) query.set("mine", params.mine);
+  return request<SharePurchasePage>(`/share-purchases?${query.toString()}`);
+}
+
+export function getShareRegister(
+  params: { search?: string; page?: number; pageSize?: number } = {},
+): Promise<ShareRegisterPage> {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<ShareRegisterPage>(`/share-register?${query.toString()}`);
+}
+
+export function requestSharePurchase(body: {
+  member_id: string;
+  shares_count: number;
+}): Promise<{ share_purchase_request_id: string }> {
+  return request<{ share_purchase_request_id: string }>("/share-purchases", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getPayments(
+  params: {
+    status?: string;
+    channel?: string;
+    purpose?: string;
+    member?: string;
+    mine?: boolean;
+    action?: "needed";
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<PaymentsListPage> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.channel) query.set("channel", params.channel);
+  if (params.purpose) query.set("purpose", params.purpose);
+  if (params.member) query.set("member", params.member);
+  if (params.mine) query.set("mine", "true");
+  if (params.action) query.set("action", params.action);
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<PaymentsListPage>(`/payments?${query.toString()}`);
+}
+
+export function recordPayment(
+  body: PaymentRecordBody,
+  idempotencyKey: string,
+): Promise<PaymentRecordResponse> {
+  return request<PaymentRecordResponse>("/payments", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getPayment(paymentId: string): Promise<PaymentDetail> {
+  return request<PaymentDetail>(`/payments/${paymentId}`);
+}
+
+export function confirmPayment(
+  paymentId: string,
+  body: PaymentDecisionBody,
+  idempotencyKey: string,
+): Promise<PaymentDecisionResponse> {
+  return request<PaymentDecisionResponse>(`/payments/${paymentId}/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function rejectPayment(
+  paymentId: string,
+  body: PaymentDecisionBody,
+  idempotencyKey: string,
+): Promise<PaymentDecisionResponse> {
+  return request<PaymentDecisionResponse>(`/payments/${paymentId}/reject`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getCashAwaitingDeposit(): Promise<CashReceipt[]> {
+  return request<CashReceipt[]>("/payments/cash-awaiting-deposit");
+}
+
+export function getCashOnHandSummary(): Promise<CashOnHandSummary> {
+  return request<CashOnHandSummary>("/payments/cash-on-hand");
+}
+
+export function recordCashDeposit(
+  body: CashDepositBody,
+  idempotencyKey: string,
+): Promise<CashDepositResponse> {
+  return request<CashDepositResponse>("/payments/cash-deposits", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getMember(memberId: string): Promise<MemberDetail> {
   return unwrap(
     await api.GET("/members/{member_id}", { params: { path: { member_id: memberId } } }),
@@ -242,12 +421,25 @@ export type SettingsPolicyVersion = {
   settings: Record<string, unknown>;
   proposed_by?: string;
   approved_by?: string | null;
+  proposed_by_name?: string;
+  proposed_by_email?: string | null;
+  approved_by_name?: string;
+  approved_by_email?: string | null;
+  created_at?: string;
 };
 
 export type SettingsLoanProduct = LoanProduct & {
   status: string;
   supersedes_id: string | null;
   approved_at: string | null;
+  created_at?: string;
+  effective_from?: string | null;
+  proposed_by?: string;
+  proposed_by_name?: string;
+  proposed_by_email?: string | null;
+  approved_by?: string | null;
+  approved_by_name?: string;
+  approved_by_email?: string | null;
 };
 
 export function getPolicyVersions(): Promise<SettingsPolicyVersion[]> {
@@ -281,6 +473,14 @@ export function decidePolicy(
   });
 }
 
+export function rejectPolicy(policyId: string, reason: string): Promise<unknown> {
+  return request(`/policies/${encodeURIComponent(policyId)}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function submitLoanProductProposal(
   body: Record<string, unknown>,
 ): Promise<{ loan_product_id: string }> {
@@ -294,6 +494,14 @@ export function submitLoanProductProposal(
 export function approveSettingsLoanProduct(productId: string, reason: string): Promise<unknown> {
   const date = new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lagos" });
   return request(`/loan-products/${encodeURIComponent(productId)}/approve?on_date=${date}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function rejectSettingsLoanProduct(productId: string, reason: string): Promise<unknown> {
+  return request(`/loan-products/${encodeURIComponent(productId)}/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
     body: JSON.stringify({ reason }),

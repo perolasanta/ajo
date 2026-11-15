@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -27,12 +28,21 @@ class RoleChangeActionCounts(BaseModel):
     awaiting_approval: int | None = None
 
 
+class PaymentActionCounts(BaseModel):
+    awaiting_confirmation: int | None = None
+    awaiting_deposit: int | None = None
+
+
 class LoanActionCounts(BaseModel):
     awaiting_decision: int | None = None
     disputed_or_paused: int | None = None
 
 
 class WithdrawalRequestActionCounts(BaseModel):
+    awaiting_approval: int | None = None
+
+
+class SharePurchaseActionCounts(BaseModel):
     awaiting_approval: int | None = None
 
 
@@ -45,11 +55,12 @@ class NotificationSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     payroll: PayrollActionCounts | None = None
+    payments: PaymentActionCounts | None = None
     disbursements: DisbursementActionCounts | None = None
     role_changes: RoleChangeActionCounts | None = None
     loans: LoanActionCounts | None = None
     withdrawal_requests: WithdrawalRequestActionCounts | None = None
-    payments: dict[str, int] | None = None
+    share_purchases: SharePurchaseActionCounts | None = None
     settings: SettingsActionCounts | None = None
 
 

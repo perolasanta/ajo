@@ -45,6 +45,7 @@ export type MemberStatementItem = {
 };
 export type MemberStatementPage = {
   items: MemberStatementItem[];
+  shares_balance_kobo: number;
   page: number;
   page_size: number;
   total: number;
@@ -54,6 +55,7 @@ export type MemberLoanItem = {
   loan_id?: string | null;
   application_status: string;
   loan_status?: string | null;
+  deductions_paused?: boolean | null;
   principal_kobo: number;
   outstanding_balance_kobo?: number | null;
   next_installment_at?: string | null;
@@ -78,11 +80,24 @@ export type MemberActivityItem = {
   safe_summary: Record<string, string | number | null>;
 };
 export type WithdrawalQueueItem = {
-  id: string; member_id: string; member_name: string; member_no: string; amount_kobo: number;
-  requester_name: string; requested_by: string; requested_at: string; status: string; reason: string;
+  id: string;
+  member_id: string;
+  member_name: string;
+  member_no: string;
+  amount_kobo: number;
+  requester_name: string;
+  requested_by: string;
+  requested_at: string;
+  status: string;
+  reason: string;
   rejection_reason: string | null;
 };
-export type WithdrawalQueuePage = { items: WithdrawalQueueItem[]; page: number; page_size: number; total: number };
+export type WithdrawalQueuePage = {
+  items: WithdrawalQueueItem[];
+  page: number;
+  page_size: number;
+  total: number;
+};
 export type MemberActivityPage = {
   items: MemberActivityItem[];
   page: number;
@@ -303,8 +318,119 @@ export type PayrollImportResponse = {
 export type PayrollPostResponse = { posted: number };
 export type PayrollSignOffResponse = { csv_base64: string; json_base64: string };
 
+export type PaymentListItem = {
+  id: string;
+  member_id: string;
+  member_no: string;
+  member_name: string;
+  loan_id: string | null;
+  loan_name: string | null;
+  purpose: string;
+  amount_kobo: number;
+  channel: string;
+  status: string;
+  recorded_by: string;
+  recorded_by_name: string;
+  rejected_reason: string | null;
+  recorded_at: string;
+  received_on: string;
+  receipt_no: number | null;
+};
+export type PaymentRecordBody = {
+  member_id: string;
+  channel: "cash" | "bank_transfer";
+  purpose: "savings" | "shares" | "dues" | "loan_repayment";
+  loan_id: string | null;
+  amount_kobo: number;
+  provider_reference: string | null;
+  received_on: string;
+  fee_kobo: number;
+  fee_bearer: "member";
+  reason: string | null;
+};
+export type PaymentRecordResponse = {
+  id: string;
+  status: string;
+  receipt_no: number | null;
+};
+export type PaymentDecisionBody = { reason?: string | null };
+export type PaymentDecisionResponse = {
+  id: string;
+  status: string;
+  ledger_entry_id: string | null;
+  receipt_no: number | null;
+};
+export type PaymentDetail = {
+  id: string;
+  member_id: string;
+  member_no: string;
+  member_name: string;
+  loan_id: string | null;
+  channel: string;
+  provider_reference: string | null;
+  purpose: string;
+  amount_kobo: number;
+  status: string;
+  recorded_by: string;
+  recorded_by_name: string;
+  recorded_at: string;
+  received_on: string;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  rejected_reason: string | null;
+  receipt_no: number | null;
+};
+export type CashReceipt = {
+  id: string;
+  member_id: string;
+  member_no: string;
+  member_name: string;
+  receipt_no: number | null;
+  purpose: string;
+  amount_kobo: number;
+  received_on: string;
+  recorded_at: string;
+  recorded_by: string;
+  recorded_by_name: string;
+  cash_banking_days: number;
+  age_days: number;
+  overdue: boolean;
+};
+export type CashOfficerBalance = {
+  user_id: string;
+  display_name: string;
+  amount_kobo: number;
+  oldest_age_days: number;
+};
+export type CashOnHandSummary = {
+  ledger_balance_kobo: number;
+  officers: CashOfficerBalance[];
+  unallocated_kobo: number;
+};
+export type CashDepositBody = {
+  slip_reference: string;
+  deposited_on: string;
+  payment_ids: string[];
+};
+export type CashDepositResponse = {
+  id: string;
+  status: string;
+  slip_reference: string;
+  deposited_on: string;
+  amount_kobo: number;
+  payment_ids: string[];
+  ledger_entry_id: string;
+};
+export type PaymentsListPage = {
+  items: PaymentListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
 export type NotificationSummary = {
   payroll?: { awaiting_posting?: number; awaiting_sign_off?: number };
+  payments?: { awaiting_confirmation?: number; awaiting_deposit?: number };
   disbursements?: {
     awaiting_authorization?: number;
     awaiting_confirmation?: number;
@@ -313,6 +439,8 @@ export type NotificationSummary = {
   role_changes?: { awaiting_approval?: number };
   loans?: { awaiting_decision?: number; disputed_or_paused?: number };
   withdrawal_requests?: { awaiting_approval?: number };
+  share_purchases?: { awaiting_approval?: number };
+  settings?: { policy_approval?: number; product_approval?: number };
 };
 
 export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "auditor";
@@ -359,6 +487,44 @@ export interface paths {
   "/notifications/summary": {
     get: {
       responses: { 200: { content: { "application/json": NotificationSummary } } };
+    };
+  };
+  "/payments": {
+    get: {
+      parameters?: {
+        query?: {
+          status?: string;
+          channel?: string;
+          purpose?: string;
+          member?: string;
+          mine?: boolean;
+          action?: "needed";
+          page?: number;
+          page_size?: number;
+        };
+      };
+      responses: { 200: { content: { "application/json": PaymentsListPage } } };
+    };
+    post: {
+      parameters: { header: { "Idempotency-Key": string } };
+      requestBody: { content: { "application/json": PaymentRecordBody } };
+      responses: { 200: { content: { "application/json": PaymentRecordResponse } } };
+    };
+  };
+  "/payments/{payment_id}": {
+    get: { responses: { 200: { content: { "application/json": PaymentDetail } } } };
+  };
+  "/payments/cash-awaiting-deposit": {
+    get: { responses: { 200: { content: { "application/json": CashReceipt[] } } } };
+  };
+  "/payments/cash-on-hand": {
+    get: { responses: { 200: { content: { "application/json": CashOnHandSummary } } } };
+  };
+  "/payments/cash-deposits": {
+    post: {
+      parameters: { header: { "Idempotency-Key": string } };
+      requestBody: { content: { "application/json": CashDepositBody } };
+      responses: { 200: { content: { "application/json": CashDepositResponse } } };
     };
   };
   "/auth/csrf": Record<string, never>;

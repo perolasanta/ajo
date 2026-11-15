@@ -76,6 +76,7 @@ STATEMENT_QUERY = text(
              WHEN source_type IN ('contribution','member_contribution') THEN 'contribution'
              WHEN source_type IN ('payroll','payroll_deduction') THEN 'payroll deduction'
              WHEN source_type IN ('withdrawal','member_withdrawal') THEN 'withdrawal'
+             WHEN source_type = 'share_purchase' THEN 'share purchase'
              WHEN source_type IN ('repayment','loan_repayment') THEN 'repayment'
              ELSE source_type
            END AS type,
@@ -89,7 +90,7 @@ STATEMENT_QUERY = text(
 LOANS_QUERY = text(
     """
     SELECT a.id AS application_id, l.id AS loan_id, a.status AS application_status,
-           l.status AS loan_status, a.principal_kobo,
+           l.status AS loan_status, l.deductions_paused, a.principal_kobo,
            COALESCE(next_due.balance_kobo, 0)::bigint AS outstanding_balance_kobo,
            next_due.due_at AS next_installment_at,
            next_due.payment_kobo AS next_installment_amount_kobo,
@@ -170,7 +171,18 @@ async def list_statement(
                 "offset": (page - 1) * page_size,
             },
         )
-        return _page([dict(row) for row in result.mappings()], page, page_size)
+        items = [dict(row) for row in result.mappings()]
+        shares_balance = await session.scalar(
+            text("""SELECT coalesce(sum(l.credit_kobo-l.debit_kobo),0)
+                FROM journal_lines l JOIN accounts a
+                  ON a.cooperative_id=l.cooperative_id AND a.id=l.account_id
+                WHERE l.cooperative_id=:cid AND l.member_id=:mid
+                  AND a.code='member_shares'"""),
+            {"cid": current.cooperative_id, "mid": member_id},
+        )
+        page_data = _page(items, page, page_size)
+        page_data["shares_balance_kobo"] = int(shares_balance or 0)
+        return page_data
 
 
 async def list_loans(
@@ -193,6 +205,7 @@ async def list_loans(
         for row in rows:
             for field in (
                 "loan_id",
+                "deductions_paused",
                 "outstanding_balance_kobo",
                 "next_installment_at",
                 "next_installment_amount_kobo",

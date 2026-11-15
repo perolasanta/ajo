@@ -1,0 +1,32 @@
+export type PaymentChannel = "cash" | "bank_transfer";
+export type PaymentPurpose = "savings" | "shares" | "dues" | "loan_repayment";
+export type PaymentFormDraft = {
+  memberId: string;
+  channel: PaymentChannel | "";
+  purpose: PaymentPurpose | "";
+  amountNaira: string;
+  providerReference: string;
+  receivedOn: string;
+  loanId: string;
+  loanStatus: string;
+  deductionsPaused: boolean;
+  reason: string;
+  roles: string[];
+};
+export type RecordPaymentPayload = {
+  member_id: string;
+  channel: PaymentChannel;
+  purpose: PaymentPurpose;
+  loan_id: string | null;
+  amount_kobo: number;
+  provider_reference: string | null;
+  received_on: string;
+  fee_kobo: number;
+  fee_bearer: "member";
+  reason: string | null;
+};
+export function canRecordPayments(roles: string[]): boolean;
+export function nairaToKobo(value: string): number;
+export function formatKoboAsNaira(kobo: number): string;
+export function validatePaymentDraft(draft: PaymentFormDraft): string | null;
+export function buildPaymentPayload(draft: PaymentFormDraft): RecordPaymentPayload;

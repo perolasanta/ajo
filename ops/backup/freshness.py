@@ -33,9 +33,7 @@ def is_fresh(names: list[str], *, now: datetime, max_age_hours: int) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--now", required=True, type=int, help="current UTC Unix timestamp"
-    )
+    parser.add_argument("--now", required=True, type=int, help="current UTC Unix timestamp")
     parser.add_argument("--max-age-hours", type=int, default=26)
     args = parser.parse_args()
     if args.max_age_hours <= 0:

@@ -6,7 +6,7 @@ import hmac
 import json
 import uuid
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -15,13 +15,64 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.audit.service import append_audit
+from app.domains.auth.display_names import staff_actor_display_name
 from app.domains.auth.service import CurrentSession
 from app.domains.members.service import record_contribution
+from app.domains.notifications import eligibility
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 from app.domains.payments.providers import MANUAL_PROVIDER
 from app.domains.repayments.service import post_repayment
 
 _PAYMENT_READ_ROLES = {"officer", "treasurer", "admin", "auditor"}
 _PAYMENT_WRITE_ROLES = {"officer", "treasurer"}
+
+_PAYMENT_LIST_QUERY = text(
+    """WITH payment_action_candidates AS (
+        __PAYMENT_ACTION_CANDIDATES__
+    ), filtered AS (
+        SELECT p.id, p.member_id, m.member_no, m.full_name AS member_name,
+               p.loan_id, loan_product.name AS loan_name, p.purpose,
+               p.amount_kobo, p.channel, p.status, p.recorded_at, p.received_on,
+               p.receipt_no, p.recorded_by, p.rejected_reason,
+               recorder.full_name AS recorder_full_name,
+               (recorder.id IS NOT NULL) AS recorder_exists,
+               candidate.event_type AS action_event_type,
+               candidate.entity_id AS action_entity_id,
+               candidate.excluded_user_ids AS action_excluded_user_ids
+          FROM payments p
+          JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+          LEFT JOIN loans loan
+            ON loan.cooperative_id=p.cooperative_id AND loan.id=p.loan_id
+          LEFT JOIN loan_products loan_product
+            ON loan_product.cooperative_id=loan.cooperative_id
+           AND loan_product.id=loan.product_id
+          LEFT JOIN users recorder
+            ON recorder.cooperative_id=p.cooperative_id AND recorder.id=p.recorded_by
+          LEFT JOIN payment_action_candidates candidate ON candidate.entity_id=p.id
+         WHERE p.cooperative_id=:cooperative_id
+           AND (CAST(:status AS text) IS NULL OR p.status=CAST(:status AS text))
+           AND (CAST(:channel AS text) IS NULL OR p.channel=CAST(:channel AS text))
+           AND (CAST(:purpose AS text) IS NULL OR p.purpose=CAST(:purpose AS text))
+           AND (CAST(:member_id AS uuid) IS NULL OR p.member_id=CAST(:member_id AS uuid))
+           AND (NOT :mine OR p.recorded_by=:user_id)
+           AND (NOT :action_needed OR (
+                candidate.event_type=ANY(CAST(:action_event_types AS text[]))
+                AND NOT (:user_id=ANY(COALESCE(
+                    candidate.excluded_user_ids, ARRAY[]::uuid[]))))
+           )
+    ), page AS (
+        SELECT * FROM filtered
+         ORDER BY recorded_at DESC, id DESC
+         LIMIT :page_size OFFSET :offset
+    ), total AS (
+        SELECT count(*) AS total FROM filtered
+    )
+    SELECT page.*, total.total
+      FROM total LEFT JOIN page ON true
+      ORDER BY page.recorded_at DESC NULLS LAST, page.id DESC NULLS LAST""".replace(
+        "__PAYMENT_ACTION_CANDIDATES__", eligibility.payment_action_candidates_sql()
+    )  # noqa: S608 - candidate SQL is built only from fixed action constants.
+)
 
 
 def _role(current: CurrentSession, allowed: set[str]) -> str:
@@ -243,6 +294,14 @@ async def record_payment(
             ip=ip,
         )
         if channel == "cash":
+            await enqueue_action_notifications_safely(
+                session, cid, eligibility.CASH_DEPOSIT, payment_id
+            )
+        else:
+            await enqueue_action_notifications_safely(
+                session, cid, eligibility.PAYMENT_CONFIRMATION, payment_id
+            )
+        if channel == "cash":
             ledger_entry_id = await _post_confirmed_payment(
                 session,
                 current,
@@ -390,7 +449,7 @@ async def _decide_payment(
             (
                 await session.execute(
                     text("""SELECT id,member_id,loan_id,channel,purpose,amount_kobo,provider_reference,
-                    status,recorded_by,received_on FROM payments
+                    status,recorded_by,received_on,receipt_no FROM payments
                     WHERE cooperative_id=:cid AND id=:id FOR UPDATE"""),
                     {"cid": cid, "id": payment_id},
                 )
@@ -406,6 +465,7 @@ async def _decide_payment(
             raise Conflict("A different user must decide a payment")
 
         ledger_entry_id: uuid.UUID | None = None
+        receipt_no = payment["receipt_no"]
         if action == "confirm":
             if payment["purpose"] == "loan_repayment":
                 loan = (
@@ -434,13 +494,21 @@ async def _decide_payment(
             ledger_entry_id = await _post_confirmed_payment(
                 session, current, payment, reason=normalized_reason, ip=ip
             )
+            if receipt_no is None:
+                receipt_no = await _next_receipt_no(session, cid)
             status = "confirmed"
             audit_action = "payment_transfer_confirmed"
             await session.execute(
                 text("""UPDATE payments SET status='confirmed',confirmed_by=:actor,
-                    confirmed_at=now(),ledger_entry_id=:entry
+                    confirmed_at=now(),ledger_entry_id=:entry,receipt_no=:receipt_no
                     WHERE cooperative_id=:cid AND id=:id"""),
-                {"cid": cid, "id": payment_id, "actor": current.user_id, "entry": ledger_entry_id},
+                {
+                    "cid": cid,
+                    "id": payment_id,
+                    "actor": current.user_id,
+                    "entry": ledger_entry_id,
+                    "receipt_no": receipt_no,
+                },
             )
         else:
             status = "rejected"
@@ -460,6 +528,7 @@ async def _decide_payment(
             "id": str(payment_id),
             "status": status,
             "ledger_entry_id": str(ledger_entry_id) if ledger_entry_id else None,
+            "receipt_no": receipt_no,
         }
         await session.execute(
             text("""INSERT INTO payment_action_idempotency
@@ -531,7 +600,14 @@ async def get_payment(current: CurrentSession, payment_id: uuid.UUID) -> dict[st
         row = (
             (
                 await session.execute(
-                    text("SELECT * FROM payments WHERE cooperative_id=:cid AND id=:id"),
+                    text("""SELECT p.*,m.full_name AS member_name,m.member_no,
+                               recorder.full_name AS recorder_full_name,
+                               (recorder.id IS NOT NULL) AS recorder_exists
+                        FROM payments p JOIN members m
+                          ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+                        LEFT JOIN users recorder ON recorder.cooperative_id=p.cooperative_id
+                                                 AND recorder.id=p.recorded_by
+                        WHERE p.cooperative_id=:cid AND p.id=:id"""),
                     {"cid": current.cooperative_id, "id": payment_id},
                 )
             )
@@ -540,7 +616,106 @@ async def get_payment(current: CurrentSession, payment_id: uuid.UUID) -> dict[st
         )
         if row is None:
             raise NotFound("Payment not found")
-        return _payment_dict(row)
+        payment = _payment_dict(row)
+        payment["member_name"] = row["member_name"]
+        payment["member_no"] = row["member_no"]
+        payment["recorded_by_name"] = staff_actor_display_name(
+            row["recorder_full_name"],
+            None,
+            user_exists=bool(row["recorder_exists"]),
+            include_email=False,
+        )
+        return payment
+
+
+async def list_payments(
+    current: CurrentSession,
+    *,
+    page: int,
+    page_size: int,
+    status: str | None = None,
+    channel: str | None = None,
+    purpose: str | None = None,
+    member_id: uuid.UUID | None = None,
+    mine: bool = False,
+    action: str | None = None,
+) -> dict[str, Any]:
+    _role(current, _PAYMENT_READ_ROLES)
+    if page < 1 or not 1 <= page_size <= 100:
+        raise ValueError("Page must be positive and page size must be between 1 and 100")
+    if action not in {None, "needed"}:
+        raise ValueError("Unsupported payment list action filter")
+
+    roles = set(current.roles)
+    eligible_action_types = eligibility.eligible_action_types_for_user(
+        current.user_id, roles, eligibility.PAYMENT_ACTION_TYPES
+    )
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            _PAYMENT_LIST_QUERY,
+            {
+                "cooperative_id": current.cooperative_id,
+                "entity_id": None,
+                "status": status,
+                "channel": channel,
+                "purpose": purpose,
+                "member_id": member_id,
+                "mine": mine,
+                "action_needed": action == "needed",
+                "action_event_types": list(eligible_action_types),
+                "user_id": current.user_id,
+                "page_size": page_size,
+                "offset": (page - 1) * page_size,
+            },
+        )
+        result_rows = list(result.mappings().all())
+
+    total = int(result_rows[0]["total"]) if result_rows else 0
+    rows = [row for row in result_rows if row["id"] is not None]
+    if action == "needed":
+        candidate_rows = [
+            {
+                "event_type": row["action_event_type"],
+                "entity_id": row["action_entity_id"],
+                "excluded_user_ids": row["action_excluded_user_ids"],
+            }
+            for row in rows
+            if row["action_event_type"] is not None
+        ]
+        eligible_ids_by_action = eligibility.action_entity_ids_for_candidate_rows(
+            candidate_rows, current.user_id, roles
+        )
+        eligible_ids = {entity_id for ids in eligible_ids_by_action.values() for entity_id in ids}
+        rows = [row for row in rows if row["id"] in eligible_ids]
+
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": str(row["id"]),
+                "member_id": str(row["member_id"]),
+                "member_no": row["member_no"],
+                "member_name": row["member_name"],
+                "loan_id": str(row["loan_id"]) if row["loan_id"] is not None else None,
+                "loan_name": row["loan_name"],
+                "purpose": row["purpose"],
+                "amount_kobo": int(row["amount_kobo"]),
+                "channel": row["channel"],
+                "status": row["status"],
+                "recorded_by_name": staff_actor_display_name(
+                    row["recorder_full_name"],
+                    None,
+                    user_exists=bool(row["recorder_exists"]),
+                    include_email=False,
+                ),
+                "recorded_by": str(row["recorded_by"]),
+                "rejected_reason": row["rejected_reason"],
+                "recorded_at": row["recorded_at"],
+                "received_on": row["received_on"],
+                "receipt_no": row["receipt_no"],
+            }
+        )
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 async def cash_on_hand_balance(cooperative_id: uuid.UUID) -> int:
@@ -556,16 +731,81 @@ async def cash_on_hand_balance(cooperative_id: uuid.UUID) -> int:
         return int(balance or 0)
 
 
+async def cash_on_hand_summary(current: CurrentSession) -> dict[str, Any]:
+    _role(current, {"treasurer", "admin", "auditor"})
+    async with transaction(current.cooperative_id) as session:
+        result = await session.execute(
+            text("""WITH cash_balance AS (
+                    SELECT coalesce(sum(lines.debit_kobo-lines.credit_kobo),0)::bigint
+                             AS ledger_balance_kobo
+                      FROM journal_lines lines JOIN accounts accounts
+                        ON accounts.cooperative_id=lines.cooperative_id
+                       AND accounts.id=lines.account_id
+                     WHERE lines.cooperative_id=:cid AND accounts.code='cash_on_hand'
+                ), officer_cash AS (
+                    SELECT p.recorded_by AS user_id,
+                           coalesce(sum(p.amount_kobo),0)::bigint AS amount_kobo,
+                           min(p.received_on) AS oldest_received_on,
+                           ((now() AT TIME ZONE 'Africa/Lagos')::date-min(p.received_on))::int
+                             AS oldest_age_days
+                      FROM payments p
+                     WHERE p.cooperative_id=:cid AND p.channel='cash' AND p.status='received'
+                     GROUP BY p.recorded_by
+                )
+                SELECT cash_balance.ledger_balance_kobo, officer_cash.user_id,
+                       users.full_name, (users.id IS NOT NULL) AS user_exists,
+                       officer_cash.amount_kobo, officer_cash.oldest_age_days
+                  FROM cash_balance
+                  LEFT JOIN officer_cash ON true
+                  LEFT JOIN users ON users.cooperative_id=:cid
+                                 AND users.id=officer_cash.user_id
+                 ORDER BY users.full_name NULLS LAST, officer_cash.user_id"""),
+            {"cid": current.cooperative_id},
+        )
+        rows = list(result.mappings().all())
+    officers = []
+    for row in rows:
+        if row["user_id"] is None:
+            continue
+        officers.append(
+            {
+                "user_id": str(row["user_id"]),
+                "display_name": staff_actor_display_name(
+                    row["full_name"],
+                    None,
+                    user_exists=bool(row["user_exists"]),
+                    include_email=False,
+                ),
+                "amount_kobo": int(row["amount_kobo"]),
+                "oldest_age_days": int(row["oldest_age_days"]),
+            }
+        )
+    ledger_balance = int(rows[0]["ledger_balance_kobo"]) if rows else 0
+    officer_total = sum(cast(int, row["amount_kobo"]) for row in officers)
+    return {
+        "ledger_balance_kobo": ledger_balance,
+        "officers": officers,
+        "unallocated_kobo": ledger_balance - officer_total,
+    }
+
+
 async def list_cash_awaiting_deposit(current: CurrentSession) -> list[dict[str, Any]]:
     _role(current, _PAYMENT_READ_ROLES)
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
-            text("""SELECT p.id,p.member_id,p.receipt_no,p.purpose,p.amount_kobo,
-                p.provider_reference,p.received_on,p.recorded_at,p.recorded_by,
+            text("""SELECT p.id,p.member_id,m.member_no,m.full_name AS member_name,
+                p.receipt_no,p.purpose,p.amount_kobo,p.provider_reference,
+                p.received_on,p.recorded_at,p.recorded_by,
+                recorder.full_name AS recorder_full_name,
+                (recorder.id IS NOT NULL) AS recorder_exists,
                 coalesce(policy.cash_banking_days,2) AS cash_banking_days,
+                ((now() AT TIME ZONE 'Africa/Lagos')::date-p.received_on)::int AS age_days,
                 (p.received_on + coalesce(policy.cash_banking_days,2) <
                     (now() AT TIME ZONE 'Africa/Lagos')::date) AS overdue
               FROM payments p
+              JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+              LEFT JOIN users recorder ON recorder.cooperative_id=p.cooperative_id
+                                       AND recorder.id=p.recorded_by
               LEFT JOIN LATERAL (
                 SELECT v.cash_banking_days FROM cooperative_policy_versions v
                  WHERE v.cooperative_id=p.cooperative_id AND v.status='approved'
@@ -582,6 +822,12 @@ async def list_cash_awaiting_deposit(current: CurrentSession) -> list[dict[str, 
             item = dict(row)
             for field in ("id", "member_id", "recorded_by"):
                 item[field] = str(item[field])
+            item["recorded_by_name"] = staff_actor_display_name(
+                item.pop("recorder_full_name"),
+                None,
+                user_exists=bool(item.pop("recorder_exists")),
+                include_email=False,
+            )
             rows.append(item)
         return rows
 

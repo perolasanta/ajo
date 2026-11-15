@@ -19,6 +19,8 @@ from hypothesis import settings
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import NullPool
 
+pytest_plugins = ("tests.helpers.settings",)
+
 # Test-only secrets must exist before any module can load cached application settings.
 os.environ["APP_ENV"] = "development"
 os.environ["PUBLIC_BASE_URL"] = "https://app.example.test"
@@ -116,6 +118,7 @@ async def create_tenant(
     slug_prefix: str = "test",
     roles: tuple[str, ...] = ("officer", "treasurer"),
     include_member: bool = False,
+    member_status: str = "applicant",
     password_hash: str | None = None,
 ) -> TenantSeed:
     """Create a fresh tenant as ajo_app after setting its RLS context on the connection."""
@@ -149,10 +152,11 @@ async def create_tenant(
     if include_member:
         member_id = uuid.uuid4()
         await conn.execute(
-            """INSERT INTO members(id,cooperative_id,member_no,full_name,phone_e164)
-               VALUES($1,$2,'M-1','Test Member','+2348000000000')""",
+            """INSERT INTO members(id,cooperative_id,member_no,full_name,phone_e164,status)
+               VALUES($1,$2,'M-1','Test Member','+2348000000000',$3)""",
             member_id,
             cooperative_id,
+            member_status,
         )
     return TenantSeed(cooperative_id, tuple(users), member_id)
 
@@ -164,7 +168,7 @@ async def _reset_database() -> None:
     conn = await asyncpg.connect(admin_url)
     try:
         await conn.execute(f"DROP DATABASE IF EXISTS {DATABASE_NAME} WITH (FORCE)")
-        for role in ("ajo_app", "ajo_readonly"):
+        for role in ("ajo_app", "ajo_readonly", "ajo_scheduler"):
             exists = await conn.fetchval(
                 "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=$1)", role
             )
