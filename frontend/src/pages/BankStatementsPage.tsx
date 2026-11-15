@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import {
   ApiError,
   acceptBankStatementLine,
@@ -178,7 +178,7 @@ export default function BankStatementsPage() {
     setImportResult(null);
   };
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
     setSelectedFile(file);
     setHeaders([]);

@@ -953,14 +953,14 @@ export function matchBankStatementLines(): Promise<{
   ambiguous_count: number;
   window_days: number;
 }> {
-  return request("/bank-statements/match?window_days=5", { method: "POST" });
+  return request<{ matched_count: number; ambiguous_count: number; window_days: number }>("/bank-statements/match?window_days=5", { method: "POST" });
 }
 
 export function acceptBankStatementLine(
   lineId: string,
   idempotencyKey: string,
 ): Promise<{ line_id: string; payment_id: string; status: "matched" }> {
-  return request(`/bank-statements/${encodeURIComponent(lineId)}/accept`, {
+  return request<{ line_id: string; payment_id: string; status: "matched" }>(`/bank-statements/${encodeURIComponent(lineId)}/accept`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ idempotency_key: idempotencyKey }),
@@ -971,7 +971,7 @@ export function ignoreBankStatementLine(
   lineId: string,
   note: string,
 ): Promise<{ line_id: string; status: "ignored"; note: string }> {
-  return request(`/bank-statements/${encodeURIComponent(lineId)}/ignore`, {
+  return request<{ line_id: string; status: "ignored"; note: string }>(`/bank-statements/${encodeURIComponent(lineId)}/ignore`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ note }),
@@ -981,7 +981,7 @@ export function ignoreBankStatementLine(
 export function undoBankStatementDecision(
   lineId: string,
 ): Promise<{ line_id: string; status: "unmatched" }> {
-  return request(`/bank-statements/${encodeURIComponent(lineId)}/undo`, {
+  return request<{ line_id: string; status: "unmatched" }>(`/bank-statements/${encodeURIComponent(lineId)}/undo`, {
     method: "POST",
   });
 }
