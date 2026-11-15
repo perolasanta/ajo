@@ -172,7 +172,7 @@ ACTION_SPECS = {
     ),
     }
 
-_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL = """md5('cash-deposit-overdue:' || CAST(:cooperative_id AS text) || ':' || COALESCE(CAST(:as_of_date AS date), (now() AT TIME ZONE 'Africa/Lagos')::date)::text)::uuid"""
+_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL = """md5('cash-deposit-overdue:' || CAST(CAST(:cooperative_id AS uuid) AS text) || ':' || COALESCE(CAST(:as_of_date AS date), (now() AT TIME ZONE 'Africa/Lagos')::date)::text)::uuid"""
 
 _CANDIDATE_SQL = {
     PAYROLL_POSTING: """
@@ -200,7 +200,7 @@ _CANDIDATE_SQL = {
     CASH_DEPOSIT: """
         SELECT p.id AS entity_id, ARRAY[p.recorded_by]::uuid[] AS excluded_user_ids
         FROM payments p
-        WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+        WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
           AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
     """,
     CASH_DEPOSIT_OVERDUE: f"""
@@ -208,7 +208,7 @@ _CANDIDATE_SQL = {
                array_remove(array_agg(DISTINCT p.recorded_by), NULL) AS excluded_user_ids
           FROM payments p
           {CASH_BANKING_POLICY_LATERAL_SQL}
-         WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+         WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
            AND {CASH_OVERDUE_PREDICATE_SQL}
            AND (CAST(:entity_id AS uuid) IS NULL OR
                 CAST(:entity_id AS uuid)={_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL})
@@ -404,7 +404,7 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
       FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='bank_transfer' AND p.status='pending'
     UNION ALL
     SELECT 'cash_deposit', p.id, ARRAY[p.recorded_by]::uuid[]
-      FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+      FROM payments p WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
     UNION ALL
     SELECT 'disbursement_record', d.id, ARRAY[d.prepared_by,d.authorized_by]::uuid[]
       FROM disbursements d WHERE d.cooperative_id=:cooperative_id AND d.status='authorized'
@@ -455,7 +455,7 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
            array_remove(array_agg(DISTINCT p.recorded_by), NULL)
       FROM payments p
       {CASH_BANKING_POLICY_LATERAL_SQL}
-     WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+     WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
        AND {CASH_OVERDUE_PREDICATE_SQL}
     HAVING count(*) > 0
 """)
@@ -480,7 +480,10 @@ async def get_action_items_for_user(
     as_of_date: date | None = None,
 ) -> dict[str, tuple[uuid.UUID, ...]]:
     """Return the exact actionable entity IDs for the user's role union, grouped by section."""
-    candidates = await get_all_action_candidates(session, cooperative_id, as_of_date)
+    if as_of_date is None:
+        candidates = await get_all_action_candidates(session, cooperative_id)
+    else:
+        candidates = await get_all_action_candidates(session, cooperative_id, as_of_date)
     return action_items_for_candidate_rows(candidates, user_id, roles)
 
 
@@ -492,7 +495,10 @@ async def get_action_entity_ids_for_user(
     as_of_date: date | None = None,
 ) -> dict[str, tuple[uuid.UUID, ...]]:
     """Return actionable IDs per action kind for summaries and list projections."""
-    candidates = await get_all_action_candidates(session, cooperative_id, as_of_date)
+    if as_of_date is None:
+        candidates = await get_all_action_candidates(session, cooperative_id)
+    else:
+        candidates = await get_all_action_candidates(session, cooperative_id, as_of_date)
     return action_entity_ids_for_candidate_rows(candidates, user_id, roles)
 
 
@@ -503,9 +509,14 @@ async def get_action_recipients(
     entity_id: uuid.UUID,
     as_of_date: date | None = None,
 ) -> tuple[ActionRecipient, ...]:
-    candidates = await get_action_candidates(
-        session, cooperative_id, event_type, entity_id=entity_id, as_of_date=as_of_date
-    )
+    if as_of_date is None:
+        candidates = await get_action_candidates(
+            session, cooperative_id, event_type, entity_id=entity_id
+        )
+    else:
+        candidates = await get_action_candidates(
+            session, cooperative_id, event_type, entity_id=entity_id, as_of_date=as_of_date
+        )
     if not candidates:
         return ()
     roles_result = await session.execute(

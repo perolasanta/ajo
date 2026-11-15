@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.notifications import eligibility, outbox
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 from app.domains.payments import service as payment_service
 
 logger = logging.getLogger("scheduler.overdue_cash")
@@ -83,7 +84,7 @@ async def process_cooperative(
                 "eligible_recipients": len(recipients),
                 "queued_notifications": 0,
             }
-        await outbox.enqueue_action_notifications_safely(
+        await enqueue_action_notifications_safely(
             session,
             cooperative_id,
             eligibility.CASH_DEPOSIT_OVERDUE,

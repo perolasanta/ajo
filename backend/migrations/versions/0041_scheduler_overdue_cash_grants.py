@@ -21,7 +21,7 @@ def upgrade() -> None:
             GRANT SELECT (id, cooperative_id, status) ON users TO ajo_scheduler;
             GRANT SELECT (cooperative_id, user_id, role) ON user_roles TO ajo_scheduler;
             GRANT SELECT (cooperative_id, user_id) ON telegram_links TO ajo_scheduler;
-            GRANT SELECT (cooperative_id, kind, entity_id, channel),
+            GRANT SELECT (cooperative_id, recipient_user_id, kind, entity_id, channel),
                   INSERT (id, cooperative_id, recipient_user_id, entity_id, member_id,
                           kind, channel, template_version, status, payload_encrypted)
               ON notifications TO ajo_scheduler;

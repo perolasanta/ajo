@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import uuid
 from datetime import date, timedelta
 from unittest.mock import AsyncMock
@@ -31,7 +30,7 @@ def test_run_once_cli_accepts_as_of_and_dry_run() -> None:
 def test_overdue_cash_rule_is_shared_and_uses_strict_wat_day_comparison() -> None:
     rules = importlib.import_module("app.domains.payments.cash_rules")
     assert "cash_banking_days" in rules.CASH_BANKING_POLICY_LATERAL_SQL
-    assert "COALESCE" in rules.CASH_BANKING_POLICY_LATERAL_SQL
+    assert "COALESCE(policy.cash_banking_days, 2)" in rules.CASH_OVERDUE_PREDICATE_SQL
     assert "<" in rules.CASH_OVERDUE_PREDICATE_SQL
     assert ":as_of_date" in rules.CASH_OVERDUE_PREDICATE_SQL
     assert "Africa/Lagos" in rules.CASH_OVERDUE_PREDICATE_SQL
