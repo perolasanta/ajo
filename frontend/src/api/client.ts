@@ -844,3 +844,144 @@ export function reverseDisbursement(
     body: JSON.stringify(body),
   });
 }
+
+export type BankStatementStatus = "unmatched" | "suggested" | "matched" | "ignored";
+
+export type BankStatementColumnMap = {
+  date: string;
+  narration: string;
+  amount?: string;
+  credit?: string;
+  debit?: string;
+  reference?: string;
+};
+
+export type BankStatementPreviewRow = {
+  row: number;
+  date: string;
+  narration: string;
+  reference: string | null;
+  credit_kobo: number;
+  debit_kobo: number;
+  fingerprint: string;
+};
+
+export type BankStatementRowError = {
+  row: number;
+  error?: string;
+  message?: string;
+};
+
+export type BankStatementPreview = {
+  filename: string;
+  total_rows: number;
+  preview: BankStatementPreviewRow[];
+  errors: BankStatementRowError[];
+  duplicate_file: boolean;
+};
+
+export type BankStatementImportResult = {
+  filename: string;
+  inserted_count: number;
+  skipped_count: number;
+  errors: BankStatementRowError[];
+  duplicate_file?: boolean;
+};
+
+export type BankStatementLine = {
+  id: string;
+  import_id: string;
+  line_date: string | null;
+  narration: string;
+  reference: string | null;
+  credit_kobo: number;
+  debit_kobo: number;
+  status: BankStatementStatus;
+  matched_payment_id: string | null;
+  ignored_note: string | null;
+};
+
+export type BankStatementLinesPage = {
+  items: BankStatementLine[];
+  page: number;
+  page_size: number;
+  total: number;
+};
+
+export function getBankStatementLines(
+  params: { page?: number; pageSize?: number; status?: BankStatementStatus } = {},
+): Promise<BankStatementLinesPage> {
+  const query = new URLSearchParams();
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  if (params.status) query.set("status", params.status);
+  return request<BankStatementLinesPage>(`/bank-statements?${query.toString()}`);
+}
+
+function bankStatementForm(file: File, columnMap: BankStatementColumnMap): FormData {
+  const form = new FormData();
+  const mapped = Object.fromEntries(
+    Object.entries(columnMap).filter(([, value]) => Boolean(value)),
+  );
+  form.append("file", file, file.name);
+  form.append("mapping", JSON.stringify(mapped));
+  return form;
+}
+
+export function previewBankStatementImport(
+  file: File,
+  columnMap: BankStatementColumnMap,
+): Promise<BankStatementPreview> {
+  return request<BankStatementPreview>("/bank-statements/preview", {
+    method: "POST",
+    body: bankStatementForm(file, columnMap),
+  });
+}
+
+export function importBankStatementFile(
+  file: File,
+  columnMap: BankStatementColumnMap,
+): Promise<BankStatementImportResult> {
+  return request<BankStatementImportResult>("/bank-statements/import", {
+    method: "POST",
+    body: bankStatementForm(file, columnMap),
+  });
+}
+
+export function matchBankStatementLines(): Promise<{
+  matched_count: number;
+  ambiguous_count: number;
+  window_days: number;
+}> {
+  return request("/bank-statements/match?window_days=5", { method: "POST" });
+}
+
+export function acceptBankStatementLine(
+  lineId: string,
+  idempotencyKey: string,
+): Promise<{ line_id: string; payment_id: string; status: "matched" }> {
+  return request(`/bank-statements/${encodeURIComponent(lineId)}/accept`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idempotency_key: idempotencyKey }),
+  });
+}
+
+export function ignoreBankStatementLine(
+  lineId: string,
+  note: string,
+): Promise<{ line_id: string; status: "ignored"; note: string }> {
+  return request(`/bank-statements/${encodeURIComponent(lineId)}/ignore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+  });
+}
+
+export function undoBankStatementDecision(
+  lineId: string,
+): Promise<{ line_id: string; status: "unmatched" }> {
+  return request(`/bank-statements/${encodeURIComponent(lineId)}/undo`, {
+    method: "POST",
+  });
+}
