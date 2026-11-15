@@ -19,9 +19,7 @@ def test_scheduler_interval_defaults_to_sixty_minutes() -> None:
 
 
 def test_run_once_cli_accepts_as_of_and_dry_run() -> None:
-    args = scheduler_main.parse_args(
-        ["--run-once", "--as-of", "2026-12-01", "--dry-run"]
-    )
+    args = scheduler_main.parse_args(["--run-once", "--as-of", "2026-12-01", "--dry-run"])
     assert args.run_once is True
     assert args.as_of == date(2026, 12, 1)
     assert args.dry_run is True
@@ -122,7 +120,9 @@ async def test_scheduler_continues_after_one_cooperative_failure(
     failed_id, good_id = uuid.uuid4(), uuid.uuid4()
     processed: list[uuid.UUID] = []
 
-    async def process(_factory: object, cooperative_id: uuid.UUID, **_kwargs: object) -> dict[str, int]:
+    async def process(
+        _factory: object, cooperative_id: uuid.UUID, **_kwargs: object
+    ) -> dict[str, int]:
         processed.append(cooperative_id)
         if cooperative_id == failed_id:
             raise RuntimeError("Sensitive Member Name amount 125000")
