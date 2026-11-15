@@ -46,7 +46,7 @@ class SharePurchaseActionCounts(BaseModel):
     awaiting_approval: int | None = None
 
 
-8963f12 (Fix constraints for payments inbox notifications and tests)
+
 class SettingsActionCounts(BaseModel):
     policy_approval: int | None = None
     product_approval: int | None = None
