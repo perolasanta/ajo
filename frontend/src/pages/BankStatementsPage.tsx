@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { openBankStatementPicker } from "../bankStatementsUpload.mjs";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { EmptyState } from "../ui/Feedback";
@@ -57,7 +58,9 @@ const filters: Array<{ value: StatementStatus | "all"; label: string }> = [
 ];
 
 export default function BankStatementsPage() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<StatementStatus | "all">("all");
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [rows, setRows] = useState<StatementRecord[]>(demoRows);
   const visibleRows = useMemo(
     () =>
@@ -86,6 +89,12 @@ export default function BankStatementsPage() {
   };
 
   const userMayAccept = true;
+  const handleUploadClick = () => {
+    if (openBankStatementPicker(fileInputRef.current)) {
+      return;
+    }
+    window.alert("The file upload control is unavailable. Refresh and try again.");
+  };
 
   return (
     <div className="space-y-5">
@@ -98,8 +107,29 @@ export default function BankStatementsPage() {
               Upload a generic CSV, map the columns, review the preview, and import only the verified evidence lines.
             </p>
           </div>
-          <Button type="button">Upload CSV</Button>
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv,application/vnd.ms-excel"
+              className="hidden"
+              aria-label="Upload bank statement CSV"
+              onClick={(event) => {
+                event.currentTarget.value = "";
+              }}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                setSelectedFileName(file ? file.name : null);
+              }}
+            />
+            <Button type="button" onClick={handleUploadClick}>
+              Upload CSV
+            </Button>
+          </div>
         </div>
+        {selectedFileName && (
+          <p className="mt-3 text-sm text-muted">Selected file: {selectedFileName}</p>
+        )}
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="text-sm">
             Date column
