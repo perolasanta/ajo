@@ -150,3 +150,16 @@ async def test_shared_candidate_collection_is_one_tenant_scoped_query() -> None:
     assert session.calls[0][1] == {"cooperative_id": cooperative_id}
     assert "UNION ALL" in session.calls[0][0]
     assert items.get("withdrawal_requests", ()) == ()
+
+
+def test_cash_deposit_overdue_action_spec_is_generic_and_treasurer_only() -> None:
+    kind = "cash_deposit_overdue"
+    spec = eligibility.ACTION_SPECS[kind]
+    assert spec.roles == frozenset({"treasurer"})
+    assert spec.section == "payments"
+    assert spec.path == "/payments"
+    assert "₦" not in spec.sentence
+    payload = outbox.build_action_payload(kind, _settings(), entity_id=uuid.uuid4())
+    assert payload["url"] == "http://ajo.example.test/payments"
+    assert payload["action_kind"] == spec.action_kind
+    assert payload["message"] == spec.sentence
