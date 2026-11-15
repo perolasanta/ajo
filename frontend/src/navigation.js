@@ -15,6 +15,11 @@ export const navigation = [
     roles: ["officer", "treasurer", "admin", "auditor"],
   },
   {
+    name: "Bank statements",
+    path: "/bank-statements",
+    roles: ["officer", "treasurer", "admin", "auditor"],
+  },
+  {
     name: "Withdrawal requests",
     path: "/withdrawal-requests",
     roles: ["officer", "treasurer", "admin"],
@@ -141,6 +146,7 @@ const routePatterns = [
   ["/share-purchases", /^\/share-purchases(?:\/[^/]+)?$/],
   ["/share-register", /^\/share-register$/],
   ["/payments", /^\/payments(?:\/[^/]+)?$/],
+  ["/bank-statements", /^\/bank-statements(?:\/[^/]+)?$/],
   ["/loans", /^\/loans(?:\/[^/]+)?$/],
   ["/disbursements", /^\/disbursements(?:\/[^/]+)?$/],
   ["/payroll", /^\/payroll(?:\/runs\/[^/]+)?$/],

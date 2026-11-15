@@ -8,10 +8,9 @@ STATE: Matching logic added for bank-statement credit lines, with the targeted i
 - [x] 2. Add the bank statement migration with tables, constraints, unique indexes, and RLS.
 - [x] 3. Add parser tests and implementation with preview/import endpoint and duplicate handling.
 - [x] 4. Add matcher tests and implementation with list/get endpoints and tenant isolation.
-- [ ] 5. Add accept/ignore tests and implementation using existing payment confirmation.
-- [ ] 6. Add the Bank statements frontend page, navigation, and frontend tests.
-- [ ] 7. Update docs, run final checks, push, and keep the PR draft.
-
+- [x] 5. Add accept/ignore tests and implementation using existing payment confirmation.
+- [x] 6. Add the Bank statements frontend page, navigation, and frontend tests.
+- [x] 7. Update docs, run final checks, push, and keep the PR draft.
 ## Plan
 
 The payment service already enforces the required maker-checker rule inside a row-locked transaction: `confirm_payment` delegates to `_decide_payment`, rejects the recorder, and posts through the existing contribution or repayment path. Statement acceptance will call this function rather than posting directly.

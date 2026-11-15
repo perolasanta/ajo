@@ -8,6 +8,7 @@ from datetime import date
 import asyncpg
 import pytest
 
+from app.core.errors import Conflict
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.domains.auth.service import CurrentSession
 from app.domains.bank_statements import service
@@ -344,3 +345,128 @@ async def test_match_statement_lines_is_tenant_scoped(db):
     result = await service.match_statement_lines(current)
     assert result["updated_count"] == 0
     assert result["matched_count"] == 0
+
+
+async def test_accept_statement_line_confirms_recommended_payment_and_blocks_recorder(db):
+    seed = await create_tenant(
+        db,
+        slug_prefix="bankstmt-accept",
+        roles=("officer", "treasurer"),
+        include_member=True,
+    )
+    cid = seed.cooperative_id
+    officer = seed.user_ids[0]
+    treasurer = seed.user_ids[1]
+    member_id = seed.member_id
+    assert member_id is not None
+    for code, name, kind in (
+        ("bank", "Bank", "asset"),
+        ("member_savings", "Savings", "liability"),
+        ("member_shares", "Shares", "equity"),
+        ("dues_income", "Dues", "income"),
+    ):
+        await db.execute(
+            "INSERT INTO accounts(id,cooperative_id,code,name,account_type) VALUES($1,$2,$3,$4,$5)",
+            uuid.uuid4(),
+            cid,
+            code,
+            name,
+            kind,
+        )
+
+    payment = await payment_service.record_payment(
+        session(cid, officer, "officer"),
+        member_id=member_id,
+        channel="bank_transfer",
+        purpose="savings",
+        amount_kobo=125000,
+        provider="manual",
+        provider_reference="REF-123",
+        received_on=date(2024, 3, 2),
+        idempotency_key="bank-stmt-payment-1",
+    )
+    payload = b"Date,Narration,Reference,Amount\n2024-03-03,Transfer REF-123,REF-123,1250.00\n"
+    imported = await service.import_statement_file(
+        session(cid, officer, "officer"),
+        content=payload,
+        filename="accept.csv",
+        column_map={
+            "date": "Date",
+            "narration": "Narration",
+            "reference": "Reference",
+            "amount": "Amount",
+        },
+    )
+    assert imported["inserted_count"] == 1
+    line_id = await db.fetchval(
+        "SELECT id FROM bank_statement_lines WHERE cooperative_id=$1 ORDER BY created_at",
+        cid,
+    )
+    assert line_id is not None
+
+    matches = await service.auto_match_statement_lines(
+        session(cid, treasurer, "treasurer"),
+        window_days=5,
+    )
+    assert matches["matched_count"] == 1
+
+    with pytest.raises(Conflict, match="different user"):
+        await service.accept_statement_line(
+            session(cid, officer, "officer"),
+            line_id,
+            idempotency_key="statement-accept-officer",
+        )
+
+    accepted = await service.accept_statement_line(
+        session(cid, treasurer, "treasurer"),
+        line_id,
+        idempotency_key="statement-accept-treasurer",
+    )
+    assert accepted["status"] == "matched"
+    assert accepted["payment_id"] == str(payment["id"])
+    payment_row = await db.fetchrow(
+        "SELECT status FROM payments WHERE cooperative_id=$1 AND id=$2",
+        cid,
+        payment["id"],
+    )
+    assert payment_row["status"] == "confirmed"
+
+
+async def test_ignore_statement_line_requires_note_and_can_be_undone(db):
+    seed = await create_tenant(
+        db,
+        slug_prefix="bankstmt-ignore",
+        roles=("officer", "treasurer"),
+    )
+    cid = seed.cooperative_id
+    actor = seed.user_ids[0]
+    payload = b"Date,Narration,Amount\n2024-04-05,Unrelated credit,1000.00\n"
+    imported = await service.import_statement_file(
+        session(cid, actor, "officer"),
+        content=payload,
+        filename="ignore.csv",
+        column_map={"date": "Date", "narration": "Narration", "amount": "Amount"},
+    )
+    assert imported["inserted_count"] == 1
+    line_id = await db.fetchval(
+        "SELECT id FROM bank_statement_lines WHERE cooperative_id=$1 ORDER BY created_at",
+        cid,
+    )
+    assert line_id is not None
+
+    with pytest.raises(ValueError, match="Ignore note is required"):
+        await service.ignore_statement_line(
+            session(cid, actor, "officer"),
+            line_id,
+            note="   ",
+        )
+
+    ignored = await service.ignore_statement_line(
+        session(cid, actor, "officer"),
+        line_id,
+        note="Bank charge",
+    )
+    assert ignored["status"] == "ignored"
+
+    undone = await service.undo_statement_decision(session(cid, actor, "officer"), line_id)
+    assert undone["status"] == "unmatched"
