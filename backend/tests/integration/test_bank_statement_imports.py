@@ -8,8 +8,8 @@ from datetime import date
 import asyncpg
 import pytest
 
-from app.core.errors import Conflict
 from app.core.db import asyncpg_dsn, dispose_engine
+from app.core.errors import Conflict
 from app.domains.auth.service import CurrentSession
 from app.domains.bank_statements import service
 from app.domains.payments import service as payment_service

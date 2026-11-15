@@ -8,6 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
+
 from app.api.auth import current_session, require_csrf
 from app.domains.auth.service import CurrentSession
 from app.domains.bank_statements import service
