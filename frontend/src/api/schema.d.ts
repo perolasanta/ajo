@@ -335,6 +335,7 @@ export type PaymentListItem = {
   recorded_at: string;
   received_on: string;
   receipt_no: number | null;
+  no_eligible_confirmer: boolean;
 };
 export type PaymentRecordBody = {
   member_id: string;
@@ -395,6 +396,7 @@ export type CashReceipt = {
   cash_banking_days: number;
   age_days: number;
   overdue: boolean;
+  no_eligible_confirmer: boolean;
 };
 export type CashOfficerBalance = {
   user_id: string;

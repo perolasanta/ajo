@@ -14,6 +14,7 @@ import { Button } from "../ui/Button";
 import { EmptyState, Skeleton } from "../ui/Feedback";
 import { DateReceived, Money } from "../ui/Format";
 import { Input } from "../ui/Input";
+import { noEligibleConfirmerWarning, pendingNoConfirmerSummary } from "../paymentNoConfirmer.mjs";
 
 function message(error: unknown): string {
   return error instanceof ApiError || error instanceof Error
@@ -43,6 +44,8 @@ export function PaymentCashPanel({ roles, userId }: { roles: string[]; userId: s
     queryFn: getCashAwaitingDeposit,
     retry: false,
   });
+  const noConfirmerCount =
+    receipts.data?.filter((receipt) => receipt.no_eligible_confirmer).length ?? 0;
   const summary = useQuery({
     queryKey: ["cash-on-hand-summary"],
     queryFn: getCashOnHandSummary,
@@ -169,6 +172,11 @@ export function PaymentCashPanel({ roles, userId }: { roles: string[]; userId: s
           {error}
         </p>
       )}
+      {noConfirmerCount > 0 && (
+        <p className="rounded-control bg-warning-soft p-3 text-sm text-warning" role="alert">
+          {pendingNoConfirmerSummary(noConfirmerCount)} {noEligibleConfirmerWarning}
+        </p>
+      )}
       {receipts.isPending && <Skeleton className="h-36 w-full" />}
       {receipts.isError && (
         <EmptyState
@@ -215,6 +223,11 @@ export function PaymentCashPanel({ roles, userId }: { roles: string[]; userId: s
                         {selfRecorded && (
                           <p className="mt-1 max-w-40 text-xs text-muted">
                             You recorded this; another treasurer must confirm.
+                          </p>
+                        )}
+                        {receipt.no_eligible_confirmer && (
+                          <p className="mt-1 max-w-48 text-xs text-warning">
+                            {noEligibleConfirmerWarning}
                           </p>
                         )}
                       </td>

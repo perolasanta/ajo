@@ -7,6 +7,7 @@ import { menuActionCount } from "../navigation";
 import { PaymentRecordForm } from "./PaymentRecordForm";
 import { PaymentCashPanel } from "./PaymentCashPanel";
 import { PaymentDecisionActions } from "./PaymentDecisionActions";
+import { noEligibleConfirmerWarning, pendingNoConfirmerSummary } from "../paymentNoConfirmer.mjs";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState, Skeleton } from "../ui/Feedback";
@@ -79,7 +80,16 @@ const columns: ResponsiveColumn<PaymentListItem>[] = [
     key: "status",
     header: "Status",
     role: "badge",
-    render: (payment) => <Badge status={payment.status} />,
+    render: (payment) => (
+      <div className="space-y-1">
+        <Badge status={payment.status} />
+        {payment.no_eligible_confirmer && (
+          <p className="max-w-64 rounded-control bg-warning-soft p-2 text-xs text-warning">
+            {noEligibleConfirmerWarning}
+          </p>
+        )}
+      </div>
+    ),
   },
   {
     key: "amount",
@@ -179,6 +189,8 @@ export default function PaymentsPage() {
     retry: false,
   });
   const totalPages = Math.max(1, Math.ceil((payments.data?.total ?? 0) / pageSize));
+  const noConfirmerCount =
+    payments.data?.items.filter((payment) => payment.no_eligible_confirmer).length ?? 0;
 
   const selectTab = (tab: PaymentsTab) => {
     setSelectedTab(tab);
@@ -239,6 +251,11 @@ export default function PaymentsPage() {
       )}
       {!session.isPending && !session.isError && activeTab !== "cash" && payments.isError && (
         <PaymentsError error={payments.error} retry={() => void payments.refetch()} />
+      )}
+      {!session.isPending && !session.isError && activeTab !== "cash" && noConfirmerCount > 0 && (
+        <p className="mb-4 rounded-control bg-warning-soft p-3 text-sm text-warning" role="alert">
+          {pendingNoConfirmerSummary(noConfirmerCount)} {noEligibleConfirmerWarning}
+        </p>
       )}
       {!session.isPending &&
         !session.isError &&
