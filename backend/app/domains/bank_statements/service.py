@@ -387,223 +387,6 @@ async def list_statement_lines(
     *,
     status: str | None = None,
     page: int = 1,
-    page_size: int = 50,
-) -> dict[str, Any]:
-    _role(current, {"officer", "treasurer"})
-    if page < 1:
-        raise ValueError("Page must be at least 1")
-    if page_size < 1:
-        raise ValueError("Page size must be at least 1")
-    cid = current.cooperative_id
-    offset = (page - 1) * page_size
-    async with transaction(cid) as session:
-        total_row = await session.execute(
-            text(
-                """
-                SELECT COUNT(*)
-                FROM bank_statement_lines
-                WHERE cooperative_id=:cid
-                  AND (:status IS NULL OR status=:status)
-                """
-            ),
-            {"cid": cid, "status": status},
-        )
-        total = int(total_row.scalar_one())
-        rows = await session.execute(
-            text(
-                """
-                SELECT l.id, l.line_date, l.narration, l.reference, l.credit_kobo, l.debit_kobo,
-                       l.status, l.matched_payment_id, l.ignored_note, l.created_at, l.updated_at,
-                       p.provider_reference AS payment_reference,
-                       p.received_on AS payment_received_on,
-                       m.full_name AS member_name
-                FROM bank_statement_lines l
-                LEFT JOIN payments p
-                  ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
-                LEFT JOIN members m
-                  ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
-                WHERE l.cooperative_id=:cid
-                  AND (:status IS NULL OR l.status=:status)
-                ORDER BY l.line_date DESC, l.id DESC
-                LIMIT :limit OFFSET :offset
-                """
-            ),
-            {"cid": cid, "status": status, "limit": page_size, "offset": offset},
-        )
-        items = [dict(row) for row in rows.mappings().all()]
-        return {
-            "items": [
-                {
-                    "id": str(item["id"]),
-                    "line_date": item["line_date"].isoformat() if item["line_date"] else None,
-                    "narration": item["narration"],
-                    "reference": item["reference"],
-                    "credit_kobo": int(item["credit_kobo"]),
-                    "debit_kobo": int(item["debit_kobo"]),
-                    "status": item["status"],
-                    "matched_payment_id": str(item["matched_payment_id"])
-                    if item["matched_payment_id"]
-                    else None,
-                    "ignored_note": item["ignored_note"],
-                    "member_name": item["member_name"],
-                    "payment_reference": item["payment_reference"],
-                    "payment_received_on": item["payment_received_on"].isoformat()
-                    if item["payment_received_on"]
-                    else None,
-                }
-                for item in items
-            ],
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-        }
-
-
-async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dict[str, Any]:
-    _role(current, {"officer", "treasurer"})
-    cid = current.cooperative_id
-    async with transaction(cid) as session:
-        row = await session.execute(
-            text(
-                """
-                SELECT l.id, l.line_date, l.narration, l.reference, l.credit_kobo, l.debit_kobo,
-                       l.status, l.matched_payment_id, l.ignored_note, l.decided_by,
-                       p.provider_reference AS payment_reference, p.received_on AS payment_received_on,
-                       m.full_name AS member_name
-                FROM bank_statement_lines l
-                LEFT JOIN payments p ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
-                LEFT JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
-                WHERE l.cooperative_id=:cid AND l.id=:line_id
-                """
-            ),
-            {"cid": cid, "line_id": line_id},
-        )
-        item = row.mappings().one_or_none()
-    if item is None:
-        raise NotFound("Bank statement line not found")
-    return {
-        "id": str(item["id"]),
-        "line_date": item["line_date"].isoformat(),
-        "narration": item["narration"],
-        "reference": item["reference"],
-        "credit_kobo": int(item["credit_kobo"]),
-        "debit_kobo": int(item["debit_kobo"]),
-        "status": item["status"],
-        "matched_payment_id": str(item["matched_payment_id"])
-        if item["matched_payment_id"]
-        else None,
-        "ignored_note": item["ignored_note"],
-        "decided_by": str(item["decided_by"]) if item["decided_by"] else None,
-        "payment_reference": item["payment_reference"],
-        "payment_received_on": item["payment_received_on"].isoformat()
-        if item["payment_received_on"]
-        else None,
-        "member_name": item["member_name"],
-    }
-
-
-async def import_statement_file(
-    current: CurrentSession,
-    *,
-    content: bytes,
-    filename: str,
-    column_map: dict[str, str],
-) -> dict[str, Any]:
-    _role(current, {"officer", "treasurer"})
-    if len(content) > MAX_BANK_STATEMENT_UPLOAD_BYTES:
-        raise PayloadTooLarge("Bank statement upload exceeds the 2 MiB limit.")
-    rows, errors = _read_statement_csv(content, column_map=column_map)
-    file_hash = hashlib.sha256(content).hexdigest()
-    if not rows and errors:
-        return {
-            "file_sha256": file_hash,
-            "filename": filename,
-            "inserted_count": 0,
-            "skipped_count": 0,
-            "errors": errors,
-        }
-
-    async with transaction(current.cooperative_id) as session:
-        duplicate = await _existing_file_hash(session, current.cooperative_id, file_hash)
-        if duplicate:
-            return {
-                "file_sha256": file_hash,
-                "filename": filename,
-                "inserted_count": 0,
-                "skipped_count": len(rows),
-                "errors": errors,
-                "duplicate_file": True,
-            }
-
-        fingerprint_rows = [row.fingerprint for row in rows]
-        existing_fingerprints = await session.execute(
-            text(
-                "SELECT fingerprint FROM bank_statement_lines WHERE cooperative_id=:cid AND fingerprint = ANY(:fingerprints)"
-            ),
-            {"cid": current.cooperative_id, "fingerprints": fingerprint_rows},
-        )
-        seen = {item["fingerprint"] for item in existing_fingerprints.mappings().all()}
-        new_rows = [row for row in rows if row.fingerprint not in seen]
-        import_id = uuid.uuid4()
-        await session.execute(
-            text(
-                """
-                INSERT INTO bank_statement_imports(
-                    id, cooperative_id, file_hash, filename, uploaded_by, row_count, inserted_count, skipped_count
-                ) VALUES (:id, :cid, :file_hash, :filename, :uploaded_by, :row_count, :inserted_count, :skipped_count)
-                """
-            ),
-            {
-                "id": import_id,
-                "cid": current.cooperative_id,
-                "file_hash": file_hash,
-                "filename": filename,
-                "uploaded_by": current.user_id,
-                "row_count": len(rows),
-                "inserted_count": len(new_rows),
-                "skipped_count": len(rows) - len(new_rows),
-            },
-        )
-        if new_rows:
-            await session.execute(
-                text(
-                    """
-                    INSERT INTO bank_statement_lines (
-                        id, cooperative_id, import_id, line_date, narration, reference,
-                        credit_kobo, debit_kobo, fingerprint, status
-                    ) VALUES (:id, :cid, :import_id, :line_date, :narration, :reference, :credit_kobo, :debit_kobo, :fingerprint, 'unmatched')
-                    """
-                ),
-                [
-                    {
-                        "id": uuid.uuid4(),
-                        "cid": current.cooperative_id,
-                        "import_id": import_id,
-                        "line_date": row.line_date,
-                        "narration": row.narration,
-                        "reference": row.reference,
-                        "credit_kobo": row.credit_kobo,
-                        "debit_kobo": row.debit_kobo,
-                        "fingerprint": row.fingerprint,
-                    }
-                    for row in new_rows
-                ],
-            )
-        return {
-            "file_sha256": file_hash,
-            "filename": filename,
-            "inserted_count": len(new_rows),
-            "skipped_count": len(rows) - len(new_rows),
-            "errors": errors,
-            "duplicate_file": False,
-        }
-
-
-async def list_statement_lines(
-    current: CurrentSession,
-    *,
-    status: str | None = None,
-    page: int = 1,
     page_size: int = 25,
 ) -> dict[str, Any]:
     _role(current, {"officer", "treasurer", "admin", "auditor"})
@@ -611,40 +394,48 @@ async def list_statement_lines(
         raise ValueError("Page and page_size must be positive")
     if status is not None and status not in {"unmatched", "suggested", "matched", "ignored"}:
         raise ValueError("Unsupported statement line status")
-    async with transaction(current.cooperative_id) as session:
-        conditions = "WHERE cooperative_id=:cid"
-        params: dict[str, Any] = {
-            "cid": current.cooperative_id,
-            "offset": (page - 1) * page_size,
-            "limit": page_size,
-        }
-        if status is not None:
-            conditions += " AND status=:status"
-            params["status"] = status
-        rows = await session.execute(
+    cid = current.cooperative_id
+    offset = (page - 1) * page_size
+    async with transaction(cid) as session:
+        result = await session.execute(
             text(
-                """SELECT id, import_id, line_date, narration, reference, credit_kobo, debit_kobo,
-                    fingerprint, status, matched_payment_id, ignored_note, decided_by, created_at, updated_at
-                    FROM bank_statement_lines WHERE cooperative_id=:cid AND (:status::text IS NULL OR status=:status)
-                    ORDER BY line_date DESC, id DESC LIMIT :limit OFFSET :offset"""
+                """SELECT l.id, l.import_id, l.line_date, l.narration, l.reference,
+                          l.credit_kobo, l.debit_kobo, l.fingerprint, l.status,
+                          l.matched_payment_id, l.ignored_note, l.decided_by,
+                          l.created_at, l.updated_at,
+                          p.provider_reference AS payment_reference,
+                          p.received_on AS payment_received_on,
+                          m.full_name AS member_name
+                   FROM bank_statement_lines l
+                   LEFT JOIN payments p
+                     ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
+                   LEFT JOIN members m
+                     ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+                   WHERE l.cooperative_id=:cid
+                     AND (:status IS NULL OR l.status=:status)
+                   ORDER BY l.line_date DESC, l.id DESC
+                   LIMIT :limit OFFSET :offset"""
             ),
-            params,
+            {"cid": cid, "status": status, "limit": page_size, "offset": offset},
         )
         total = await session.scalar(
             text(
-                "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=:cid AND (:status::text IS NULL OR status=:status)"
+                "SELECT count(*) FROM bank_statement_lines "
+                "WHERE cooperative_id=:cid AND (:status IS NULL OR status=:status)"
             ),
-            {"cid": current.cooperative_id, "status": status},
+            {"cid": cid, "status": status},
         )
+        rows = [dict(row) for row in result.mappings().all()]
     items = [
         {
             "id": str(row["id"]),
             "import_id": str(row["import_id"]),
-            "line_date": row["line_date"].isoformat() if row["line_date"] is not None else None,
+            "line_date": row["line_date"].isoformat() if row["line_date"] else None,
             "narration": row["narration"],
             "reference": row["reference"],
             "credit_kobo": int(row["credit_kobo"] or 0),
             "debit_kobo": int(row["debit_kobo"] or 0),
+            "fingerprint": row["fingerprint"],
             "status": row["status"],
             "matched_payment_id": str(row["matched_payment_id"])
             if row["matched_payment_id"]
@@ -653,45 +444,65 @@ async def list_statement_lines(
             "decided_by": str(row["decided_by"]) if row["decided_by"] else None,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "member_name": row["member_name"],
+            "payment_reference": row["payment_reference"],
+            "payment_received_on": row["payment_received_on"].isoformat()
+            if row["payment_received_on"]
+            else None,
         }
-        for row in rows.mappings().all()
+        for row in rows
     ]
-    return {"items": items, "page": page, "page_size": page_size, "total": int(total or 0)}
+    return {"items": items, "total": int(total or 0), "page": page, "page_size": page_size}
 
 
 async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dict[str, Any]:
     _role(current, {"officer", "treasurer", "admin", "auditor"})
-    async with transaction(current.cooperative_id) as session:
-        row = await session.execute(
+    cid = current.cooperative_id
+    async with transaction(cid) as session:
+        result = await session.execute(
             text(
-                """SELECT id, import_id, line_date, narration, reference, credit_kobo, debit_kobo,
-                    fingerprint, status, matched_payment_id, ignored_note, decided_by, created_at, updated_at
-                    FROM bank_statement_lines WHERE cooperative_id=:cid AND id=:id"""
+                """SELECT l.id, l.import_id, l.line_date, l.narration, l.reference,
+                          l.credit_kobo, l.debit_kobo, l.fingerprint, l.status,
+                          l.matched_payment_id, l.ignored_note, l.decided_by,
+                          l.created_at, l.updated_at,
+                          p.provider_reference AS payment_reference,
+                          p.received_on AS payment_received_on,
+                          m.full_name AS member_name
+                   FROM bank_statement_lines l
+                   LEFT JOIN payments p
+                     ON p.cooperative_id=l.cooperative_id AND p.id=l.matched_payment_id
+                   LEFT JOIN members m
+                     ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+                   WHERE l.cooperative_id=:cid AND l.id=:line_id"""
             ),
-            {"cid": current.cooperative_id, "id": line_id},
+            {"cid": cid, "line_id": line_id},
         )
-        record = row.mappings().one_or_none()
-    if record is None:
+        row = result.mappings().one_or_none()
+    if row is None:
         raise NotFound("Bank statement line not found")
     return {
-        "id": str(record["id"]),
-        "import_id": str(record["import_id"]),
-        "line_date": record["line_date"].isoformat(),
-        "narration": record["narration"],
-        "reference": record["reference"],
-        "credit_kobo": int(record["credit_kobo"]),
-        "debit_kobo": int(record["debit_kobo"]),
-        "status": record["status"],
-        "matched_payment_id": str(record["matched_payment_id"])
-        if record["matched_payment_id"]
+        "id": str(row["id"]),
+        "import_id": str(row["import_id"]),
+        "line_date": row["line_date"].isoformat(),
+        "narration": row["narration"],
+        "reference": row["reference"],
+        "credit_kobo": int(row["credit_kobo"]),
+        "debit_kobo": int(row["debit_kobo"]),
+        "fingerprint": row["fingerprint"],
+        "status": row["status"],
+        "matched_payment_id": str(row["matched_payment_id"])
+        if row["matched_payment_id"]
         else None,
-        "ignored_note": record["ignored_note"],
-        "decided_by": str(record["decided_by"]) if record["decided_by"] else None,
-        "created_at": record["created_at"],
-        "updated_at": record["updated_at"],
+        "ignored_note": row["ignored_note"],
+        "decided_by": str(row["decided_by"]) if row["decided_by"] else None,
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "member_name": row["member_name"],
+        "payment_reference": row["payment_reference"],
+        "payment_received_on": row["payment_received_on"].isoformat()
+        if row["payment_received_on"]
+        else None,
     }
-
-
 async def _line_candidates_for_match(
     session: AsyncSession,
     cooperative_id: uuid.UUID,
