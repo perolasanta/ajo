@@ -432,7 +432,7 @@ export type PaymentsListPage = {
 
 export type NotificationSummary = {
   payroll?: { awaiting_posting?: number; awaiting_sign_off?: number };
-  payments?: { awaiting_confirmation?: number; awaiting_deposit?: number };
+  payments?: { awaiting_confirmation?: number; awaiting_deposit?: number; overdue_cash?: number };
   disbursements?: {
     awaiting_authorization?: number;
     awaiting_confirmation?: number;

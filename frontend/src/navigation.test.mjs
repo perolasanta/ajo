@@ -138,10 +138,10 @@ for (const [role, expected] of [
 }
 
 test("Payments badge counts only the current user's shared action kinds", () => {
-  const summary = { payments: { awaiting_confirmation: 4, awaiting_deposit: 3 } };
+  const summary = { payments: { awaiting_confirmation: 4, awaiting_deposit: 3, overdue_cash: 2 } };
   assert.equal(menuActionCount("Payments", summary, ["officer"]), 4);
-  assert.equal(menuActionCount("Payments", summary, ["treasurer"]), 7);
-  assert.equal(menuActionCount("Payments", summary, ["officer", "treasurer"]), 7);
+  assert.equal(menuActionCount("Payments", summary, ["treasurer"]), 9);
+  assert.equal(menuActionCount("Payments", summary, ["officer", "treasurer"]), 9);
   assert.equal(menuActionCount("Payments", summary, ["admin"]), 0);
   assert.equal(menuActionCount("Payments", summary, ["auditor"]), 0);
   assert.equal(menuActionCount("Payments", summary, ["committee"]), 0);

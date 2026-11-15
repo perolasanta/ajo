@@ -77,7 +77,10 @@ export function menuActionCount(name, summary, roles) {
     if (roles.includes("officer") || roles.includes("treasurer")) {
       count += summary?.payments?.awaiting_confirmation ?? 0;
     }
-    if (roles.includes("treasurer")) count += summary?.payments?.awaiting_deposit ?? 0;
+    if (roles.includes("treasurer")) {
+      count += summary?.payments?.awaiting_deposit ?? 0;
+      count += summary?.payments?.overdue_cash ?? 0;
+    }
   }
   if (name === "Disbursements") {
     if (roles.includes("admin")) {

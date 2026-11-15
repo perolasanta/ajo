@@ -30,6 +30,7 @@ class RoleChangeActionCounts(BaseModel):
 class PaymentActionCounts(BaseModel):
     awaiting_confirmation: int | None = None
     awaiting_deposit: int | None = None
+    overdue_cash: int | None = None
 
 
 class LoanActionCounts(BaseModel):

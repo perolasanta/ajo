@@ -108,7 +108,7 @@ async def test_transfer_requires_a_different_confirmer(db: asyncpg.Connection) -
 async def test_payment_queues_flag_items_without_an_eligible_confirmer(
     db: asyncpg.Connection,
 ) -> None:
-    cid, officer, _, member_id, _ = await payment_tenant(db)
+    cid, officer, _, member_id, _ = await setup_tenant(db, roles=("officer",))
     pending = await record_transfer(cid, officer, member_id, "BANK-NO-CONFIRMER")
     cash = await service.record_payment(
         session(cid, officer, "officer"),
