@@ -80,6 +80,7 @@ async def test_notifications_constraint_matches_action_specs(db: asyncpg.Connect
     kinds = check_constraint_array_values(definition, column="kind")
     specs = set(ACTION_SPECS)
     assert kinds == specs, (
+        f"constraint definition: {definition}\n"
         f"in constraint only: {sorted(kinds - specs)}; "
         f"in ACTION_SPECS only: {sorted(specs - kinds)}"
     )

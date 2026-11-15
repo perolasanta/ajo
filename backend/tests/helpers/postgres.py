@@ -15,11 +15,15 @@ def check_constraint_array_values(definition: str, *, column: str) -> set[str]:
     )
     match = expression.search(definition)
     if match is None:
-        raise ValueError(f"No = ANY (ARRAY[...]) expression found for {column!r}")
+        raise ValueError(
+            f"No = ANY (ARRAY[...]) expression found for {column!r} in definition: {definition!r}"
+        )
 
     values = {
         literal.replace("''", "'") for literal in _STRING_LITERAL.findall(match.group("values"))
     }
     if not values:
-        raise ValueError(f"No string values found in {column!r} constraint array")
+        raise ValueError(
+            f"No string values found in {column!r} constraint array in definition: {definition!r}"
+        )
     return values
