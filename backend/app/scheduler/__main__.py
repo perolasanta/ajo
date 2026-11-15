@@ -31,7 +31,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Ajo scheduled jobs")
     parser.add_argument("--run-once", action="store_true", help="run the job once and exit")
     parser.add_argument("--as-of", type=_parse_as_of, help="use this WAT business date")
-    parser.add_argument("--dry-run", action="store_true", help="count eligible alerts without queuing")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="count eligible alerts without queuing"
+    )
     args = parser.parse_args(argv)
     if args.dry_run and not args.run_once:
         parser.error("--dry-run requires --run-once")

@@ -32,7 +32,12 @@ def _session(*roles: str) -> CurrentSession:
 
 def _candidates() -> list[dict[str, Any]]:
     return [
-        {"event_type": event_type, "entity_id": uuid.uuid4(), "excluded_user_ids": [],"settings": {"policy_approval": 2, "product_approval": 2},}
+        {
+            "event_type": event_type,
+            "entity_id": uuid.uuid4(),
+            "excluded_user_ids": [],
+            "settings": {"policy_approval": 2, "product_approval": 2},
+        }
         for event_type in EVENTS
         for _ in range(2)
     ]
