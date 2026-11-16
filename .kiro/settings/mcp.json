@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "neon": {
+      "url": "https://mcp.neon.tech/mcp?readonly=true&roleName=ajo_readonly&category=querying&category=schema"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    }
+  }
+}

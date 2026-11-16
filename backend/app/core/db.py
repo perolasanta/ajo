@@ -217,6 +217,19 @@ def to_sqlalchemy_async_url(
     return final, connect_args
 
 
+def to_asyncpg_url(url: str) -> str:
+    """Convert any PostgreSQL URL scheme to postgresql+asyncpg://.
+
+    Handles: postgresql://, postgresql+psycopg://, postgresql+psycopg2://,
+    postgresql+asyncpg:// (passes through unchanged).
+
+    Preserves user, password, host, port, database and query parameters.
+    Uses to_sqlalchemy_async_url internally to handle SSL parameters correctly.
+    """
+    async_url, _ = to_sqlalchemy_async_url(url, disable_prepared_cache=True)
+    return async_url
+
+
 def make_engine(url: str, *, pooled: bool, application_name: str = "ajo-api") -> AsyncEngine:
     settings = get_settings()
     async_url, connect_args = to_sqlalchemy_async_url(

@@ -19,6 +19,8 @@ docker compose exec scheduler python -m app.scheduler --run-once --as-of 2026-12
 
 For staging-specific setup, see [staging-setup.md](staging-setup.md).
 
+**Note:** The scheduler accepts any PostgreSQL URL scheme (`postgresql://`, `postgresql+psycopg://`, `postgresql+asyncpg://`, etc.) and always uses the asyncpg driver. No special configuration is required.
+
 ## Rollback
 
 Set `AJO_TAG` in `/opt/ajo/.env` to a previous image SHA, then run `docker compose pull && docker compose up -d`. Do not downgrade a migration unless it is explicitly reversible.
