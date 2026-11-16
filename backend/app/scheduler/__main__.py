@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
 from collections.abc import Sequence
 from datetime import date
 
@@ -13,11 +14,15 @@ import structlog
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
-from app.core.db import asyncpg_dsn
+from app.core.db import asyncpg_dsn, to_asyncpg_url
 from app.core.logging import configure_logging
 from app.scheduler.overdue_cash import run_overdue_cash_alerts
 
 SCHEDULER_LOCK_KEY = 727_001  # stable across deployments
+
+# Heartbeat file for container healthcheck - updated after each successful iteration
+# Uses fixed path so healthcheck can easily read it. Not sensitive (just timestamp).
+_HEARTBEAT_FILE = "/tmp/ajo-scheduler-heartbeat"  # noqa: S108
 
 
 def _parse_as_of(value: str) -> date:
@@ -42,6 +47,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _write_heartbeat(timestamp: int) -> None:
+    """Write heartbeat timestamp to file (runs in thread pool)."""
+    with open(_HEARTBEAT_FILE, "w") as f:
+        f.write(str(timestamp))
+
+
 async def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     settings = get_settings()
@@ -49,6 +60,12 @@ async def main(argv: Sequence[str] | None = None) -> None:
     log = structlog.get_logger("scheduler")
     if not settings.database_url_scheduler:
         log.error("DATABASE_URL_SCHEDULER is required for the scheduler")
+        sys.exit(1)
+    # Validate URL before attempting connection
+    try:
+        async_url = to_asyncpg_url(settings.database_url_scheduler)
+    except Exception as exc:
+        log.error("invalid_DATABASE_URL_SCHEDULER", reason=str(exc))
         sys.exit(1)
     conn = await asyncpg.connect(asyncpg_dsn(settings.database_url_scheduler))
     got = await conn.fetchval("SELECT pg_try_advisory_lock($1)", SCHEDULER_LOCK_KEY)
@@ -59,7 +76,7 @@ async def main(argv: Sequence[str] | None = None) -> None:
     engine = None
     try:
         engine = create_async_engine(
-            settings.database_url_scheduler,
+            async_url,
             pool_size=1,
             max_overflow=0,
             pool_pre_ping=True,
@@ -76,6 +93,8 @@ async def main(argv: Sequence[str] | None = None) -> None:
         while True:
             try:
                 await run_overdue_cash_alerts(session_factory)
+                # Update heartbeat file after successful iteration (non-blocking)
+                await asyncio.to_thread(_write_heartbeat, int(time.time()))
             except Exception as exc:
                 log.error("scheduler_iteration_failed", exception_class=type(exc).__name__)
             await conn.execute("SELECT 1")
