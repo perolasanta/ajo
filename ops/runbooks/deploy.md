@@ -11,6 +11,12 @@ The VPS holds only `/opt/ajo`, the Ajo Nginx vhost, and its certificate. Other A
 7. `docker compose up -d`
 8. Check `docker compose ps`, `curl --fail https://ajo.petbell.com.ng/api/v1/health`, and `curl --fail https://ajo.petbell.com.ng/api/v1/health/db`.
 
+To inspect overdue cash alerts without queueing any notifications, run:
+
+```bash
+docker compose exec scheduler python -m app.scheduler --run-once --as-of 2026-12-01 --dry-run
+```
+
 For staging-specific setup, see [staging-setup.md](staging-setup.md).
 
 ## Rollback

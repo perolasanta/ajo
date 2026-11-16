@@ -4,15 +4,23 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.payments.cash_rules import (
+    CASH_BANKING_POLICY_LATERAL_SQL,
+    CASH_OVERDUE_PREDICATE_SQL,
+)
+
 PAYROLL_POSTING = "payroll_posting"
 PAYROLL_SIGN_OFF = "payroll_sign_off"
 PAYMENT_CONFIRMATION = "payment_confirmation"
 CASH_DEPOSIT = "cash_deposit"
+CASH_DEPOSIT_OVERDUE = "cash_deposit_overdue"
+CASH_DEPOSIT_OVERDUE_NAMESPACE = uuid.UUID("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
 DISBURSEMENT_RECORD = "disbursement_record"
 DISBURSEMENT_AUTHORIZATION = "disbursement_authorization"
 DISBURSEMENT_CONFIRMATION = "disbursement_confirmation"
@@ -74,6 +82,14 @@ ACTION_SPECS = {
         "cash deposit",
         "Cash needs to be banked",
         "/payments/{id}",
+    ),
+    CASH_DEPOSIT_OVERDUE: ActionSpec(
+        frozenset({"treasurer"}),
+        "payments",
+        "Payments",
+        "overdue cash deposit",
+        "Cash receipts are overdue for banking.",
+        "/payments",
     ),
     DISBURSEMENT_RECORD: ActionSpec(
         frozenset({"treasurer"}),
@@ -139,7 +155,7 @@ ACTION_SPECS = {
         "A share purchase needs your approval.",
         "/share-purchases/{id}",
     ),
-        POLICY_APPROVAL: ActionSpec(
+    POLICY_APPROVAL: ActionSpec(
         frozenset({"admin"}),
         "settings",
         "Settings",
@@ -155,7 +171,30 @@ ACTION_SPECS = {
         "A product change needs your approval.",
         "/settings?product={id}",
     ),
-    }
+}
+
+_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL = f"""(
+    SELECT (
+        substr(digest_hex, 1, 8) || '-' || substr(digest_hex, 9, 4) || '-5' ||
+        substr(digest_hex, 14, 3) || '-' ||
+        substr('89ab89ab89ab89ab', strpos('0123456789abcdef', substr(digest_hex, 17, 1)), 1) ||
+        substr(digest_hex, 18, 3) || '-' || substr(digest_hex, 21, 12)
+    )::uuid
+    FROM (
+        SELECT encode(
+            digest(
+                uuid_send('{CASH_DEPOSIT_OVERDUE_NAMESPACE}'::uuid) ||
+                convert_to(
+                    'cash-deposit-overdue:' || CAST(CAST(:cooperative_id AS uuid) AS text) || ':' ||
+                    COALESCE(CAST(:as_of_date AS date), (now() AT TIME ZONE 'Africa/Lagos')::date)::text,
+                    'UTF8'
+                ),
+                'sha1'
+            ),
+            'hex'
+        ) AS digest_hex
+    ) AS uuid_v5_digest
+)"""  # noqa: S608 - fragments are module-level constants, never user input.
 
 _CANDIDATE_SQL = {
     PAYROLL_POSTING: """
@@ -183,9 +222,20 @@ _CANDIDATE_SQL = {
     CASH_DEPOSIT: """
         SELECT p.id AS entity_id, ARRAY[p.recorded_by]::uuid[] AS excluded_user_ids
         FROM payments p
-        WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+        WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
           AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
     """,
+    CASH_DEPOSIT_OVERDUE: f"""
+        SELECT {_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL} AS entity_id,
+               array_remove(array_agg(DISTINCT p.recorded_by), NULL) AS excluded_user_ids
+          FROM payments p
+          {CASH_BANKING_POLICY_LATERAL_SQL}
+         WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
+           AND {CASH_OVERDUE_PREDICATE_SQL}
+           AND (CAST(:entity_id AS uuid) IS NULL OR
+                CAST(:entity_id AS uuid)={_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL})
+        HAVING count(*) > 0
+    """,  # noqa: S608 - fragments are module-level constants, never user input.
     DISBURSEMENT_RECORD: """
         SELECT d.id AS entity_id, ARRAY[d.prepared_by,d.authorized_by]::uuid[] AS excluded_user_ids
         FROM disbursements d
@@ -335,6 +385,42 @@ def action_items_for_candidate_rows(
     return {section: tuple(dict.fromkeys(ids)) for section, ids in items.items()}
 
 
+async def candidate_rows_have_eligible_recipients(
+    session: AsyncSession,
+    cooperative_id: uuid.UUID,
+    candidates: list[dict[str, Any]],
+) -> dict[tuple[str, uuid.UUID], bool]:
+    """Return whether each shared action candidate has an eligible active recipient."""
+    event_types = {candidate["event_type"] for candidate in candidates}
+    if not event_types:
+        return {}
+    required_roles = sorted(
+        {role for event_type in event_types for role in ACTION_SPECS[event_type].roles}
+    )
+    roles_result = await session.execute(
+        text(
+            """SELECT ur.user_id,ur.role FROM user_roles ur
+                JOIN users u ON u.cooperative_id=ur.cooperative_id AND u.id=ur.user_id
+                WHERE ur.cooperative_id=:cooperative_id AND u.status='active'
+                  AND ur.role=ANY(:required_roles)"""
+        ),
+        {"cooperative_id": cooperative_id, "required_roles": required_roles},
+    )
+    roles_by_user: dict[uuid.UUID, set[str]] = {}
+    for row in roles_result.mappings().all():
+        roles_by_user.setdefault(row["user_id"], set()).add(row["role"])
+    return {
+        (candidate["event_type"], candidate["entity_id"]): bool(
+            eligible_recipients_for_action(
+                candidate["event_type"],
+                excluded_user_ids=set(candidate.get("excluded_user_ids") or ()),
+                roles_by_user=roles_by_user,
+            )
+        )
+        for candidate in candidates
+    }
+
+
 async def get_action_candidates(
     session: AsyncSession,
     cooperative_id: uuid.UUID,
@@ -342,6 +428,7 @@ async def get_action_candidates(
     *,
     entity_id: uuid.UUID | None = None,
     include_paused_disputed: bool = False,
+    as_of_date: date | None = None,
 ) -> list[dict[str, Any]]:
     if event_type not in ACTION_SPECS:
         raise ValueError(f"Unsupported action notification event: {event_type}")
@@ -350,13 +437,15 @@ async def get_action_candidates(
         statement = statement.replace(
             " OR (l.status='repaying' AND coalesce(l.deductions_paused,false))", ""
         )
-    rows = await session.execute(
-        text(statement), {"cooperative_id": cooperative_id, "entity_id": entity_id}
-    )
+    params: dict[str, Any] = {"cooperative_id": cooperative_id, "entity_id": entity_id}
+    if event_type == CASH_DEPOSIT_OVERDUE:
+        params["as_of_date"] = as_of_date
+    rows = await session.execute(text(statement), params)
     return [dict(row) for row in rows.mappings().all()]
 
 
-_ALL_ACTION_CANDIDATES_SQL = text("""
+_ALL_ACTION_CANDIDATES_SQL = text(  # noqa: S608 - fragments are module-level constants, never user input.
+    """
     SELECT 'payroll_posting'::text AS event_type, r.id AS entity_id,
            array_remove(ARRAY[r.imported_by]::uuid[], NULL) AS excluded_user_ids
       FROM payroll_runs r
@@ -374,7 +463,7 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
       FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='bank_transfer' AND p.status='pending'
     UNION ALL
     SELECT 'cash_deposit', p.id, ARRAY[p.recorded_by]::uuid[]
-      FROM payments p WHERE p.cooperative_id=:cooperative_id AND p.channel='cash' AND p.status='received'
+      FROM payments p WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
     UNION ALL
     SELECT 'disbursement_record', d.id, ARRAY[d.prepared_by,d.authorized_by]::uuid[]
       FROM disbursements d WHERE d.cooperative_id=:cooperative_id AND d.status='authorized'
@@ -419,39 +508,76 @@ _ALL_ACTION_CANDIDATES_SQL = text("""
                        AND al.entity_type='loan_product' AND al.entity_id=p.id::text
                        AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
       FROM loan_products p WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
-""")
+    """  # noqa: S608 - fragments are module-level constants, never user input.
+    + f"""
+    UNION ALL
+    SELECT '{CASH_DEPOSIT_OVERDUE}'::text, {_CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL},
+           array_remove(array_agg(DISTINCT p.recorded_by), NULL)
+      FROM payments p
+      {CASH_BANKING_POLICY_LATERAL_SQL}
+     WHERE p.cooperative_id=CAST(:cooperative_id AS uuid) AND p.channel='cash' AND p.status='received'
+       AND {CASH_OVERDUE_PREDICATE_SQL}
+    HAVING count(*) > 0
+    """  # noqa: S608 - fragments are module-level constants, never user input.
+)  # noqa: S608 - fragments are module-level constants, never user input.
 
 
 async def get_all_action_candidates(
-    session: AsyncSession, cooperative_id: uuid.UUID
+    session: AsyncSession, cooperative_id: uuid.UUID, as_of_date: date | None = None
 ) -> list[dict[str, Any]]:
     """Read every workflow's eligible entity candidates in one tenant-scoped statement."""
-    rows = await session.execute(_ALL_ACTION_CANDIDATES_SQL, {"cooperative_id": cooperative_id})
+    rows = await session.execute(
+        _ALL_ACTION_CANDIDATES_SQL,
+        {"cooperative_id": cooperative_id, "as_of_date": as_of_date},
+    )
     return [dict(row) for row in rows.mappings().all()]
 
 
 async def get_action_items_for_user(
-    session: AsyncSession, cooperative_id: uuid.UUID, user_id: uuid.UUID, roles: set[str]
+    session: AsyncSession,
+    cooperative_id: uuid.UUID,
+    user_id: uuid.UUID,
+    roles: set[str],
+    as_of_date: date | None = None,
 ) -> dict[str, tuple[uuid.UUID, ...]]:
     """Return the exact actionable entity IDs for the user's role union, grouped by section."""
-    candidates = await get_all_action_candidates(session, cooperative_id)
+    if as_of_date is None:
+        candidates = await get_all_action_candidates(session, cooperative_id)
+    else:
+        candidates = await get_all_action_candidates(session, cooperative_id, as_of_date)
     return action_items_for_candidate_rows(candidates, user_id, roles)
 
 
 async def get_action_entity_ids_for_user(
-    session: AsyncSession, cooperative_id: uuid.UUID, user_id: uuid.UUID, roles: set[str]
+    session: AsyncSession,
+    cooperative_id: uuid.UUID,
+    user_id: uuid.UUID,
+    roles: set[str],
+    as_of_date: date | None = None,
 ) -> dict[str, tuple[uuid.UUID, ...]]:
     """Return actionable IDs per action kind for summaries and list projections."""
-    candidates = await get_all_action_candidates(session, cooperative_id)
+    if as_of_date is None:
+        candidates = await get_all_action_candidates(session, cooperative_id)
+    else:
+        candidates = await get_all_action_candidates(session, cooperative_id, as_of_date)
     return action_entity_ids_for_candidate_rows(candidates, user_id, roles)
 
 
 async def get_action_recipients(
-    session: AsyncSession, cooperative_id: uuid.UUID, event_type: str, entity_id: uuid.UUID
+    session: AsyncSession,
+    cooperative_id: uuid.UUID,
+    event_type: str,
+    entity_id: uuid.UUID,
+    as_of_date: date | None = None,
 ) -> tuple[ActionRecipient, ...]:
-    candidates = await get_action_candidates(
-        session, cooperative_id, event_type, entity_id=entity_id
-    )
+    if as_of_date is None:
+        candidates = await get_action_candidates(
+            session, cooperative_id, event_type, entity_id=entity_id
+        )
+    else:
+        candidates = await get_action_candidates(
+            session, cooperative_id, event_type, entity_id=entity_id, as_of_date=as_of_date
+        )
     if not candidates:
         return ()
     roles_result = await session.execute(

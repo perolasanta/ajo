@@ -20,6 +20,10 @@ from app.domains.auth.service import CurrentSession
 from app.domains.members.service import record_contribution
 from app.domains.notifications import eligibility
 from app.domains.notifications.outbox import enqueue_action_notifications_safely
+from app.domains.payments.cash_rules import (
+    CASH_BANKING_POLICY_LATERAL_SQL,
+    CASH_OVERDUE_PREDICATE_SQL,
+)
 from app.domains.payments.providers import MANUAL_PROVIDER
 from app.domains.repayments.service import post_repayment
 
@@ -669,6 +673,19 @@ async def list_payments(
             },
         )
         result_rows = list(result.mappings().all())
+        recipient_availability = await eligibility.candidate_rows_have_eligible_recipients(
+            session,
+            current.cooperative_id,
+            [
+                {
+                    "event_type": row["action_event_type"],
+                    "entity_id": row["action_entity_id"],
+                    "excluded_user_ids": row["action_excluded_user_ids"],
+                }
+                for row in result_rows
+                if row["action_event_type"] is not None
+            ],
+        )
 
     total = int(result_rows[0]["total"]) if result_rows else 0
     rows = [row for row in result_rows if row["id"] is not None]
@@ -713,6 +730,12 @@ async def list_payments(
                 "recorded_at": row["recorded_at"],
                 "received_on": row["received_on"],
                 "receipt_no": row["receipt_no"],
+                "no_eligible_confirmer": (
+                    row["action_event_type"] in eligibility.PAYMENT_ACTION_TYPES
+                    and not recipient_availability.get(
+                        (row["action_event_type"], row["action_entity_id"]), False
+                    )
+                ),
             }
         )
     return {"items": items, "total": total, "page": page, "page_size": page_size}
@@ -793,32 +816,40 @@ async def list_cash_awaiting_deposit(current: CurrentSession) -> list[dict[str, 
     _role(current, _PAYMENT_READ_ROLES)
     async with transaction(current.cooperative_id) as session:
         result = await session.execute(
-            text("""SELECT p.id,p.member_id,m.member_no,m.full_name AS member_name,
-                p.receipt_no,p.purpose,p.amount_kobo,p.provider_reference,
-                p.received_on,p.recorded_at,p.recorded_by,
-                recorder.full_name AS recorder_full_name,
-                (recorder.id IS NOT NULL) AS recorder_exists,
-                coalesce(policy.cash_banking_days,2) AS cash_banking_days,
-                ((now() AT TIME ZONE 'Africa/Lagos')::date-p.received_on)::int AS age_days,
-                (p.received_on + coalesce(policy.cash_banking_days,2) <
-                    (now() AT TIME ZONE 'Africa/Lagos')::date) AS overdue
-              FROM payments p
-              JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
-              LEFT JOIN users recorder ON recorder.cooperative_id=p.cooperative_id
-                                       AND recorder.id=p.recorded_by
-              LEFT JOIN LATERAL (
-                SELECT v.cash_banking_days FROM cooperative_policy_versions v
-                 WHERE v.cooperative_id=p.cooperative_id AND v.status='approved'
-                   AND v.effective_from <= p.received_on
-                   AND (v.effective_to IS NULL OR p.received_on < v.effective_to)
-                 ORDER BY v.effective_from DESC LIMIT 1
-              ) policy ON true
-             WHERE p.cooperative_id=:cid AND p.channel='cash' AND p.status='received'
-             ORDER BY p.received_on,p.recorded_at,p.id"""),
-            {"cid": current.cooperative_id},
+            text(
+                f"""SELECT p.id,p.member_id,m.member_no,m.full_name AS member_name,
+                    p.receipt_no,p.purpose,p.amount_kobo,p.provider_reference,
+                    p.received_on,p.recorded_at,p.recorded_by,
+                    recorder.full_name AS recorder_full_name,
+                    (recorder.id IS NOT NULL) AS recorder_exists,
+                    COALESCE(policy.cash_banking_days,2) AS cash_banking_days,
+                    ((now() AT TIME ZONE 'Africa/Lagos')::date-p.received_on)::int AS age_days,
+                    {CASH_OVERDUE_PREDICATE_SQL} AS overdue
+                  FROM payments p
+                  JOIN members m ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
+                  LEFT JOIN users recorder ON recorder.cooperative_id=p.cooperative_id
+                                           AND recorder.id=p.recorded_by
+                  {CASH_BANKING_POLICY_LATERAL_SQL}
+                 WHERE p.cooperative_id=:cid AND p.channel='cash' AND p.status='received'
+                 ORDER BY p.received_on,p.recorded_at,p.id"""  # noqa: S608 - shared SQL fragments are module constants.
+            ),
+            {"cid": current.cooperative_id, "as_of_date": None},
         )
         rows = []
-        for row in result.mappings().all():
+        result_rows = list(result.mappings().all())
+        recipient_availability = await eligibility.candidate_rows_have_eligible_recipients(
+            session,
+            current.cooperative_id,
+            [
+                {
+                    "event_type": eligibility.CASH_DEPOSIT,
+                    "entity_id": row["id"],
+                    "excluded_user_ids": [row["recorded_by"]],
+                }
+                for row in result_rows
+            ],
+        )
+        for row in result_rows:
             item = dict(row)
             for field in ("id", "member_id", "recorded_by"):
                 item[field] = str(item[field])
@@ -828,8 +859,31 @@ async def list_cash_awaiting_deposit(current: CurrentSession) -> list[dict[str, 
                 user_exists=bool(item.pop("recorder_exists")),
                 include_email=False,
             )
+            item["no_eligible_confirmer"] = not recipient_availability.get(
+                (eligibility.CASH_DEPOSIT, row["id"]), False
+            )
             rows.append(item)
         return rows
+
+
+async def get_overdue_cash_receipts(
+    session: AsyncSession,
+    cooperative_id: uuid.UUID,
+    as_of_date: date | None = None,
+) -> list[dict[str, Any]]:
+    """Return only the IDs and recorders of overdue, still-unbanked cash receipts."""
+    result = await session.execute(
+        text(
+            f"""SELECT p.id,p.recorded_by
+              FROM payments p
+              {CASH_BANKING_POLICY_LATERAL_SQL}
+             WHERE p.cooperative_id=:cid AND p.channel='cash' AND p.status='received'
+               AND {CASH_OVERDUE_PREDICATE_SQL}
+             ORDER BY p.id"""  # noqa: S608 - shared SQL fragments are module constants.
+        ),
+        {"cid": cooperative_id, "as_of_date": as_of_date},
+    )
+    return [dict(row) for row in result.mappings().all()]
 
 
 async def record_cash_deposit(

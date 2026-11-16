@@ -11,6 +11,7 @@ import pyotp
 from argon2 import PasswordHasher, Type
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from cryptography.fernet import Fernet, InvalidToken
+from pyotp.totp import TOTP
 
 from app.core.config import get_settings
 
@@ -57,7 +58,7 @@ def new_totp_secret() -> str:
 
 
 def verify_totp(secret: str, code: str) -> bool:
-    return pyotp.TOTP(secret).verify(code, valid_window=1)
+    return TOTP(secret).verify(code, valid_window=1)
 
 
 def new_session_token() -> str:

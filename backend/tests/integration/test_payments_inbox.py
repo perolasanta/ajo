@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import asyncpg
 import pytest
+from cryptography.fernet import Fernet
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.members.service import member_balances
+from app.domains.notifications import outbox
 from app.domains.notifications.eligibility import (
     ACTION_SPECS,
     CASH_DEPOSIT,
@@ -20,6 +24,7 @@ from app.domains.notifications.eligibility import (
 )
 from app.domains.notifications.outbox import decrypt_payload
 from app.domains.payments import service
+from app.scheduler.overdue_cash import run_overdue_cash_alerts
 from tests.helpers.postgres import check_constraint_array_values
 from tests.integration.test_members import session, setup_tenant
 
@@ -98,6 +103,32 @@ async def test_transfer_requires_a_different_confirmer(db: asyncpg.Connection) -
     )
     assert confirmed["status"] == "confirmed"
     assert confirmed["ledger_entry_id"] is not None
+
+
+async def test_payment_queues_flag_items_without_an_eligible_confirmer(
+    db: asyncpg.Connection,
+) -> None:
+    cid, officer, _, member_id, _ = await setup_tenant(db, roles=("officer",))
+    pending = await record_transfer(cid, officer, member_id, "BANK-NO-CONFIRMER")
+    cash = await service.record_payment(
+        session(cid, officer, "officer"),
+        member_id=member_id,
+        channel="cash",
+        purpose="savings",
+        amount_kobo=1000,
+        provider="manual",
+        provider_reference=None,
+        received_on=today_wat(),
+        idempotency_key="cash-no-confirmer",
+    )
+
+    payments = await service.list_payments(session(cid, officer, "officer"), page=1, page_size=50)
+    transfer = next(item for item in payments["items"] if item["id"] == str(pending["id"]))
+    assert transfer["no_eligible_confirmer"] is True
+
+    cash_items = await service.list_cash_awaiting_deposit(session(cid, officer, "officer"))
+    receipt = next(item for item in cash_items if item["id"] == str(cash["id"]))
+    assert receipt["no_eligible_confirmer"] is True
 
 
 async def test_duplicate_bank_reference_is_rejected(db: asyncpg.Connection) -> None:
@@ -526,3 +557,150 @@ async def test_recorded_cash_queues_one_deposit_alert_per_enabled_channel(
     assert set(payload) == {"section", "action_kind", "message", "url"}
     assert "24500" not in str(payload)
     assert str(member_id) not in str(payload)
+
+
+async def test_overdue_cash_scheduler_dedupes_channels_and_respects_tenant_scope(
+    db: asyncpg.Connection, test_database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cooperative_id, officer, treasurer, member_id, _ = await payment_tenant(db)
+    untouched_id, untouched_officer, _, untouched_member_id, _ = await payment_tenant(db)
+    window_id, window_officer, _, window_member_id, _ = await payment_tenant(db)
+    as_of = today_wat()
+
+    async def add_cash(
+        cid: uuid.UUID,
+        actor_id: uuid.UUID,
+        target_member_id: uuid.UUID,
+        received_on: date,
+        key: str,
+        amount_kobo: int,
+    ) -> None:
+        await service.record_payment(
+            session(cid, actor_id, "officer"),
+            member_id=target_member_id,
+            channel="cash",
+            purpose="savings",
+            amount_kobo=amount_kobo,
+            provider="manual",
+            provider_reference=None,
+            received_on=received_on,
+            idempotency_key=key,
+        )
+
+    await add_cash(
+        cooperative_id,
+        officer,
+        member_id,
+        as_of - timedelta(days=3),
+        "scheduler-overdue",
+        987654,
+    )
+    await add_cash(
+        cooperative_id,
+        officer,
+        member_id,
+        as_of - timedelta(days=2),
+        "scheduler-in-window",
+        555,
+    )
+    await add_cash(
+        untouched_id,
+        untouched_officer,
+        untouched_member_id,
+        as_of - timedelta(days=3),
+        "scheduler-other-tenant",
+        888,
+    )
+    await add_cash(
+        window_id,
+        window_officer,
+        window_member_id,
+        as_of - timedelta(days=2),
+        "scheduler-only-in-window",
+        777,
+    )
+
+    async with db.transaction():
+        await db.execute("SELECT set_config('app.cooperative_id', $1, true)", str(cooperative_id))
+        await db.execute(
+            "INSERT INTO telegram_links(cooperative_id,user_id,chat_id) VALUES($1,$2,$3)",
+            cooperative_id,
+            treasurer,
+            f"scheduler-{uuid.uuid4()}",
+        )
+
+    settings = get_settings().model_copy(
+        update={
+            "app_env": "development",
+            "public_base_url": "https://ajo.example.test",
+            "email_enabled": True,
+            "telegram_enabled": True,
+            "encryption_key": Fernet.generate_key().decode(),
+        }
+    )
+    monkeypatch.setattr(outbox, "get_settings", lambda: settings)
+    database_url = test_database.app_url
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif database_url.startswith("postgresql://"):
+        database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    engine = create_async_engine(database_url, pool_size=1, max_overflow=0)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        first = await run_overdue_cash_alerts(
+            session_factory,
+            cooperative_ids=[cooperative_id, window_id],
+            as_of_date=as_of,
+            emit=None,
+        )
+        assert first[0]["overdue_receipts"] == 1
+        assert first[0]["eligible_recipients"] == 1
+        assert first[0]["queued_notifications"] == 2
+        assert first[1]["overdue_receipts"] == 0
+        assert first[1]["queued_notifications"] == 0
+
+        await db.execute("SELECT set_config('app.cooperative_id', $1, false)", str(cooperative_id))
+        rows = await db.fetch(
+            "SELECT recipient_user_id,channel,payload_encrypted FROM notifications "
+            "WHERE cooperative_id=$1 AND kind='cash_deposit_overdue' ORDER BY channel",
+            cooperative_id,
+        )
+        assert len(rows) == 2
+        assert {row["channel"] for row in rows} == {"email", "telegram"}
+        assert {row["recipient_user_id"] for row in rows} == {treasurer}
+        member_name = (
+            await service.list_cash_awaiting_deposit(session(cooperative_id, officer, "officer"))
+        )[0]["member_name"]
+        for row in rows:
+            payload = decrypt_payload(row["payload_encrypted"])
+            rendered = json.dumps(payload, sort_keys=True)
+            assert member_name not in rendered
+            assert "987654" not in rendered
+
+        second = await run_overdue_cash_alerts(
+            session_factory,
+            cooperative_ids=[cooperative_id, window_id],
+            as_of_date=as_of,
+            emit=None,
+        )
+        assert second[0]["queued_notifications"] == 2
+        assert (
+            await db.fetchval(
+                "SELECT count(*) FROM notifications WHERE cooperative_id=$1 "
+                "AND kind='cash_deposit_overdue'",
+                cooperative_id,
+            )
+            == 2
+        )
+
+        await db.execute("SELECT set_config('app.cooperative_id', $1, false)", str(untouched_id))
+        assert (
+            await db.fetchval(
+                "SELECT count(*) FROM notifications WHERE cooperative_id=$1 "
+                "AND kind='cash_deposit_overdue'",
+                untouched_id,
+            )
+            == 0
+        )
+    finally:
+        await engine.dispose()

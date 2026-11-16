@@ -490,9 +490,7 @@ async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dic
         "debit_kobo": int(row["debit_kobo"]),
         "fingerprint": row["fingerprint"],
         "status": row["status"],
-        "matched_payment_id": str(row["matched_payment_id"])
-        if row["matched_payment_id"]
-        else None,
+        "matched_payment_id": str(row["matched_payment_id"]) if row["matched_payment_id"] else None,
         "ignored_note": row["ignored_note"],
         "decided_by": str(row["decided_by"]) if row["decided_by"] else None,
         "created_at": row["created_at"],
@@ -503,6 +501,8 @@ async def get_statement_line(current: CurrentSession, line_id: uuid.UUID) -> dic
         if row["payment_received_on"]
         else None,
     }
+
+
 async def import_statement_file(
     current: CurrentSession,
     *,

@@ -117,7 +117,10 @@ def test_all_action_alerts_use_fixed_kind_sentences_and_entity_links() -> None:
         )
         assert payload["action_kind"] == spec.action_kind
         assert payload["message"] == spec.sentence
-        assert str(entity_id) in payload["url"]
+        if event_type == eligibility.CASH_DEPOSIT_OVERDUE:
+            assert payload["url"] == "http://ajo.example.test/payments"
+        else:
+            assert str(entity_id) in payload["url"]
         assert "Ada" not in payload["message"]
         assert "₦" not in payload["message"]
 
@@ -147,6 +150,36 @@ async def test_shared_candidate_collection_is_one_tenant_scoped_query() -> None:
         session, cooperative_id, requester_id, {"treasurer", "officer"}
     )
     assert len(session.calls) == 1
-    assert session.calls[0][1] == {"cooperative_id": cooperative_id}
+    assert session.calls[0][1] == {"cooperative_id": cooperative_id, "as_of_date": None}
     assert "UNION ALL" in session.calls[0][0]
     assert items.get("withdrawal_requests", ()) == ()
+
+
+def test_cash_deposit_overdue_action_spec_is_generic_and_treasurer_only() -> None:
+    kind = "cash_deposit_overdue"
+    spec = eligibility.ACTION_SPECS[kind]
+    assert spec.roles == frozenset({"treasurer"})
+    assert spec.section == "payments"
+    assert spec.path == "/payments"
+    assert "₦" not in spec.sentence
+    payload = outbox.build_action_payload(kind, _settings(), entity_id=uuid.uuid4())
+    assert payload["url"] == "http://ajo.example.test/payments"
+    assert payload["action_kind"] == spec.action_kind
+    assert payload["message"] == spec.sentence
+
+
+def test_overdue_cash_sql_uses_only_module_constants_and_expected_binds() -> None:
+    candidate_sql = eligibility._CANDIDATE_SQL[eligibility.CASH_DEPOSIT_OVERDUE]
+    all_candidates_sql = str(eligibility._ALL_ACTION_CANDIDATES_SQL)
+    for fragment in (
+        eligibility._CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL,
+        eligibility.CASH_BANKING_POLICY_LATERAL_SQL,
+        eligibility.CASH_OVERDUE_PREDICATE_SQL,
+        eligibility.CASH_DEPOSIT_OVERDUE,
+    ):
+        assert fragment in candidate_sql or fragment in all_candidates_sql
+    assert candidate_sql.count(":cooperative_id") >= 1
+    assert candidate_sql.count(":entity_id") >= 1
+    assert candidate_sql.count(":as_of_date") >= 1
+    assert all_candidates_sql.count(":cooperative_id") >= 1
+    assert all_candidates_sql.count(":as_of_date") >= 1

@@ -202,7 +202,9 @@ Future bank-feed reconciliation is explicitly out of scope in this batch. A late
 
 The provider-neutral outbox may enqueue every action event in `ACTION_SPECS`: payroll posting and sign-off, payment confirmation, cash deposit, disbursement recording/authorization/confirmation, role-change approval, loan decision, disputed loan, withdrawal approval, policy approval, and product approval. Each real business action enqueues its event inside the same tenant transaction. Recipients use the same role and exclusion eligibility as menu action badges, including union-of-roles behavior; never notify the actor who posted, prepared, recorded, proposed, or otherwise participates in the item, and never notify the target of a role add. Messages contain only the section name, generic action sentence, and a direct link built from `PUBLIC_BASE_URL`. **No business data in messages**: names, amounts, member data, references, and other business details must not appear in the payload. Enqueue failures are isolated so notification enqueueing cannot block the business action. Delivery adapters remain provider-neutral and best-effort.
 
-Cash receipts that exceed the policy `cash_banking_days` window still require a scheduler job to enqueue an overdue alert; the scheduler is intentionally not implemented in the alert-wiring slice and is a follow-up.
+Cash receipts that exceed the policy `cash_banking_days` window are processed by the scheduler's overdue-cash job. It emits generic `cash_deposit_overdue` alerts only to treasurers who recorded none of the overdue receipts, with per-channel daily deduplication while overdue cash remains.
+
+Pending bank transfers and cash receipts show a staff setup warning when the shared eligibility rules find no other eligible confirmer. The warning is read-only for admins and does not change confirmation authority. Other maker-checker queues remain a follow-up; this slice covers payments only.
 
 
 ## 11. Telegram account linking

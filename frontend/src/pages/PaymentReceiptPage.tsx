@@ -56,6 +56,7 @@ export default function PaymentReceiptPage() {
     recorded_at: record.recorded_at,
     received_on: record.received_on,
     receipt_no: record.receipt_no,
+    no_eligible_confirmer: false,
   };
 
   return (
