@@ -181,6 +181,24 @@ test("bank details are visible only to bank-authorized roles", () => {
   assert.equal(canSeeDestinationAccount(["auditor"]), false);
 });
 
+test("Bank statements navigation and routes match the read-role allowlist", () => {
+  const allowedRoles = ["officer", "treasurer", "admin", "auditor"];
+  const item = navigation.find((entry) => entry.name === "Bank statements");
+  assert.ok(item);
+  assert.deepEqual(item.roles, allowedRoles);
+
+  for (const role of ["officer", "treasurer", "admin", "auditor", "committee", "member"]) {
+    const expected = allowedRoles.includes(role);
+    assert.equal(
+      visibleNavigation([role]).some((entry) => entry.name === "Bank statements"),
+      expected,
+    );
+    assert.equal(getRouteDecision([role], "/bank-statements").allowed, expected);
+    assert.equal(getRouteDecision([role], "/bank-statements/line-id").allowed, expected);
+    assert.equal(getRouteDecision([role], "/payments/bank-statements").allowed, expected);
+  }
+});
+
 test("disbursement actions respect role, workflow state and maker-checker separation", () => {
   const pending = {
     status: "pending_authorization",
