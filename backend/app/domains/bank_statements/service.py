@@ -122,6 +122,7 @@ def _read_statement_csv(
 
     rows: list[ParsedStatementRow] = []
     errors: list[dict[str, object]] = []
+    blank_narration_occurrences: dict[str, int] = {}
     required = {"date", "narration"}
     present = {key for key in required if column_map.get(key)}
     missing = required - present
@@ -144,8 +145,6 @@ def _read_statement_csv(
                 raise ValueError("date and narration are required for every row")
             line_date = _parse_date(date_value)
             narration = _sanitize_csv_text(narration_value)
-            if not narration:
-                raise ValueError("narration is required")
             if len(narration) > 2000:
                 raise ValueError("narration must be 2,000 characters or fewer")
             reference_raw = (
@@ -177,12 +176,16 @@ def _read_statement_csv(
                     debit_kobo = _parse_amount(row.get(debit_field))
             if credit_kobo <= 0 and debit_kobo <= 0:
                 raise ValueError("amount or credit/debit value must be positive")
-            fingerprint = hashlib.sha256(
-                (
-                    f"{line_date.isoformat()}|{_normalize_narration(narration)}|"
-                    f"{_normalize_reference(reference)}|{max(credit_kobo, debit_kobo)}"
-                ).encode()
-            ).hexdigest()
+            fingerprint_source = (
+                f"{line_date.isoformat()}|{_normalize_narration(narration)}|"
+                f"{_normalize_reference(reference)}|{max(credit_kobo, debit_kobo)}"
+            )
+            if not narration:
+                occurrence = blank_narration_occurrences.get(fingerprint_source, 0) + 1
+                blank_narration_occurrences[fingerprint_source] = occurrence
+                if occurrence > 1:
+                    fingerprint_source += f"|blank-occurrence:{occurrence}"
+            fingerprint = hashlib.sha256(fingerprint_source.encode()).hexdigest()
             rows.append(
                 ParsedStatementRow(
                     row_number=row_number,
