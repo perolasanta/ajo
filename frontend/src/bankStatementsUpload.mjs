@@ -49,3 +49,28 @@ export function suggestBankStatementMapping(headers) {
     reference: find(["reference", "ref", "transactionreference", "bankreference"]),
   };
 }
+
+export function formatBankStatementImportNotice(result) {
+  const errors = Array.isArray(result.errors) ? result.errors : [];
+  const rowNumbers = errors.map(({ row }) => row).filter(Number.isInteger);
+  const addedLabel = result.inserted_count === 1 ? "row" : "rows";
+  const skippedLabel = result.skipped_count === 1 ? "duplicate row" : "duplicate rows";
+  const badLabel = errors.length === 1 ? "bad row" : "bad rows";
+  const badRows = errors.length
+    ? `${errors.length} ${badLabel} (CSV rows ${rowNumbers.join(", ")})`
+    : "0 bad rows";
+  return `${result.inserted_count} ${addedLabel} added; ${result.skipped_count} ${skippedLabel} skipped; ${badRows}.`;
+}
+
+export function bankStatementImportErrorMessage(message, requestId) {
+  if (
+    typeof message === "string" &&
+    message &&
+    message !== "Request failed. Please try again."
+  ) {
+    return message;
+  }
+  const fallback =
+    "Bank statement import could not be completed. Review the CSV mapping and try again.";
+  return requestId ? `${fallback} Reference: ${requestId}.` : fallback;
+}

@@ -33,3 +33,15 @@ def test_restore_acl_script_has_idempotent_acl_repair_steps():
     assert "GRANT USAGE, SELECT ON ALL SEQUENCES" in script
     assert "GRANT EXECUTE ON ALL FUNCTIONS" in script
     assert "ALTER DEFAULT PRIVILEGES" in script
+
+
+def test_restore_acl_preserves_bank_statement_import_privileges():
+    script = (ROOT / "ops" / "backup" / "restore_app_acl.sh").read_text()
+    allowlists = [
+        part.split("] LOOP", 1)[0]
+        for part in script.split("FOREACH table_name IN ARRAY ARRAY[")[1:]
+    ]
+    assert len(allowlists) >= 2
+    for table_name in ("bank_statement_imports", "bank_statement_lines"):
+        assert f"'{table_name}'" in allowlists[0]
+        assert f"'{table_name}'" in allowlists[1]

@@ -28,7 +28,8 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'accounts', 'alembic_version', 'approvals', 'audit_logs', 'auth_rate_limits',
-    'bank_accounts', 'consent_rate_limits', 'cooperative_modules',
+    'bank_accounts', 'bank_statement_imports', 'bank_statement_lines',
+    'consent_rate_limits', 'cooperative_modules',
     'cooperative_policy_versions', 'cooperatives', 'disbursements', 'disputes',
     'fraud_alerts', 'guarantees', 'journal_entries', 'journal_lines',
     'loan_applications', 'loan_products', 'loan_schedule', 'loan_terms_snapshots',
@@ -68,7 +69,8 @@ DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'cooperatives', 'users', 'user_sessions', 'recovery_codes', 'auth_rate_limits',
-    'cooperative_modules', 'cooperative_policy_versions', 'loan_products',
+    'bank_statement_imports', 'bank_statement_lines', 'cooperative_modules',
+    'cooperative_policy_versions', 'loan_products',
     'savings_locks', 'withdrawal_requests', 'loan_applications', 'loans',
     'member_consents', 'consent_rate_limits', 'disputes', 'notifications',
     'disbursements', 'repayments', 'repayment_allocations', 'payroll_import_profiles',
