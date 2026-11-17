@@ -144,12 +144,20 @@ def _read_statement_csv(
                 raise ValueError("date and narration are required for every row")
             line_date = _parse_date(date_value)
             narration = _sanitize_csv_text(narration_value)
+            if not narration:
+                raise ValueError("narration is required")
+            if len(narration) > 2000:
+                raise ValueError("narration must be 2,000 characters or fewer")
             reference_raw = (
                 row.get(column_map.get("reference")) if column_map.get("reference") else None
             )
             reference = (
-                _sanitize_csv_text(reference_raw) if reference_raw not in (None, "") else None
+                _sanitize_csv_text(reference_raw) if reference_raw not in (None, "") else ""
             )
+            if not reference:
+                reference = None
+            elif len(reference) > 160:
+                raise ValueError("reference must be 160 characters or fewer")
 
             credit_kobo = 0
             debit_kobo = 0
@@ -539,7 +547,11 @@ async def import_statement_file(
         fingerprint_rows = [row.fingerprint for row in rows]
         existing_fingerprints = await session.execute(
             text(
-                "SELECT fingerprint FROM bank_statement_lines WHERE cooperative_id=:cid AND fingerprint = ANY(:fingerprints)"
+                """
+                SELECT fingerprint FROM bank_statement_lines
+                WHERE cooperative_id=:cid
+                  AND fingerprint = ANY(CAST(:fingerprints AS text[]))
+                """
             ),
             {"cid": current.cooperative_id, "fingerprints": fingerprint_rows},
         )

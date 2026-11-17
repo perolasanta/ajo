@@ -135,9 +135,12 @@ async def test_statement_import_succeeds_with_restricted_ajo_app_role(
     )
 
     assert imported["inserted_count"] == 1
-    assert await db.fetchval(
-        "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=$1", seed.cooperative_id
-    ) == 1
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=$1", seed.cooperative_id
+        )
+        == 1
+    )
 
 
 async def test_bank_statement_tables_have_app_grants_and_forced_tenant_rls(
