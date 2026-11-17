@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 
 import asyncpg
 import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
-from app.core.db import asyncpg_dsn, dispose_engine
+from app.api.auth import current_session
+from app.core.db import asyncpg_dsn, dispose_engine, transaction
 from app.core.errors import Conflict
 from app.domains.auth.service import CurrentSession
 from app.domains.bank_statements import service
 from app.domains.payments import service as payment_service
+from app.main import create_app
 from tests.conftest import create_tenant
 
 pytestmark = pytest.mark.db
@@ -33,6 +38,18 @@ async def db(test_database) -> asyncpg.Connection:
     await connection.close()
 
 
+@pytest.fixture
+async def statement_api():
+    selected: dict[str, CurrentSession] = {}
+    app = create_app()
+    app.dependency_overrides[current_session] = lambda: selected["current"]
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://bank-statement.test"
+    ) as client:
+        yield client, selected
+    app.dependency_overrides.clear()
+
+
 def session(cid: uuid.UUID, uid: uuid.UUID, role: str) -> CurrentSession:
     return CurrentSession(
         cid,
@@ -43,6 +60,118 @@ def session(cid: uuid.UUID, uid: uuid.UUID, role: str) -> CurrentSession:
         (role,),
         bytes(32),
     )
+
+
+async def test_http_preview_import_and_list_use_browser_multipart_mapping(
+    db: asyncpg.Connection,
+    statement_api: tuple[AsyncClient, dict[str, CurrentSession]],
+) -> None:
+    seed = await create_tenant(db, slug_prefix="bankstmt-http")
+    client, selected = statement_api
+    selected["current"] = session(seed.cooperative_id, seed.user_ids[0], "officer")
+    csrf = "bank-statement-csrf"
+    client.cookies.set("ajo_csrf", csrf)
+    headers = {"X-CSRF-Token": csrf}
+    payload = (
+        b"Date,Narration,Amount,Reference\n"
+        b"2024-03-01,Valid deposit,1250.00,REF-HTTP\n"
+        b"2024-03-02,,250.00,REF-EMPTY-NARRATION\n"
+    )
+    column_map = {
+        "date": "Date",
+        "narration": "Narration",
+        "amount": "Amount",
+        "reference": "Reference",
+    }
+
+    preview = await client.post(
+        "/api/v1/bank-statements/preview",
+        headers=headers,
+        data={"mapping": json.dumps(column_map)},
+        files={"file": ("statement.csv", payload, "text/csv")},
+    )
+
+    assert preview.status_code == 200, preview.text
+    preview_body = preview.json()
+
+    imported = await client.post(
+        "/api/v1/bank-statements/import",
+        headers=headers,
+        data={"mapping": json.dumps(column_map)},
+        files={"file": ("statement.csv", payload, "text/csv")},
+    )
+
+    assert imported.status_code == 200, imported.text
+    assert preview_body["total_rows"] == 1
+    assert preview_body["errors"][0]["row"] == 3
+    import_body = imported.json()
+    assert import_body["inserted_count"] == 1
+    assert import_body["skipped_count"] == 0
+    assert import_body["errors"][0]["row"] == 3
+
+    listed = await client.get("/api/v1/bank-statements?page=1&page_size=25")
+
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["total"] == 1
+    assert listed.json()["items"][0]["narration"] == "Valid deposit"
+
+
+async def test_statement_import_succeeds_with_restricted_ajo_app_role(
+    db: asyncpg.Connection,
+) -> None:
+    assert await db.fetchval("SELECT current_user") == "ajo_app"
+    seed = await create_tenant(db, slug_prefix="bankstmt-app-role")
+    current = session(seed.cooperative_id, seed.user_ids[0], "officer")
+
+    async with transaction(seed.cooperative_id) as session_db:
+        role = await session_db.execute(text("SELECT current_user"))
+        assert role.scalar_one() == "ajo_app"
+
+    imported = await service.import_statement_file(
+        current,
+        content=b"Date,Narration,Amount\n2024-03-01,Restricted-role deposit,1250.00\n",
+        filename="restricted-role.csv",
+        column_map={"date": "Date", "narration": "Narration", "amount": "Amount"},
+    )
+
+    assert imported["inserted_count"] == 1
+    assert await db.fetchval(
+        "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=$1", seed.cooperative_id
+    ) == 1
+
+
+async def test_bank_statement_tables_have_app_grants_and_forced_tenant_rls(
+    db: asyncpg.Connection,
+) -> None:
+    table_names = ("bank_statement_imports", "bank_statement_lines")
+    for table_name in table_names:
+        privileges = await db.fetchrow(
+            """SELECT has_table_privilege(current_user, $1::text, 'SELECT') AS can_select,
+                      has_table_privilege(current_user, $1::text, 'INSERT') AS can_insert,
+                      has_table_privilege(current_user, $1::text, 'UPDATE') AS can_update""",
+            f"public.{table_name}",
+        )
+        assert privileges["can_select"]
+        assert privileges["can_insert"]
+        assert privileges["can_update"]
+
+        rls = await db.fetchrow(
+            """SELECT relrowsecurity, relforcerowsecurity
+                 FROM pg_class WHERE oid = to_regclass($1)""",
+            f"public.{table_name}",
+        )
+        assert rls["relrowsecurity"]
+        assert rls["relforcerowsecurity"]
+
+    policies = await db.fetch(
+        """SELECT tablename, cmd, qual, with_check FROM pg_policies
+             WHERE schemaname='public' AND tablename = ANY($1::text[])""",
+        list(table_names),
+    )
+    assert {row["tablename"] for row in policies} == set(table_names)
+    assert all(row["cmd"] == "ALL" for row in policies)
+    assert all(row["qual"] and row["with_check"] for row in policies)
+    assert all("app_current_cooperative_id" in row["with_check"] for row in policies)
 
 
 async def test_parse_statement_csv_supports_common_formats_and_preview(db):
