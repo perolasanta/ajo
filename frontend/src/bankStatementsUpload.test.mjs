@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  bankStatementImportErrorMessage,
+  formatBankStatementImportNotice,
   openBankStatementPicker,
   parseBankStatementHeaders,
   suggestBankStatementMapping,
@@ -39,4 +41,29 @@ test("column suggestions map signed amount or separate credit and debit fields",
   const split = suggestBankStatementMapping(["Date", "Narration", "Credit", "Debit"]);
   assert.equal(split.credit, "Credit");
   assert.equal(split.debit, "Debit");
+});
+
+test("import summary reports added, duplicate, and invalid row counts with row numbers", () => {
+  assert.equal(
+    formatBankStatementImportNotice({
+      inserted_count: 2,
+      skipped_count: 1,
+      errors: [
+        { row: 5, error: "narration is required" },
+        { row: 8, error: "invalid date" },
+      ],
+    }),
+    "2 rows added; 1 duplicate row skipped; 2 bad rows (CSV rows 5, 8).",
+  );
+});
+
+test("generic import errors become actionable and retain the request reference", () => {
+  assert.equal(
+    bankStatementImportErrorMessage("Request failed. Please try again.", "req-123"),
+    "Bank statement import could not be completed. Review the CSV mapping and try again. Reference: req-123.",
+  );
+  assert.equal(
+    bankStatementImportErrorMessage("CSV column mapping is invalid.", undefined),
+    "CSV column mapping is invalid.",
+  );
 });

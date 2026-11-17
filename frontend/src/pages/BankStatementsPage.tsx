@@ -18,6 +18,8 @@ import type {
   BankStatementStatus,
 } from "../api/client";
 import {
+  bankStatementImportErrorMessage,
+  formatBankStatementImportNotice,
   openBankStatementPicker,
   parseBankStatementHeaders,
   suggestBankStatementMapping,
@@ -129,9 +131,7 @@ export default function BankStatementsPage() {
     },
     onSuccess: async (result) => {
       setImportResult(result);
-      setNotice(
-        `${result.inserted_count} rows imported; ${result.skipped_count} duplicate rows skipped.`,
-      );
+      setNotice(formatBankStatementImportNotice(result));
       await invalidateLines();
     },
   });
@@ -195,12 +195,14 @@ export default function BankStatementsPage() {
     try {
       const csvHeaders = parseBankStatementHeaders(await file.text());
       if (!csvHeaders.length) {
+        setSelectedFile(null);
         setFileError("The CSV file must start with a header row.");
         return;
       }
       setHeaders(csvHeaders);
       setColumnMap(suggestBankStatementMapping(csvHeaders));
     } catch {
+      setSelectedFile(null);
       setFileError("The CSV header could not be read. Check the file encoding and try again.");
     }
   };
@@ -329,7 +331,12 @@ export default function BankStatementsPage() {
         )}
         {importMutation.isError && (
           <p className="mt-3 text-sm text-danger" role="alert">
-            {errorMessage(importMutation.error, "Unable to import the CSV.")}
+            {bankStatementImportErrorMessage(
+              importMutation.error instanceof ApiError ? importMutation.error.message : undefined,
+              importMutation.error instanceof ApiError
+                ? importMutation.error.requestId
+                : undefined,
+            )}
           </p>
         )}
         {preview?.duplicate_file && (
@@ -342,7 +349,7 @@ export default function BankStatementsPage() {
             <p className="mt-3 text-sm text-muted" role="status">
               Preview: {preview.total_rows} valid rows in {preview.filename}.
             </p>
-            <PreviewIssues preview={preview} />
+            {!importResult && <PreviewIssues preview={preview} />}
             {preview.preview.length > 0 && (
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[40rem] text-left text-sm">
