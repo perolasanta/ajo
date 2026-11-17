@@ -73,9 +73,90 @@ async def test_http_preview_import_and_list_use_browser_multipart_mapping(
     client.cookies.set("ajo_csrf", csrf)
     headers = {"X-CSRF-Token": csrf}
     payload = (
+        b"Date,Narration,Reference,Credit,Debit\n"
+        b"2024-03-01,Member contribution,REF-001,1250.00,\n"
+        b"2024-03-02,,REF-002,250.00,\n"
+        b"2024-03-03,Member savings,REF-003,100.00,\n"
+        b"2024-03-04,Monthly fee,REF-004,,20.00\n"
+        b"2024-03-05,Member contribution,REF-005,375.00,\n"
+        b"2024-03-06,,REF-006,,30.00\n"
+        b"2024-03-07,Share purchase,REF-007,500.00,\n"
+        b"2024-03-08,Member savings,REF-008,750.00,\n"
+    )
+    column_map = {
+        "date": "Date",
+        "narration": "Narration",
+        "reference": "Reference",
+        "credit": "Credit",
+        "debit": "Debit",
+    }
+
+    preview = await client.post(
+        "/api/v1/bank-statements/preview",
+        headers=headers,
+        data={"mapping": json.dumps(column_map)},
+        files={"file": ("statement.csv", payload, "text/csv")},
+    )
+
+    assert preview.status_code == 200, preview.text
+    preview_body = preview.json()
+    assert preview_body["total_rows"] == 8
+    assert preview_body["errors"] == []
+
+    imported = await client.post(
+        "/api/v1/bank-statements/import",
+        headers=headers,
+        data={"mapping": json.dumps(column_map)},
+        files={"file": ("statement.csv", payload, "text/csv")},
+    )
+
+    assert imported.status_code == 200, imported.text
+    import_body = imported.json()
+    assert import_body["inserted_count"] == 8
+    assert import_body["skipped_count"] == 0
+    assert import_body["errors"] == []
+    counts = await db.fetchrow(
+        """SELECT count(*) AS total,
+                  count(*) FILTER (WHERE credit_kobo > 0) AS credits,
+                  count(*) FILTER (WHERE debit_kobo > 0) AS debits
+             FROM bank_statement_lines WHERE cooperative_id=$1""",
+        seed.cooperative_id,
+    )
+    assert counts["total"] == 8
+    assert counts["credits"] == 6
+    assert counts["debits"] == 2
+
+    repeated = await client.post(
+        "/api/v1/bank-statements/import",
+        headers=headers,
+        data={"mapping": json.dumps(column_map)},
+        files={"file": ("statement.csv", payload, "text/csv")},
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["inserted_count"] == 0
+    assert repeated.json()["skipped_count"] == 8
+
+    listed = await client.get("/api/v1/bank-statements?page=1&page_size=25")
+
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["total"] == 8
+    assert "Member contribution" in {item["narration"] for item in listed.json()["items"]}
+
+
+async def test_http_import_saves_identical_blank_narration_rows_in_one_file(
+    db: asyncpg.Connection,
+    statement_api: tuple[AsyncClient, dict[str, CurrentSession]],
+) -> None:
+    seed = await create_tenant(db, slug_prefix="bankstmt-blank-duplicates")
+    client, selected = statement_api
+    selected["current"] = session(seed.cooperative_id, seed.user_ids[0], "officer")
+    csrf = "bank-statement-blank-duplicates-csrf"
+    client.cookies.set("ajo_csrf", csrf)
+    headers = {"X-CSRF-Token": csrf}
+    payload = (
         b"Date,Narration,Amount,Reference\n"
-        b"2024-03-01,Valid deposit,1250.00,REF-HTTP\n"
-        b"2024-03-02,,250.00,REF-EMPTY-NARRATION\n"
+        b"2024-03-01,,250.00,REF-EMPTY\n"
+        b"2024-03-01,,250.00,REF-EMPTY\n"
     )
     column_map = {
         "date": "Date",
@@ -88,32 +169,99 @@ async def test_http_preview_import_and_list_use_browser_multipart_mapping(
         "/api/v1/bank-statements/preview",
         headers=headers,
         data={"mapping": json.dumps(column_map)},
-        files={"file": ("statement.csv", payload, "text/csv")},
+        files={"file": ("blank-duplicates.csv", payload, "text/csv")},
     )
-
     assert preview.status_code == 200, preview.text
-    preview_body = preview.json()
+    assert preview.json()["total_rows"] == 2
+    assert preview.json()["errors"] == []
 
     imported = await client.post(
         "/api/v1/bank-statements/import",
         headers=headers,
         data={"mapping": json.dumps(column_map)},
-        files={"file": ("statement.csv", payload, "text/csv")},
+        files={"file": ("blank-duplicates.csv", payload, "text/csv")},
+    )
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["inserted_count"] == 2
+    assert imported.json()["skipped_count"] == 0
+    assert (
+        await db.fetchval(
+            "SELECT count(*) FROM bank_statement_lines WHERE cooperative_id=$1 AND narration=''",
+            seed.cooperative_id,
+        )
+        == 2
     )
 
-    assert imported.status_code == 200, imported.text
-    assert preview_body["total_rows"] == 1
-    assert preview_body["errors"][0]["row"] == 3
-    import_body = imported.json()
-    assert import_body["inserted_count"] == 1
-    assert import_body["skipped_count"] == 0
-    assert import_body["errors"][0]["row"] == 3
 
-    listed = await client.get("/api/v1/bank-statements?page=1&page_size=25")
+async def test_every_bank_statement_endpoint_enforces_role_matrix(
+    db: asyncpg.Connection,
+    statement_api: tuple[AsyncClient, dict[str, CurrentSession]],
+) -> None:
+    seed = await create_tenant(
+        db,
+        slug_prefix="bankstmt-role-matrix",
+        roles=("officer", "committee", "treasurer", "admin", "auditor"),
+    )
+    client, selected = statement_api
+    line_id = str(uuid.uuid4())
+    csrf = "bank-statement-role-matrix-csrf"
+    client.cookies.set("ajo_csrf", csrf)
+    headers = {"X-CSRF-Token": csrf}
+    read_roles = {"officer", "treasurer", "admin", "auditor"}
+    write_roles = {"officer", "treasurer"}
+    endpoints = [
+        ("GET", "/api/v1/bank-statements", read_roles),
+        ("GET", "/api/v1/bank-statements/lines", read_roles),
+        ("GET", f"/api/v1/bank-statements/lines/{line_id}", read_roles),
+        ("GET", f"/api/v1/bank-statements/{line_id}", read_roles),
+        ("GET", "/api/v1/payments/bank-statements/lines", read_roles),
+        ("GET", f"/api/v1/payments/bank-statements/lines/{line_id}", read_roles),
+        ("POST", "/api/v1/bank-statements/preview", write_roles),
+        ("POST", "/api/v1/bank-statements/import", write_roles),
+        ("POST", "/api/v1/bank-statements/match", write_roles),
+        ("POST", f"/api/v1/bank-statements/{line_id}/accept", write_roles),
+        ("POST", f"/api/v1/bank-statements/{line_id}/ignore", write_roles),
+        ("POST", f"/api/v1/bank-statements/{line_id}/undo", write_roles),
+        ("POST", "/api/v1/payments/bank-statements/preview", write_roles),
+        ("POST", "/api/v1/payments/bank-statements/import", write_roles),
+        ("POST", "/api/v1/payments/bank-statements/match", write_roles),
+    ]
+    mapping = {"date": "Date", "narration": "Narration", "amount": "Amount"}
+    payload = b"Date,Narration,Amount\n2024-03-01,Role matrix deposit,1.00\n"
 
-    assert listed.status_code == 200, listed.text
-    assert listed.json()["total"] == 1
-    assert listed.json()["items"][0]["narration"] == "Valid deposit"
+    for role in ("officer", "treasurer", "admin", "auditor", "committee", "member"):
+        selected["current"] = session(seed.cooperative_id, seed.user_ids[0], role)
+        for method, path, allowed_roles in endpoints:
+            if method == "GET":
+                response = await client.get(path)
+            elif path.endswith(("/preview", "/import")):
+                response = await client.post(
+                    path,
+                    headers=headers,
+                    data={"mapping": json.dumps(mapping)},
+                    files={"file": ("role-matrix.csv", payload, "text/csv")},
+                )
+            elif path.endswith("/accept"):
+                response = await client.post(
+                    path,
+                    headers=headers,
+                    json={"idempotency_key": f"role-matrix-{role}"},
+                )
+            elif path.endswith("/ignore"):
+                response = await client.post(
+                    path, headers=headers, json={"note": "role matrix test"}
+                )
+            else:
+                response = await client.post(path, headers=headers)
+
+            if role in allowed_roles:
+                assert response.status_code in {200, 404}, (
+                    f"{method} {path} for {role}: {response.status_code} {response.text}"
+                )
+            else:
+                assert response.status_code == 403, (
+                    f"{method} {path} for {role}: {response.status_code} {response.text}"
+                )
 
 
 async def test_statement_import_succeeds_with_restricted_ajo_app_role(
