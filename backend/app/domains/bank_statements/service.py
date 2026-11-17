@@ -152,7 +152,7 @@ def _read_statement_csv(
                 row.get(column_map.get("reference")) if column_map.get("reference") else None
             )
             reference = (
-                _sanitize_csv_text(reference_raw) if reference_raw not in (None, "") else ""
+                _sanitize_csv_text(reference_raw) if reference_raw not in (None, "") else None
             )
             if not reference:
                 reference = None
@@ -420,7 +420,7 @@ async def list_statement_lines(
                    LEFT JOIN members m
                      ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
                    WHERE l.cooperative_id=:cid
-                     AND (:status IS NULL OR l.status=:status)
+                     AND (CAST(:status AS text) IS NULL OR l.status=CAST(:status AS text))
                    ORDER BY l.line_date DESC, l.id DESC
                    LIMIT :limit OFFSET :offset"""
             ),
@@ -429,7 +429,8 @@ async def list_statement_lines(
         total = await session.scalar(
             text(
                 "SELECT count(*) FROM bank_statement_lines "
-                "WHERE cooperative_id=:cid AND (:status IS NULL OR status=:status)"
+                "WHERE cooperative_id=:cid "
+                "AND (CAST(:status AS text) IS NULL OR status=CAST(:status AS text))"
             ),
             {"cid": cid, "status": status},
         )
