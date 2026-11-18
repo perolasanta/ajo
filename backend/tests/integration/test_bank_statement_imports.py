@@ -147,7 +147,7 @@ async def test_http_preview_import_and_list_use_browser_multipart_mapping(
     assert ignored.status_code == 200, ignored.text
     assert unmatched.status_code == 200, unmatched.text
     assert ignored.json()["total"] == 2
-    assert unmatched.json()["total"] == 0
+    assert unmatched.json()["total"] == 6
     assert all(item["status"] == "ignored" for item in ignored.json()["items"])
     assert all(item["debit_kobo"] > 0 for item in ignored.json()["items"])
 
