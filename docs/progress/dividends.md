@@ -1,6 +1,6 @@
 # Bank statement debit fix and year-end dividends progress
 
-STATE: Item 1 complete; item 2 next.
+STATE: Items 2-4 in progress; starting item 5 (notifications) now.
 
 ## Plan and checklist
 
