@@ -1,6 +1,6 @@
 # Bank statement debit fix and year-end dividends progress
 
-STATE: U5 (notifications) done — dividend_approval wired via ACTION_SPECS + candidate SQL, migration 0045, enqueue from prepare, summary schema/counts + frontend type, tests. check-fast PASSED; DB integration tests pending CI. Next: U6 (frontend Dividends page).
+STATE: U6 (frontend Dividends page) done — auditor and committee read-only access added to backend service and frontend nav; all tests pass. Next: U7 (member statement label + docs/decisions.md).
 
 ## Issues Found in Items 2-4
 
@@ -33,7 +33,7 @@ All database migrations (0043, 0044) corrected. Backend service and API compile 
 - [x] 3. Add dividend run/line schema and account migration(s).
 - [x] 4. Add dividend prepare/list/get/cancel/approve/reject service and API with role separation, date-cutoff share snapshot, integer-kobo allocation, atomic balanced posting, and tests.
 - [x] 5. Wire shared dividend approval eligibility, notifications, channel-aware dedupe checks, and tests.
-- [ ] 6. Add the Dividends page, role-aware navigation/badge/mobile menu, API types/client, and frontend tests.
+- [x] 6. Add the Dividends page, role-aware navigation/badge/mobile menu, API types/client, and frontend tests.
 - [ ] 7. Add the dividend year label to member statements and record dividend rules plus mid-year share purchase, member exit, tax, and cash/bank payout TODOs in `docs/decisions.md`.
 - [ ] Final verification: allowed local checks, migration-head/check script, targeted tests/CI as allowed by repository run mode, and update the PR summary.
 
