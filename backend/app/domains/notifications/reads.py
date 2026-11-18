@@ -41,6 +41,7 @@ async def get_action_counts(current: CurrentSession) -> dict[str, dict[str, int]
             "policy_approval": count(eligibility.POLICY_APPROVAL),
             "product_approval": count(eligibility.PRODUCT_APPROVAL),
         }
+        summary["dividends"] = {"awaiting_approval": count(eligibility.DIVIDEND_APPROVAL)}
     if "committee" in roles:
         summary.setdefault("loans", {})["awaiting_decision"] = count(eligibility.LOAN_DECISION)
     return summary

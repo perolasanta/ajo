@@ -142,6 +142,15 @@ async def test_http_preview_import_and_list_use_browser_multipart_mapping(
     assert listed.json()["total"] == 8
     assert "Member contribution" in {item["narration"] for item in listed.json()["items"]}
 
+    ignored = await client.get("/api/v1/bank-statements?status=ignored")
+    unmatched = await client.get("/api/v1/bank-statements?status=unmatched")
+    assert ignored.status_code == 200, ignored.text
+    assert unmatched.status_code == 200, unmatched.text
+    assert ignored.json()["total"] == 2
+    assert unmatched.json()["total"] == 6
+    assert all(item["status"] == "ignored" for item in ignored.json()["items"])
+    assert all(item["debit_kobo"] > 0 for item in ignored.json()["items"])
+
 
 async def test_http_import_saves_identical_blank_narration_rows_in_one_file(
     db: asyncpg.Connection,

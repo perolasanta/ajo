@@ -246,3 +246,22 @@ Requests use maker-checker separation: the requester can never approve or reject
 The read-only Share register is available to admins, treasurers, officers, auditors, and committee users; all other roles are denied server-side. It lists only members with positive holdings, derives share units from tenant-scoped `member_shares` ledger movements and the originating purchase's snapshotted unit price, and reversals reduce those holdings. It values shares at the cooperative's current unit price and reports the latest positive share-purchase effective date. Search is by member name; list results are paginated. Cooperative totals cover all holdings, independent of the current search/page. The displayed member label contains only the name (not email or member number), using `Unnamed user` for an existing member without a name and `Unknown user` if the member record is absent. The register does not create, approve, or post transactions.
 
 **TODO:** salary-deduction-funded share purchases are intentionally out of scope. Define and approve that payment source, payroll interaction, and separation-of-duties rules before implementing it.
+
+## 16. Year-end share dividends
+A cooperative declares a dividend once per financial year. The treasurer prepares a dividend run specifying the financial year, record date, and total pool in integer kobo. The system takes a share snapshot at the record date (sum of `member_shares` journal credits up to and including that date, one per active member), allocates the pool in integer kobo by pro-rata shares using the largest-remainder method so every line is a whole kobo and all lines sum exactly to the pool. Zero-share members receive no line.
+
+Role separation: the treasurer prepares and may cancel an `unprocessed` run; an admin approves, rejects (requires a note), or posts; the person who prepared a run can never approve or post it even if they also hold the admin role. The officer has no dividend access; auditor and committee are read-only.
+
+Approval changes status to `approved`. Posting creates one balanced journal entry with `source_type='dividend'` debiting the cooperative's `dividends_declared` equity account and crediting each member's `member_savings` account. The entry description is `Dividend <financial_year>` and the idempotency key is `dividend:<run_id>`, preventing double posting. Posting sets status to `posted`. Rejection sets status to `rejected` with a reason and actor. Cancellation sets status to `cancelled`.
+
+The member statement labels any `source_type='dividend'` journal entry as `Dividend <year>` derived from the entry's effective date.
+
+Admin users receive a `dividend_approval` action notification when a run is prepared. The preparer is excluded from recipients even if they also hold the admin role.
+
+**TODO:** Define the payout mechanism — currently dividends credit member savings within Ajo; decide whether and how members can withdraw to their bank account or receive cash, and what approval steps that payout requires.
+
+**TODO:** Define proration rules for mid-year share purchases — currently all shares held at the record date receive a full dividend regardless of when they were acquired.
+
+**TODO:** Define tax rules — clarify whether withholding tax applies to cooperative dividends in the relevant jurisdiction and how Ajo should compute and record it.
+
+**TODO:** Define the interplay with member exit — clarify how a declared but un-posted dividend or a posted dividend in a closed savings account is handled when a member exits the cooperative.

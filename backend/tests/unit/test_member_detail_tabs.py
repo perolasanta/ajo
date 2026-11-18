@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -66,3 +67,10 @@ def test_activity_query_is_tenant_scoped_and_member_filtered() -> None:
 def test_member_tab_response_contract_has_no_bank_account_number() -> None:
     forbidden = {"account_number", "account_number_encrypted", "full_account_number"}
     assert forbidden.isdisjoint(reads.PUBLIC_TAB_FIELDS)
+
+
+def test_statement_query_labels_dividend_entries_with_year() -> None:
+    sql = str(reads.STATEMENT_QUERY)
+    assert re.search(r"source_type\s*=\s*'dividend'", sql)
+    assert "Dividend" in sql
+    assert "EXTRACT(year" in sql or "extract(year" in sql.lower()

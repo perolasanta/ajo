@@ -443,7 +443,51 @@ export type NotificationSummary = {
   withdrawal_requests?: { awaiting_approval?: number };
   share_purchases?: { awaiting_approval?: number };
   settings?: { policy_approval?: number; product_approval?: number };
+  dividends?: { awaiting_approval?: number };
 };
+
+export type DividendLineResponse = {
+  line_id: string;
+  member_id: string;
+  shares_held: number;
+  amount_kobo: number;
+  created_at: string;
+};
+
+export type DividendRunResponse = {
+  run_id: string;
+  record_date: string;
+  declared_by_meeting_id: string;
+  pool_kobo: number;
+  prepared_by: string;
+  prepared_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  posted_by: string | null;
+  posted_at: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  items: DividendLineResponse[] | null;
+};
+
+export type DividendRunListResponse = {
+  items: DividendRunResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+};
+
+export type PrepareDividendRunRequest = {
+  record_date: string;
+  declared_by_meeting_id: string;
+  pool_kobo: number;
+};
+
+export type RejectDividendRunRequest = { reason: string };
 
 export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "auditor";
 export type StaffRecord = {

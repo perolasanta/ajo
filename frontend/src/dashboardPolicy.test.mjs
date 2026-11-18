@@ -29,7 +29,10 @@ test("treasurer sees the record-transfer card but not the unfilterable prepare q
 test("committee sees the review queue and a shared action destination", () => {
   const cards = dashboardCards(["committee"]);
   assert.ok(cards.some((card) => card.title === "Applications under review"));
-  assert.deepEqual(cards.filter((card) => card.actionType).map((card) => card.href), ["/loans?action=needed"]);
+  assert.deepEqual(
+    cards.filter((card) => card.actionType).map((card) => card.href),
+    ["/loans?action=needed"],
+  );
 });
 
 test("auditor sees loan and disbursement status cards only", () => {

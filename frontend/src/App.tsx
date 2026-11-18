@@ -59,6 +59,7 @@ const CooperativeSettingsPage = lazy(() => import("./pages/CooperativeSettingsPa
 const WithdrawalRequestsPage = lazy(() => import("./pages/WithdrawalRequestsPage"));
 const SharePurchasesPage = lazy(() => import("./pages/SharePurchasesPage"));
 const ShareRegisterPage = lazy(() => import("./pages/ShareRegisterPage"));
+const DividendsPage = lazy(() => import("./pages/DividendsPage"));
 const PaymentsPage = lazy(() => import("./pages/PaymentsPage"));
 const PaymentReceiptPage = lazy(() => import("./pages/PaymentReceiptPage"));
 const AccountPage = lazy(() => import("./pages/AccountPage"));
@@ -412,6 +413,8 @@ export default function App() {
         <Route path="/withdrawal-requests" element={<WithdrawalRequestsPage />} />
         <Route path="/share-purchases" element={<SharePurchasesPage />} />
         <Route path="/share-register" element={<ShareRegisterPage />} />
+        <Route path="/dividends" element={<DividendsPage />} />
+        <Route path="/dividends/:runId" element={<DividendsPage />} />
         <Route path="/members/:memberId" element={<MemberDetailPage />} />
         <Route path="/loans" element={<LoansPage />} />
         <Route path="/loans/new" element={<NewLoanApplicationPage />} />

@@ -423,7 +423,9 @@ async def list_statement_lines(
                    LEFT JOIN members m
                      ON m.cooperative_id=p.cooperative_id AND m.id=p.member_id
                    WHERE l.cooperative_id=:cid
-                     AND (CAST(:status AS text) IS NULL OR l.status=CAST(:status AS text))
+                     AND (CAST(:status AS text) IS NULL 
+                          OR (CAST(:status AS text)='ignored' AND (l.status='ignored' OR l.debit_kobo > 0))
+                          OR (CAST(:status AS text)!='ignored' AND l.status=CAST(:status AS text) AND l.debit_kobo = 0))
                    ORDER BY l.line_date DESC, l.id DESC
                    LIMIT :limit OFFSET :offset"""
             ),
@@ -433,7 +435,9 @@ async def list_statement_lines(
             text(
                 "SELECT count(*) FROM bank_statement_lines "
                 "WHERE cooperative_id=:cid "
-                "AND (CAST(:status AS text) IS NULL OR status=CAST(:status AS text))"
+                "AND (CAST(:status AS text) IS NULL "
+                "     OR (CAST(:status AS text)='ignored' AND (status='ignored' OR debit_kobo > 0)) "
+                "     OR (CAST(:status AS text)!='ignored' AND status=CAST(:status AS text) AND debit_kobo = 0))"
             ),
             {"cid": cid, "status": status},
         )
@@ -448,7 +452,7 @@ async def list_statement_lines(
             "credit_kobo": int(row["credit_kobo"] or 0),
             "debit_kobo": int(row["debit_kobo"] or 0),
             "fingerprint": row["fingerprint"],
-            "status": row["status"],
+            "status": "ignored" if row["debit_kobo"] > 0 else row["status"],
             "matched_payment_id": str(row["matched_payment_id"])
             if row["matched_payment_id"]
             else None,

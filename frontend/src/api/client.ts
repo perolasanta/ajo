@@ -33,6 +33,9 @@ import type {
   PayrollSignOffResponse,
   RoleChangeProposalPage,
   StaffPage,
+  DividendRunResponse,
+  DividendRunListResponse,
+  PrepareDividendRunRequest,
   paths,
 } from "./schema";
 import type { AuditEventPage, AuditVerification } from "./audit";
@@ -239,6 +242,47 @@ export function requestSharePurchase(body: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+export function getDividendRuns(
+  params: { page?: number; pageSize?: number } = {},
+): Promise<DividendRunListResponse> {
+  const query = new URLSearchParams();
+  query.set("page", String(params.page ?? 1));
+  query.set("page_size", String(params.pageSize ?? 25));
+  return request<DividendRunListResponse>(`/dividends/runs?${query.toString()}`);
+}
+
+export function getDividendRun(runId: string): Promise<DividendRunResponse> {
+  return request<DividendRunResponse>(`/dividends/runs/${encodeURIComponent(runId)}`);
+}
+
+export function prepareDividendRun(body: PrepareDividendRunRequest): Promise<DividendRunResponse> {
+  return request<DividendRunResponse>("/dividends/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function approveDividendRun(runId: string): Promise<DividendRunResponse> {
+  return request<DividendRunResponse>(`/dividends/runs/${encodeURIComponent(runId)}/approve`, {
+    method: "POST",
+  });
+}
+
+export function rejectDividendRun(runId: string, reason: string): Promise<DividendRunResponse> {
+  return request<DividendRunResponse>(`/dividends/runs/${encodeURIComponent(runId)}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function cancelDividendRun(runId: string): Promise<DividendRunResponse> {
+  return request<DividendRunResponse>(`/dividends/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: "POST",
   });
 }
 
@@ -953,35 +997,47 @@ export function matchBankStatementLines(): Promise<{
   ambiguous_count: number;
   window_days: number;
 }> {
-  return request<{ matched_count: number; ambiguous_count: number; window_days: number }>("/bank-statements/match?window_days=5", { method: "POST" });
+  return request<{ matched_count: number; ambiguous_count: number; window_days: number }>(
+    "/bank-statements/match?window_days=5",
+    { method: "POST" },
+  );
 }
 
 export function acceptBankStatementLine(
   lineId: string,
   idempotencyKey: string,
 ): Promise<{ line_id: string; payment_id: string; status: "matched" }> {
-  return request<{ line_id: string; payment_id: string; status: "matched" }>(`/bank-statements/${encodeURIComponent(lineId)}/accept`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idempotency_key: idempotencyKey }),
-  });
+  return request<{ line_id: string; payment_id: string; status: "matched" }>(
+    `/bank-statements/${encodeURIComponent(lineId)}/accept`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+    },
+  );
 }
 
 export function ignoreBankStatementLine(
   lineId: string,
   note: string,
 ): Promise<{ line_id: string; status: "ignored"; note: string }> {
-  return request<{ line_id: string; status: "ignored"; note: string }>(`/bank-statements/${encodeURIComponent(lineId)}/ignore`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ note }),
-  });
+  return request<{ line_id: string; status: "ignored"; note: string }>(
+    `/bank-statements/${encodeURIComponent(lineId)}/ignore`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    },
+  );
 }
 
 export function undoBankStatementDecision(
   lineId: string,
 ): Promise<{ line_id: string; status: "unmatched" }> {
-  return request<{ line_id: string; status: "unmatched" }>(`/bank-statements/${encodeURIComponent(lineId)}/undo`, {
-    method: "POST",
-  });
+  return request<{ line_id: string; status: "unmatched" }>(
+    `/bank-statements/${encodeURIComponent(lineId)}/undo`,
+    {
+      method: "POST",
+    },
+  );
 }

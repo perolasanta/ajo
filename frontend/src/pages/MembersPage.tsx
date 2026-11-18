@@ -48,7 +48,9 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
   const members = useQuery({
     queryKey: ["members", fakeMembers ? "design" : "live", debouncedSearch, pendingOnly],
     queryFn: () =>
-      fakeMembers ? Promise.resolve(fakeMembers) : getMembers(debouncedSearch || undefined, pendingOnly),
+      fakeMembers
+        ? Promise.resolve(fakeMembers)
+        : getMembers(debouncedSearch || undefined, pendingOnly),
   });
   const statuses = useMemo(
     () =>
@@ -78,7 +80,8 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
     if (column.key === "phone")
       return pageMembers.some((member) => member.phone_e164 !== undefined);
     if (column.key === "status") return pageMembers.some((member) => member.status !== undefined);
-    if (column.key === "pending") return pageMembers.some((member) => member.has_pending_request !== undefined);
+    if (column.key === "pending")
+      return pageMembers.some((member) => member.has_pending_request !== undefined);
     return true;
   });
 
@@ -109,7 +112,14 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
             ))}
           </Select>
         )}
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={pendingOnly} onChange={(event) => setPendingOnly(event.target.checked)} />Has pending request</label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={pendingOnly}
+            onChange={(event) => setPendingOnly(event.target.checked)}
+          />
+          Has pending request
+        </label>
         <div className="hidden md:block">
           <TableDensityToggle dense={dense} onChange={setDense} />
         </div>
@@ -135,7 +145,9 @@ export default function MembersPage({ fakeMembers }: { fakeMembers?: MemberListI
           }
         />
       )}
-      {pendingOnly && members.data && <p className="text-sm text-muted">Showing members with pending withdrawal requests.</p>}
+      {pendingOnly && members.data && (
+        <p className="text-sm text-muted">Showing members with pending withdrawal requests.</p>
+      )}
       {pageMembers.length > 0 && (
         <>
           <ResponsiveTable
@@ -203,7 +215,8 @@ const memberColumns: ResponsiveColumn<MemberListItem>[] = [
     key: "pending",
     header: "Withdrawal request",
     role: "badge",
-    render: (member) => member.has_pending_request ? <Badge status="pending">Pending request</Badge> : "—",
+    render: (member) =>
+      member.has_pending_request ? <Badge status="pending">Pending request</Badge> : "—",
   },
   {
     key: "status",

@@ -86,7 +86,9 @@ export default function ShareRegisterPage() {
       {register.data && register.data.items.length === 0 && (
         <EmptyState
           title={debouncedSearch ? "No matching members" : "No members holding shares"}
-          detail={debouncedSearch ? "Try another member name." : "There are no share holdings to show."}
+          detail={
+            debouncedSearch ? "Try another member name." : "There are no share holdings to show."
+          }
         />
       )}
       {register.data && register.data.items.length > 0 && (
@@ -106,7 +108,9 @@ export default function ShareRegisterPage() {
                   <tr key={item.member_id} className="border-b border-border">
                     <td className="p-3">{item.member_name}</td>
                     <td className="p-3">{numberFormat.format(item.shares_held)}</td>
-                    <td className="p-3"><Money kobo={item.value_kobo} /></td>
+                    <td className="p-3">
+                      <Money kobo={item.value_kobo} />
+                    </td>
                     <td className="p-3">{item.last_purchase_date ?? "No purchases"}</td>
                   </tr>
                 ))}

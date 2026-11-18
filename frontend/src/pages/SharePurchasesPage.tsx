@@ -56,7 +56,8 @@ export default function SharePurchasesPage() {
     savingsKobo,
   );
   const create = useMutation({
-    mutationFn: () => requestSharePurchase({ member_id: memberId, shares_count: Number(sharesCount) }),
+    mutationFn: () =>
+      requestSharePurchase({ member_id: memberId, shares_count: Number(sharesCount) }),
     onSuccess: async () => {
       setMemberId("");
       setSelectedMember(undefined);
@@ -65,7 +66,15 @@ export default function SharePurchasesPage() {
     },
   });
   const decision = useMutation({
-    mutationFn: ({ id, action, note }: { id: string; action: "approve" | "reject"; note?: string }) =>
+    mutationFn: ({
+      id,
+      action,
+      note,
+    }: {
+      id: string;
+      action: "approve" | "reject";
+      note?: string;
+    }) =>
       request(`/share-purchases/${id}/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -92,9 +101,15 @@ export default function SharePurchasesPage() {
     if (decision.isPending) return;
     const item = purchases.data?.items.find((entry) => entry.id === id);
     if (!item || item.requested_by === session.data?.user_id) return;
-    const note = action === "reject" ? window.prompt("Note for rejecting this share purchase:")?.trim() ?? "" : undefined;
+    const note =
+      action === "reject"
+        ? (window.prompt("Note for rejecting this share purchase:")?.trim() ?? "")
+        : undefined;
     if (action === "reject" && !note) return;
-    if (!window.confirm(`${action === "approve" ? "Approve" : "Reject"} ${item.shares_count} shares?`)) return;
+    if (
+      !window.confirm(`${action === "approve" ? "Approve" : "Reject"} ${item.shares_count} shares?`)
+    )
+      return;
     decision.mutate({ id, action, note });
   };
 
@@ -158,7 +173,12 @@ export default function SharePurchasesPage() {
             </div>
           </div>
           <p className="mt-3 text-sm text-muted">
-            Estimated total: {requestState.amountKobo !== undefined ? <Money kobo={requestState.amountKobo} /> : "Enter a valid share count"}
+            Estimated total:{" "}
+            {requestState.amountKobo !== undefined ? (
+              <Money kobo={requestState.amountKobo} />
+            ) : (
+              "Enter a valid share count"
+            )}
           </p>
           {requestState.overSavings && (
             <p role="alert" className="mt-2 text-sm text-danger">
@@ -239,9 +259,13 @@ export default function SharePurchasesPage() {
                     <tr key={item.id} className="border-b border-border">
                       <td className="p-3">{item.member_name}</td>
                       <td className="p-3">{item.shares_count}</td>
-                      <td className="p-3"><Money kobo={item.amount_kobo} /></td>
+                      <td className="p-3">
+                        <Money kobo={item.amount_kobo} />
+                      </td>
                       <td className="p-3">{item.requester_name}</td>
-                      <td className="p-3"><DateTime value={item.created_at} /></td>
+                      <td className="p-3">
+                        <DateTime value={item.created_at} />
+                      </td>
                       <td className="p-3">
                         {item.status !== "pending" ? (
                           <Badge>{item.status}</Badge>

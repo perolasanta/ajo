@@ -313,6 +313,38 @@ test("Share register navigation opens its read-only route", () => {
   assert.equal(navigationTarget("Share register", 0), "/share-register");
 });
 
+test("Dividends navigation is visible only to treasurer, admin, auditor and committee", () => {
+  const allowedRoles = ["treasurer", "admin", "auditor", "committee"];
+  assert.deepEqual(navigation.find((item) => item.name === "Dividends")?.roles, allowedRoles);
+  for (const role of allowedRoles) {
+    assert.ok(visibleNavigation([role]).some((item) => item.name === "Dividends"));
+    assert.equal(getRouteDecision([role], "/dividends").allowed, true);
+    assert.equal(getRouteDecision([role], "/dividends/run-id").allowed, true);
+  }
+  for (const role of ["officer", "member"]) {
+    assert.equal(
+      visibleNavigation([role]).some((item) => item.name === "Dividends"),
+      false,
+    );
+    assert.equal(getRouteDecision([role], "/dividends").allowed, false);
+    assert.equal(getRouteDecision([role], "/dividends/run-id").allowed, false);
+  }
+});
+
+test("Dividends badge counts only admin approval actions", () => {
+  const summary = { dividends: { awaiting_approval: 3 } };
+  assert.equal(menuActionCount("Dividends", summary, ["admin"]), 3);
+  assert.equal(menuActionCount("Dividends", summary, ["treasurer"]), 0);
+  assert.equal(menuActionCount("Dividends", summary, ["officer"]), 0);
+  assert.equal(menuActionCount("Dividends", summary, ["auditor"]), 0);
+  assert.equal(menuActionCount("Dividends", summary, ["committee"]), 0);
+});
+
+test("Dividends action badge deep-links to the needs-approval list", () => {
+  assert.match(navigationTarget("Dividends", 1), /^\/dividends\?action=needed$/);
+  assert.equal(navigationTarget("Dividends", 0), "/dividends");
+});
+
 test("mobile menu badge caps totals at 99+", () => {
   const roles = ["treasurer"];
   const total = totalVisibleActionCount(

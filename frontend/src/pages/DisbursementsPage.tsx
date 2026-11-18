@@ -112,8 +112,19 @@ export default function DisbursementsPage() {
   });
   const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
   const roles = session.data?.roles ?? [];
-  const actionCount = (roles.includes("admin") ? (summary.data?.disbursements?.awaiting_authorization ?? 0) + (summary.data?.disbursements?.awaiting_confirmation ?? 0) : 0) + (roles.includes("treasurer") ? summary.data?.disbursements?.ready_to_record ?? 0 : 0);
-  useEffect(() => { if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) { const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next, { replace: true }); } }, [actionCount, searchParams, setSearchParams]);
+  const actionCount =
+    (roles.includes("admin")
+      ? (summary.data?.disbursements?.awaiting_authorization ?? 0) +
+        (summary.data?.disbursements?.awaiting_confirmation ?? 0)
+      : 0) +
+    (roles.includes("treasurer") ? (summary.data?.disbursements?.ready_to_record ?? 0) : 0);
+  useEffect(() => {
+    if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) {
+      const next = new URLSearchParams(searchParams);
+      next.set("action", "needed");
+      setSearchParams(next, { replace: true });
+    }
+  }, [actionCount, searchParams, setSearchParams]);
   const disbursements = useQuery({
     queryKey: ["disbursements", debouncedSearch, status, action, page],
     queryFn: () =>
@@ -188,7 +199,34 @@ export default function DisbursementsPage() {
           )}
         </section>
       )}
-      <div className="mb-4 flex gap-2" role="tablist" aria-label="Disbursement list view"><Button role="tab" aria-selected={action === "needed"} variant={action === "needed" ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next); }}>Needs my action{actionCount ? ` (${actionCount})` : ""}</Button><Button role="tab" aria-selected={!action} variant={!action ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.delete("action"); setSearchParams(next); }}>All</Button></div>
+      <div className="mb-4 flex gap-2" role="tablist" aria-label="Disbursement list view">
+        <Button
+          role="tab"
+          aria-selected={action === "needed"}
+          variant={action === "needed" ? "primary" : "secondary"}
+          onClick={() => {
+            userSelectedActionTab.current = true;
+            const next = new URLSearchParams(searchParams);
+            next.set("action", "needed");
+            setSearchParams(next);
+          }}
+        >
+          Needs my action{actionCount ? ` (${actionCount})` : ""}
+        </Button>
+        <Button
+          role="tab"
+          aria-selected={!action}
+          variant={!action ? "primary" : "secondary"}
+          onClick={() => {
+            userSelectedActionTab.current = true;
+            const next = new URLSearchParams(searchParams);
+            next.delete("action");
+            setSearchParams(next);
+          }}
+        >
+          All
+        </Button>
+      </div>
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           aria-label="Search disbursements"
@@ -234,7 +272,21 @@ export default function DisbursementsPage() {
         <>
           <ResponsiveTable
             data={disbursements.data.items}
-            columns={action ? [{ key: "action", header: "Action", role: "meta", render: () => <span className="font-medium text-amber-800">Needs my action</span> }, ...columns] : columns}
+            columns={
+              action
+                ? [
+                    {
+                      key: "action",
+                      header: "Action",
+                      role: "meta",
+                      render: () => (
+                        <span className="font-medium text-amber-800">Needs my action</span>
+                      ),
+                    },
+                    ...columns,
+                  ]
+                : columns
+            }
             getRowKey={(item) => item.id}
           />
           <div className="mt-4 flex items-center justify-between gap-3 text-sm">

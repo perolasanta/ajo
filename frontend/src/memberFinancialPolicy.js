@@ -17,7 +17,5 @@ export function canApproveWithdrawal(roles) {
 
 /** @param {readonly string[]} roles */
 export function canSeeMemberFinancialActions(roles) {
-  return (
-    canRecordContribution(roles) || canRequestWithdrawal(roles) || canApproveWithdrawal(roles)
-  );
+  return canRecordContribution(roles) || canRequestWithdrawal(roles) || canApproveWithdrawal(roles);
 }
