@@ -15,6 +15,7 @@ DEFAULT_CHART = (
     ("member_savings", "Withdrawable member savings", "liability"),
     ("unallocated_receipts", "Unallocated receipts", "liability"),
     ("member_shares", "Compulsory member shares", "equity"),
+    ("dividends_declared", "Dividends declared", "equity"),
     ("dues_income", "Dues income", "income"),
     ("interest_income", "Interest income", "income"),
     ("fee_income", "Fee income", "income"),
