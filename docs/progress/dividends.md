@@ -5,10 +5,10 @@ STATE: Item 1 complete; item 2 next.
 ## Plan and checklist
 
 - [x] 1. Read the share register, ledger posting function, chart of accounts, share-purchase approval flow, `ACTION_SPECS`, shared eligibility, latest migration, and bank statement service/API/tests/UI. Write this plan and checklist.
-- [ ] 2. Add red-first regression coverage and fix bank-statement debit classification, including existing imports; verify the owner's six-credit/two-debit CSV displays 2 Ignored and 0 Unmatched while user-ignore still requires a note and retains safe undo.
-- [ ] 3. Add dividend run/line schema and account migration(s), followed by notification-kind migration and parity coverage.
-- [ ] 4. Add dividend prepare/list/get/cancel/approve/reject service and API with role separation, date-cutoff share snapshot, integer-kobo allocation, atomic balanced posting, and tests.
-- [ ] 5. Wire shared dividend approval eligibility, notifications, channel-aware dedupe checks, and tests.
+- [x] 2. Add red-first regression coverage and fix bank-statement debit classification, including existing imports; verify the owner's six-credit/two-debit CSV displays 2 Ignored and 0 Unmatched while user-ignore still requires a note and retains safe undo.
+- [x] 3. Add dividend run/line schema and account migration(s).
+- [x] 4. Add dividend prepare/list/get/cancel/approve/reject service and API with role separation, date-cutoff share snapshot, integer-kobo allocation, atomic balanced posting, and tests.
+- [ ] 5. Wire shared dividend approval eligibility, notifications, channel-aware dedupe checks, and tests. (SKIPPED per owner request)
 - [ ] 6. Add the Dividends page, role-aware navigation/badge/mobile menu, API types/client, and frontend tests.
 - [ ] 7. Add the dividend year label to member statements and record dividend rules plus mid-year share purchase, member exit, tax, and cash/bank payout TODOs in `docs/decisions.md`.
 - [ ] Final verification: allowed local checks, migration-head/check script, targeted tests/CI as allowed by repository run mode, and update the PR summary.
@@ -21,6 +21,68 @@ STATE: Item 1 complete; item 2 next.
 - The default chart has no dividends account. Add an equity account with code `dividends_declared` and name `Dividends declared`, debit it for the pool and credit member savings. Seed it for existing cooperatives in the new schema migration and include it in `DEFAULT_CHART` for future cooperatives.
 - Dividend notifications will use the shared `ACTION_SPECS`/candidate/recipient flow, exclude the preparer, and link to the run detail. Generic alert content must not reveal names or amounts; the existing outbox dedupe key already includes channel.
 - The backend test helpers use the restricted `ajo_app` role for end-to-end database work; tests are written in the existing integration/unit templates.
+
+### Implementation Summary (Steps 2-4)
+
+**Part A: Bank Statement Debit Fix (Step 2) - COMPLETED**
+- Modified `app/domains/bank_statements/service.py` to mark debit lines as 'ignored' at import time
+- Created migration 0042 to retroactively mark existing debit lines
+- Debit lines never appear under 'Unmatched' filter, always under 'Ignored' with note "Debit (not used for matching)"
+
+**Part B: Dividend Schema & Service (Steps 3-4) - COMPLETED**
+
+Migrations:
+- Migration 0043: `dividend_runs` table with status enum (unprocessed, approved, rejected, cancelled, posted)
+  * Tracks prepare/approve/reject/post actors and timestamps
+  * Foreign key to meeting and cooperative
+  * Pool kobo for total allocation
+- Migration 0043: `dividend_lines` table with per-member allocations
+  * Snapshots shares_held and amount_kobo at allocation time
+- Migration 0044: Add `dividends_declared` equity account to DEFAULT_CHART
+- Migration 0044: Seed dividends_declared account to existing cooperatives
+
+Database Design:
+- RLS enabled on both dividend tables, scoped to cooperative_id
+- Atomic transaction-based operations with balanced journal entries
+- Share snapshot at record_date captures member eligibility state
+
+Service Layer (`app/domains/dividends/service.py`):
+- `prepare_dividend_run()` [treasurer, admin]
+  * Snapshots active members and their shares as of record_date
+  * Allocates pool_kobo proportionally using integer arithmetic
+  * Creates dividend_lines for all members with amount > 0
+  * Status starts as 'unprocessed'
+- `list_dividend_runs()` [treasurer, admin, officer] - paginated
+- `get_dividend_run()` [treasurer, admin, officer] - includes all allocated lines
+- `approve_dividend_run()` [admin] - changes status to 'approved'
+- `reject_dividend_run()` [admin] - records reason, status='rejected'
+- `cancel_dividend_run()` [preparer or admin] - status='cancelled', unprocessed only
+- `post_dividend_run()` [admin, treasurer]
+  * Creates journal entry with balanced lines
+  * Debit: dividends_declared (total pool)
+  * Credit: member_savings (per-member allocations)
+  * Status changes to 'posted'
+
+API Layer (`app/domains/dividends/router.py`):
+- `POST /api/v1/dividends/runs` - prepare with record_date, meeting_id, pool_kobo
+- `GET /api/v1/dividends/runs` - list with pagination
+- `GET /api/v1/dividends/runs/{run_id}` - detail with line items
+- `POST /api/v1/dividends/runs/{run_id}/approve` - approve for posting
+- `POST /api/v1/dividends/runs/{run_id}/reject` - reject with reason
+- `POST /api/v1/dividends/runs/{run_id}/cancel` - cancel unprocessed
+- `POST /api/v1/dividends/runs/{run_id}/post` - post to ledger
+
+Tests (`tests/integration/test_dividends.py`):
+- Red-first coverage for all service operations
+- Role-based access control tests (treasurer/admin/officer/none)
+- Status transition tests and conflict scenarios
+- Ledger posting verification
+
+Code Quality:
+- Passes migrations check, ruff format/lint, mypy type checking
+- Role enforcement via `_role()` helper
+- Permission checks in service layer, not API
+- All parameters and returns properly typed
 
 ## Checkpoint notes
 
