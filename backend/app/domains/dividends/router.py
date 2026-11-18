@@ -22,8 +22,9 @@ class PrepareDividendRunRequest(BaseModel):
     record_date: date = Field(
         description="Effective date for share snapshot (date cutoff for membership)"
     )
-    declared_by_meeting_id: str = Field(
-        description="UUID of the meeting that declared the dividend"
+    meeting_or_resolution: str | None = Field(
+        default=None,
+        description="Optional meeting or resolution reference, e.g. 'AGM 2026'",
     )
     pool_kobo: int = Field(description="Total dividend pool in integer kobo", gt=0)
     financial_year: int = Field(
@@ -48,7 +49,7 @@ class DividendRunResponse(BaseModel):
 
     run_id: str
     record_date: str
-    declared_by_meeting_id: str
+    meeting_or_resolution: str | None = None
     pool_kobo: int
     prepared_by: str
     prepared_at: str
@@ -102,7 +103,7 @@ async def prepare_dividend_run(
     result = await dividend_service.prepare_dividend_run(
         current,
         record_date=request.record_date,
-        declared_by_meeting_id=uuid.UUID(request.declared_by_meeting_id),
+        meeting_or_resolution=request.meeting_or_resolution,
         pool_kobo=request.pool_kobo,
         financial_year=request.financial_year,
     )

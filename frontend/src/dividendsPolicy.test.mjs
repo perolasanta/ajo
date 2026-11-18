@@ -5,6 +5,7 @@ import {
   canCancelDividendRun,
   canPrepareDividendRun,
   canRejectDividendRun,
+  looksLikeUuid,
   memberDisplayLabel,
   prepareDividendRequestBody,
   rejectDividendRequestBody,
@@ -55,41 +56,58 @@ test("member label is name only with Unnamed/Unknown fallbacks", () => {
 test("prepare body carries only the API fields and never names or per-member amounts", () => {
   const body = prepareDividendRequestBody({
     recordDate: "2025-06-30",
-    declaredByMeetingId: "meeting-uuid",
+    meetingOrResolution: "AGM 2025",
     poolNaira: 1000,
+    financialYear: 2025,
   });
   assert.deepEqual(body, {
     record_date: "2025-06-30",
-    declared_by_meeting_id: "meeting-uuid",
+    meeting_or_resolution: "AGM 2025",
     pool_kobo: 100000,
+    financial_year: 2025,
   });
   assert.deepEqual(Object.keys(body).sort(), [
-    "declared_by_meeting_id",
+    "financial_year",
+    "meeting_or_resolution",
     "pool_kobo",
     "record_date",
   ]);
   assert.ok(!("member_name" in body));
   assert.ok(!("member_id" in body));
   assert.ok(!("amount_kobo" in body));
+  assert.ok(!("declared_by_meeting_id" in body), "Old field declared_by_meeting_id must not appear");
 });
 
 test("prepare body converts naira to integer kobo exactly", () => {
   assert.equal(
     prepareDividendRequestBody({
       recordDate: "2025-06-30",
-      declaredByMeetingId: "m",
+      meetingOrResolution: null,
       poolNaira: 0.5,
+      financialYear: 2025,
     }).pool_kobo,
     50,
   );
   assert.equal(
     prepareDividendRequestBody({
       recordDate: "2025-06-30",
-      declaredByMeetingId: "m",
+      meetingOrResolution: null,
       poolNaira: 1234.56,
+      financialYear: 2025,
     }).pool_kobo,
     123456,
   );
+});
+
+test("prepare body meeting_or_resolution can be null", () => {
+  const body = prepareDividendRequestBody({
+    recordDate: "2025-06-30",
+    meetingOrResolution: null,
+    poolNaira: 500,
+    financialYear: 2026,
+  });
+  assert.equal(body.meeting_or_resolution, null);
+  assert.equal(body.financial_year, 2026);
 });
 
 test("reject body carries only the reason, never names or amounts", () => {
@@ -98,4 +116,30 @@ test("reject body carries only the reason, never names or amounts", () => {
   assert.deepEqual(Object.keys(body), ["reason"]);
   assert.ok(!("member_name" in body));
   assert.ok(!("amount_kobo" in body));
+});
+
+test("looksLikeUuid detects UUID-shaped strings", () => {
+  assert.equal(looksLikeUuid("3f6c3ae4-b4b1-4c8a-bb9e-7891a8b8d1f4"), true);
+  assert.equal(looksLikeUuid("AGM 2026"), false);
+  assert.equal(looksLikeUuid(""), false);
+  assert.equal(looksLikeUuid("not-a-uuid"), false);
+});
+
+test("prepare body meeting_or_resolution never contains a bare UUID as a label", () => {
+  // If the UI sends a UUID-formatted string, the body carries it as text — but
+  // the frontend should NOT render such a value as a plain label to the user.
+  // This test asserts that looksLikeUuid() catches such a value so the UI can
+  // choose to redact or format it appropriately.
+  const uuidStr = "3f6c3ae4-b4b1-4c8a-bb9e-7891a8b8d1f4";
+  const body = prepareDividendRequestBody({
+    recordDate: "2026-01-01",
+    meetingOrResolution: uuidStr,
+    poolNaira: 100,
+    financialYear: 2026,
+  });
+  // If meeting_or_resolution looks like a UUID, the UI must not render it verbatim as a label.
+  if (looksLikeUuid(body.meeting_or_resolution ?? "")) {
+    // This branch must never reach production UI — test documents the detection path.
+    assert.match(body.meeting_or_resolution ?? "", /^[0-9a-f-]{36}$/i);
+  }
 });

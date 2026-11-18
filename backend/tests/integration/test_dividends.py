@@ -129,7 +129,7 @@ class TestDividendPrepare:
             await dividend_service.prepare_dividend_run(
                 officer,
                 record_date=date(2025, 12, 31),
-                declared_by_meeting_id=uuid.uuid4(),
+                meeting_or_resolution="AGM 2025",
                 pool_kobo=1_000_000,
                 financial_year=2025,
             )
@@ -143,19 +143,18 @@ class TestDividendPrepare:
 
         record_date = date(2025, 12, 31)
         pool_kobo = 1_000_000
-        meeting_id = uuid.uuid4()
 
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=record_date,
-            declared_by_meeting_id=meeting_id,
+            meeting_or_resolution="AGM 2025",
             pool_kobo=pool_kobo,
             financial_year=2025,
         )
 
         assert run["status"] == "unprocessed"
         assert run["record_date"] == record_date.isoformat()
-        assert run["declared_by_meeting_id"] == str(meeting_id)
+        assert run["meeting_or_resolution"] == "AGM 2025"
         assert run["prepared_by"] == str(treasurer_id)
         assert run["pool_kobo"] == pool_kobo
         assert "run_id" in run
@@ -172,7 +171,7 @@ class TestDividendApprove:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
             financial_year=2025,
         )
@@ -190,7 +189,7 @@ class TestDividendApprove:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
             financial_year=2025,
         )
@@ -209,7 +208,7 @@ class TestDividendApprove:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
             financial_year=2025,
         )
@@ -233,7 +232,7 @@ class TestDividendReject:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
             financial_year=2025,
         )
@@ -259,7 +258,7 @@ class TestDividendCancel:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
             financial_year=2025,
         )
@@ -313,7 +312,7 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
             financial_year=2025,
         )
@@ -356,7 +355,7 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=500_000,
             financial_year=2025,
         )
@@ -389,7 +388,7 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=2_000_000,
             financial_year=2025,
         )
@@ -429,7 +428,7 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
             financial_year=2025,
         )
