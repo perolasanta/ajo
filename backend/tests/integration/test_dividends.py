@@ -35,7 +35,7 @@ async def db(test_database: Any) -> asyncpg.Connection:
 
 async def setup_dividend_tenant(
     conn: asyncpg.Connection,
-) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
     """Set up a test tenant with treasurer, admin, officer, and auditor roles."""
     seed = await create_tenant(
         conn,
@@ -48,9 +48,8 @@ async def setup_dividend_tenant(
     treasurer_id = seed.user_ids[0]
     admin_id = seed.user_ids[1]
     officer_id = seed.user_ids[2] if len(seed.user_ids) > 2 else treasurer_id
-    auditor_id = seed.user_ids[3] if len(seed.user_ids) > 3 else treasurer_id
 
-    return cid, treasurer_id, admin_id, officer_id, auditor_id
+    return cid, treasurer_id, admin_id, officer_id
 
 
 def treasurer_session(cid: uuid.UUID, uid: uuid.UUID) -> CurrentSession:

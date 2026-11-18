@@ -587,8 +587,8 @@ async def import_statement_file(
                     """
                     INSERT INTO bank_statement_lines (
                         id, cooperative_id, import_id, line_date, narration, reference,
-                        credit_kobo, debit_kobo, fingerprint, status
-                    ) VALUES (:id, :cid, :import_id, :line_date, :narration, :reference, :credit_kobo, :debit_kobo, :fingerprint, 'unmatched')
+                        credit_kobo, debit_kobo, fingerprint, status, ignored_note, decided_by
+                    ) VALUES (:id, :cid, :import_id, :line_date, :narration, :reference, :credit_kobo, :debit_kobo, :fingerprint, :status, :ignored_note, :decided_by)
                     """
                 ),
                 [
@@ -602,6 +602,11 @@ async def import_statement_file(
                         "credit_kobo": row.credit_kobo,
                         "debit_kobo": row.debit_kobo,
                         "fingerprint": row.fingerprint,
+                        "status": "ignored" if row.debit_kobo > 0 else "unmatched",
+                        "ignored_note": "Debit (not used for matching)"
+                        if row.debit_kobo > 0
+                        else None,
+                        "decided_by": current.user_id if row.debit_kobo > 0 else None,
                     }
                     for row in new_rows
                 ],
