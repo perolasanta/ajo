@@ -156,7 +156,7 @@ async def list_dividend_runs(
     Raises:
         Forbidden: If user lacks required role
     """
-    _role(current, {"treasurer", "admin", "officer"})
+    _role(current, {"treasurer", "admin", "officer", "auditor", "committee"})
 
     cid = current.cooperative_id
     offset = (page - 1) * page_size
@@ -209,7 +209,7 @@ async def get_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[s
         NotFound: If run does not exist in this cooperative
         Forbidden: If user lacks read permission
     """
-    _role(current, {"treasurer", "admin", "officer"})
+    _role(current, {"treasurer", "admin", "officer", "auditor", "committee"})
 
     cid = current.cooperative_id
 

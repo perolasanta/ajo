@@ -313,15 +313,15 @@ test("Share register navigation opens its read-only route", () => {
   assert.equal(navigationTarget("Share register", 0), "/share-register");
 });
 
-test("Dividends navigation is visible only to treasurer and admin", () => {
-  const allowedRoles = ["treasurer", "admin"];
+test("Dividends navigation is visible only to treasurer, admin, auditor and committee", () => {
+  const allowedRoles = ["treasurer", "admin", "auditor", "committee"];
   assert.deepEqual(navigation.find((item) => item.name === "Dividends")?.roles, allowedRoles);
   for (const role of allowedRoles) {
     assert.ok(visibleNavigation([role]).some((item) => item.name === "Dividends"));
     assert.equal(getRouteDecision([role], "/dividends").allowed, true);
     assert.equal(getRouteDecision([role], "/dividends/run-id").allowed, true);
   }
-  for (const role of ["officer", "auditor", "committee", "member"]) {
+  for (const role of ["officer", "member"]) {
     assert.equal(
       visibleNavigation([role]).some((item) => item.name === "Dividends"),
       false,

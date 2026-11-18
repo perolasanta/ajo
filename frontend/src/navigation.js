@@ -37,7 +37,7 @@ export const navigation = [
   {
     name: "Dividends",
     path: "/dividends",
-    roles: ["treasurer", "admin"],
+    roles: ["treasurer", "admin", "auditor", "committee"],
   },
   {
     name: "Loans",
