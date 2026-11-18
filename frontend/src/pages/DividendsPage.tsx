@@ -4,12 +4,14 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   approveDividendRun,
   cancelDividendRun,
+  getEffectivePolicy,
   getDividendRun,
   getDividendRuns,
   getMembers,
   prepareDividendRun,
   rejectDividendRun,
   request,
+  type SettingsPolicyVersion,
 } from "../api/client";
 import {
   canApproveDividendRun,
@@ -17,8 +19,8 @@ import {
   canPrepareDividendRun,
   canRejectDividendRun,
   memberDisplayLabel,
-  prepareDividendRequestBody,
 } from "../dividendsPolicy.mjs";
+import { periodsForFrequency, periodBoundaries, recordDateInPeriod } from "../dividendPeriods.mjs";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
@@ -68,7 +70,30 @@ function DividendRunList({ roles }: { roles: string[] }) {
   const [recordDate, setRecordDate] = useState("");
   const [poolNaira, setPoolNaira] = useState("");
   const [meetingOrResolution, setMeetingOrResolution] = useState("");
-  const [financialYear, setFinancialYear] = useState(String(new Date().getFullYear()));
+  const [selectedPeriodKey, setSelectedPeriodKey] = useState("");
+  const effectivePolicyQuery = useQuery({
+    queryKey: ["effective-policy"],
+    queryFn: () => getEffectivePolicy(),
+    enabled: canPrepareDividendRun(roles),
+  });
+  const frequency =
+    (effectivePolicyQuery.data as SettingsPolicyVersion | undefined)?.dividend_frequency ??
+    "annual";
+  const availablePeriods = periodsForFrequency(
+    frequency as "annual" | "half_yearly" | "quarterly" | "monthly",
+  );
+  // Default record date: end of period or today, whichever is earlier
+  const maxRecordDate = (() => {
+    if (!selectedPeriodKey) return "";
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const { end } = periodBoundaries(selectedPeriodKey);
+      const endStr = end.toISOString().slice(0, 10);
+      return endStr < today ? endStr : today;
+    } catch {
+      return today;
+    }
+  })();
 
   const runs = useQuery({
     queryKey: ["dividend-runs", page],
@@ -81,14 +106,13 @@ function DividendRunList({ roles }: { roles: string[] }) {
 
   const create = useMutation({
     mutationFn: () =>
-      prepareDividendRun(
-        prepareDividendRequestBody({
-          recordDate,
-          meetingOrResolution: meetingOrResolution || null,
-          poolNaira: Number(poolNaira),
-          financialYear: Number(financialYear),
-        }),
-      ),
+      prepareDividendRun({
+        record_date: recordDate,
+        meeting_or_resolution: meetingOrResolution || null,
+        pool_kobo: Math.round((Number(poolNaira) || 0) * 100),
+        period_key: selectedPeriodKey || null,
+        financial_year: selectedPeriodKey ? null : Number(new Date().getFullYear()),
+      }),
     onSuccess: async (run) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["dividend-runs"] }),
@@ -99,9 +123,13 @@ function DividendRunList({ roles }: { roles: string[] }) {
   });
 
   const poolValid = Number(poolNaira) > 0;
-  const yearValid = Number(financialYear) > 2000 && Number(financialYear) < 2200;
+  const periodValid = selectedPeriodKey.length > 0;
+  const recordDateValid =
+    recordDate.length > 0 &&
+    (!selectedPeriodKey || recordDateInPeriod(recordDate, selectedPeriodKey)) &&
+    recordDate <= new Date().toISOString().slice(0, 10);
   const submit = () => {
-    if (create.isPending || !recordDate || !poolValid || !yearValid) return;
+    if (create.isPending || !recordDateValid || !poolValid || !periodValid) return;
     create.mutate();
   };
 
@@ -118,20 +146,38 @@ function DividendRunList({ roles }: { roles: string[] }) {
                 type="date"
                 className="mt-1 w-full rounded-control border border-border bg-white p-2"
                 value={recordDate}
+                max={maxRecordDate || new Date().toISOString().slice(0, 10)}
                 onChange={(event) => setRecordDate(event.target.value)}
               />
             </label>
             <label className="text-sm">
-              Financial year
-              <input
-                type="number"
-                min="2001"
-                max="2199"
-                step="1"
-                className="mt-1 w-full rounded-control border border-border p-2"
-                value={financialYear}
-                onChange={(event) => setFinancialYear(event.target.value)}
-              />
+              Period
+              <select
+                className="mt-1 w-full rounded-control border border-border bg-white p-2"
+                value={selectedPeriodKey}
+                onChange={(event) => {
+                  const key = event.target.value;
+                  setSelectedPeriodKey(key);
+                  // Auto-fill record date with period end or today
+                  if (key) {
+                    const today = new Date().toISOString().slice(0, 10);
+                    try {
+                      const { end } = periodBoundaries(key);
+                      const endStr = end.toISOString().slice(0, 10);
+                      setRecordDate(endStr < today ? endStr : today);
+                    } catch {
+                      setRecordDate(today);
+                    }
+                  }
+                }}
+              >
+                <option value="">— choose a period —</option>
+                {availablePeriods.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-sm">
               Pool (naira)
@@ -157,7 +203,7 @@ function DividendRunList({ roles }: { roles: string[] }) {
           </div>
           <Button
             className="mt-4"
-            disabled={create.isPending || !recordDate || !poolValid || !yearValid}
+            disabled={create.isPending || !recordDateValid || !poolValid || !periodValid}
             onClick={submit}
           >
             Prepare run
@@ -333,8 +379,7 @@ function DividendRunDetail({
   const totalShares = lines.reduce((sum, line) => sum + line.shares_held, 0);
   const totalDividend = lines.reduce((sum, line) => sum + line.amount_kobo, 0);
   // shares_held is now a share COUNT; compute naira per share
-  const perShareRate =
-    totalShares > 0 ? (data.pool_kobo / totalShares / 100).toFixed(4) : null;
+  const perShareRate = totalShares > 0 ? (data.pool_kobo / totalShares / 100).toFixed(4) : null;
 
   const preparedByMe = data.prepared_by === userId;
   const currentUserId = userId ?? "";
@@ -356,12 +401,8 @@ function DividendRunDetail({
       <Card>
         <div className="flex flex-wrap items-center gap-3">
           <Badge>{statusLabel(data.status)}</Badge>
-          {data.period_key && (
-            <span className="text-sm font-medium">{data.period_key}</span>
-          )}
-          <span className="text-sm text-muted">
-            Record date: {formatDate(data.record_date)}
-          </span>
+          {data.period_key && <span className="text-sm font-medium">{data.period_key}</span>}
+          <span className="text-sm text-muted">Record date: {formatDate(data.record_date)}</span>
           <span className="text-sm text-muted">
             Pool: <Money kobo={data.pool_kobo} />
           </span>
@@ -451,8 +492,7 @@ function DividendRunDetail({
             </table>
           </div>
           <p className="mt-3 text-sm text-muted">
-            Per-share rate:{" "}
-            {perShareRate !== null ? `₦${perShareRate} per share` : "\u2014"}
+            Per-share rate: {perShareRate !== null ? `₦${perShareRate} per share` : "\u2014"}
           </p>
         </Card>
       )}

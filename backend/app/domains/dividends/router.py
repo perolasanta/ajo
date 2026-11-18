@@ -27,8 +27,19 @@ class PrepareDividendRunRequest(BaseModel):
         description="Optional meeting or resolution reference, e.g. 'AGM 2026'",
     )
     pool_kobo: int = Field(description="Total dividend pool in integer kobo", gt=0)
-    financial_year: int = Field(
-        description="Calendar year for this dividend run (e.g. 2025)",
+    period_key: str | None = Field(
+        default=None,
+        description=(
+            "Period key computed by the frontend from the cooperative's dividend frequency: "
+            "'2026' (annual), '2026-H1' (half-yearly), '2026-Q3' (quarterly), '2026-M11' (monthly). "
+            "When omitted, falls back to financial_year for backward compatibility."
+        ),
+        min_length=4,
+        max_length=10,
+    )
+    financial_year: int | None = Field(
+        default=None,
+        description="Deprecated: calendar year. Use period_key instead.",
         gt=2000,
         lt=2200,
     )
@@ -100,12 +111,21 @@ async def prepare_dividend_run(
 
     Requires: treasurer or admin role
     """
+    # Resolve period_key: new clients send it directly; old clients send financial_year
+    if request.period_key:
+        period_key = request.period_key
+    elif request.financial_year:
+        period_key = str(request.financial_year)
+    else:
+        from app.core.errors import UnprocessableEntity  # noqa: PLC0415
+
+        raise UnprocessableEntity("Either period_key or financial_year is required")
     result = await dividend_service.prepare_dividend_run(
         current,
         record_date=request.record_date,
         meeting_or_resolution=request.meeting_or_resolution,
         pool_kobo=request.pool_kobo,
-        financial_year=request.financial_year,
+        period_key=period_key,
     )
     return DividendRunResponse(**result)
 

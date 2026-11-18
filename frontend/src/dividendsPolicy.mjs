@@ -67,7 +67,12 @@ export function memberDisplayLabel(member) {
  * Carries only the API-allowed fields — never member names or per-member amounts.
  * @param {{ recordDate: string, meetingOrResolution: string | null | undefined, poolNaira: number, financialYear: number }} args
  */
-export function prepareDividendRequestBody({ recordDate, meetingOrResolution, poolNaira, financialYear }) {
+export function prepareDividendRequestBody({
+  recordDate,
+  meetingOrResolution,
+  poolNaira,
+  financialYear,
+}) {
   return {
     record_date: recordDate,
     meeting_or_resolution: meetingOrResolution ?? null,

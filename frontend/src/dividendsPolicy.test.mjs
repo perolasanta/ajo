@@ -75,7 +75,10 @@ test("prepare body carries only the API fields and never names or per-member amo
   assert.ok(!("member_name" in body));
   assert.ok(!("member_id" in body));
   assert.ok(!("amount_kobo" in body));
-  assert.ok(!("declared_by_meeting_id" in body), "Old field declared_by_meeting_id must not appear");
+  assert.ok(
+    !("declared_by_meeting_id" in body),
+    "Old field declared_by_meeting_id must not appear",
+  );
 });
 
 test("prepare body converts naira to integer kobo exactly", () => {

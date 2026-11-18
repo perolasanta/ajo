@@ -25,6 +25,11 @@ export function prepareDividendRequestBody(args: {
   meetingOrResolution: string | null | undefined;
   poolNaira: number;
   financialYear: number;
-}): { record_date: string; meeting_or_resolution: string | null; pool_kobo: number; financial_year: number };
+}): {
+  record_date: string;
+  meeting_or_resolution: string | null;
+  pool_kobo: number;
+  financial_year: number;
+};
 export function rejectDividendRequestBody(reason: string): { reason: string };
 export function looksLikeUuid(value: string): boolean;

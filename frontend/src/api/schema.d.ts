@@ -487,7 +487,8 @@ export type PrepareDividendRunRequest = {
   record_date: string;
   meeting_or_resolution: string | null;
   pool_kobo: number;
-  financial_year: number;
+  period_key?: string | null;
+  financial_year?: number | null;
 };
 
 export type RejectDividendRunRequest = { reason: string };

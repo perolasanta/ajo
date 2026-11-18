@@ -12,6 +12,7 @@ Tests cover:
 - one run per period for each frequency
 - legacy runs still display (period_key=None → year from record_date)
 """
+
 from __future__ import annotations
 
 import uuid
@@ -52,9 +53,7 @@ def _session(cid: uuid.UUID, uid: uuid.UUID, role: str = "admin") -> CurrentSess
 
 
 async def _tenant(conn: asyncpg.Connection) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
-    seed = await create_tenant(
-        conn, name="Freq test", slug_prefix="freq", roles=("admin", "admin")
-    )
+    seed = await create_tenant(conn, name="Freq test", slug_prefix="freq", roles=("admin", "admin"))
     return seed.cooperative_id, seed.user_ids[0], seed.user_ids[1]
 
 
@@ -132,6 +131,8 @@ async def test_propose_policy_defaults_frequency_to_annual(
             "min_savings_kobo": 0,
             "loan_to_savings_multiple_x100": 300,
             "interest_method": "reducing_balance",
+            "confirmation_expiry_minutes": 1440,
+            "otp_validity_seconds": 300,
         },
         "initial policy",
     )
@@ -162,6 +163,8 @@ async def test_propose_policy_stores_valid_frequency(
                 "min_savings_kobo": 0,
                 "loan_to_savings_multiple_x100": 300,
                 "interest_method": "reducing_balance",
+                "confirmation_expiry_minutes": 1440,
+                "otp_validity_seconds": 300,
                 "dividend_frequency": freq,
             },
             f"Set frequency {freq}",
@@ -193,6 +196,8 @@ async def test_propose_policy_rejects_invalid_frequency(
                 "min_savings_kobo": 0,
                 "loan_to_savings_multiple_x100": 300,
                 "interest_method": "reducing_balance",
+                "confirmation_expiry_minutes": 1440,
+                "otp_validity_seconds": 300,
                 "dividend_frequency": "weekly",
             },
             "Bad frequency",
@@ -214,7 +219,7 @@ async def test_get_effective_policy_returns_dividend_frequency(
 
 
 async def _setup_coop(conn: asyncpg.Connection) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
-    """Return (cid, treasurer_id, admin_id) with no active member (just the run table test)."""
+    """Return (cid, treasurer_id, admin_id).  Minimal dividend run setup."""
     seed = await create_tenant(
         conn,
         name="Period test",
@@ -224,35 +229,18 @@ async def _setup_coop(conn: asyncpg.Connection) -> tuple[uuid.UUID, uuid.UUID, u
         member_status="active",
     )
     cid = seed.cooperative_id
-    # Seed the minimum accounts
+    # Insert the two accounts the service requires (code-keyed lookup)
     divs_acc = uuid.uuid4()
     sav_acc = uuid.uuid4()
     shr_acc = uuid.uuid4()
-    async with conn.transaction():
-        await conn.execute("SELECT set_config('app.cooperative_id',$1,true)", str(cid))
-        await conn.executemany(
-            "INSERT INTO accounts(cooperative_id,id,code,name,account_type)"
-            " VALUES($1,$2,$3,$4,$5)",
-            [
-                (cid, divs_acc, "5100", "Dividends declared", "expense"),
-                (cid, sav_acc, "2100", "Member savings", "liability"),
-                (cid, shr_acc, "3100", "Share capital", "equity"),
-            ],
-        )
-        await conn.execute(
-            "INSERT INTO cooperative_settings(cooperative_id,dividends_account_id,"
-            "savings_account_id,share_capital_account_id,share_unit_price_kobo)"
-            " VALUES($1,$2,$3,$4,100)"
-            " ON CONFLICT(cooperative_id) DO UPDATE SET"
-            " dividends_account_id=EXCLUDED.dividends_account_id,"
-            " savings_account_id=EXCLUDED.savings_account_id,"
-            " share_capital_account_id=EXCLUDED.share_capital_account_id,"
-            " share_unit_price_kobo=EXCLUDED.share_unit_price_kobo",
-            cid,
-            divs_acc,
-            sav_acc,
-            shr_acc,
-        )
+    await conn.executemany(
+        "INSERT INTO accounts(cooperative_id,id,code,name,account_type) VALUES($1,$2,$3,$4,$5)",
+        [
+            (cid, divs_acc, "dividends_declared", "Dividends declared", "equity"),
+            (cid, sav_acc, "member_savings", "Member savings", "liability"),
+            (cid, shr_acc, "member_shares", "Member shares", "equity"),
+        ],
+    )
     return cid, seed.user_ids[0], seed.user_ids[1]
 
 

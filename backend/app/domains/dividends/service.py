@@ -47,6 +47,7 @@ async def _post_entry(
     pool_kobo: int,
     record_date: date,
     actor_id: uuid.UUID,
+    period_key: str | None = None,
 ) -> uuid.UUID:
     """Post a balanced journal entry for the dividend run.
 
@@ -81,7 +82,6 @@ async def _post_entry(
     if not lines:
         raise Conflict("Dividend run has no allocated lines")
 
-    financial_year = record_date.year
     journal_lines: list[dict[str, Any]] = [
         {
             "account_id": str(accounts["dividends_declared"]),
@@ -106,7 +106,7 @@ async def _post_entry(
             "cid": cid,
             "date": record_date,
             "source": run_id,
-            "description": f"Dividend {financial_year}",
+            "description": f"Dividend {period_key if period_key else record_date.year}",
             "actor": actor_id,
             "key": f"dividend:{run_id}",
             "lines": json.dumps(journal_lines),
@@ -126,7 +126,8 @@ async def prepare_dividend_run(
     record_date: date,
     meeting_or_resolution: str | None,
     pool_kobo: int,
-    financial_year: int,
+    period_key: str | None = None,
+    financial_year: int | None = None,  # deprecated fallback
 ) -> dict[str, Any]:
     """Prepare a dividend run with share snapshot at record_date.
 
@@ -135,9 +136,8 @@ async def prepare_dividend_run(
         record_date: Effective date for the share snapshot.
         meeting_or_resolution: Free-text reference (e.g. "AGM 2026"), optional.
         pool_kobo: Total dividend pool in integer kobo (must be positive).
-        financial_year: Calendar year for this run (e.g. 2025).  Stored as
-            period_key; only one active run per (cooperative, period_key) is
-            allowed.
+        period_key: Period key string, e.g. '2026', '2026-Q3', '2026-H1',
+            '2026-M11'. Only one active run per (cooperative, period_key) allowed.
 
     Returns:
         Dividend run dict with status='unprocessed'.
@@ -150,8 +150,12 @@ async def prepare_dividend_run(
     _role(current, {"treasurer", "admin"})
     cid = current.cooperative_id
     uid = current.user_id
-    period_key = str(financial_year)
-
+    # Resolve period_key: accept explicit value or fall back to financial_year / year from date
+    if period_key is None:
+        if financial_year is not None:
+            period_key = str(financial_year)
+        else:
+            period_key = str(record_date.year)
     async with transaction(cid) as session:
         # Advisory lock scoped to (cooperative, period) prevents races between
         # two simultaneous prepares for the same period.
@@ -171,7 +175,7 @@ async def prepare_dividend_run(
         )
         row = existing.first()
         if row:
-            raise Conflict(f"A dividend run for {financial_year} already exists ({row[0]})")
+            raise Conflict(f"A dividend run for {period_key} already exists ({row[0]})")
 
         # Fetch the cooperative's share unit price so we can store share COUNT.
         unit_price_naira = await session.scalar(
@@ -501,7 +505,7 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
     async with transaction(cid) as session:
         status_result = await session.execute(
             text(
-                """SELECT status, pool_kobo, record_date, journal_entry_id
+                """SELECT status, pool_kobo, record_date, journal_entry_id, period_key
                    FROM dividend_runs
                    WHERE id = :run_id AND cooperative_id = :cid
                    FOR UPDATE"""
@@ -511,7 +515,7 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
         row = status_result.first()
         if not row:
             raise NotFound(f"Dividend run {run_id} not found")
-        status, pool_kobo, record_date, existing_entry_id = row
+        status, pool_kobo, record_date, existing_entry_id, run_period_key = row
         if status == "posted" and existing_entry_id is not None:
             # Already posted — return current state (idempotent).
             run_dict = await _get_dividend_run_dict(session, cid, run_id)
@@ -527,6 +531,7 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
             pool_kobo=pool_kobo,
             record_date=record_date,
             actor_id=uid,
+            period_key=run_period_key,
         )
         await session.execute(
             text(
