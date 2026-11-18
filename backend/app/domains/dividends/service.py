@@ -1,4 +1,15 @@
-"""Dividend run service: prepare, approve, reject, cancel, and post dividend allocations."""
+"""Dividend run service: prepare, approve, reject, cancel, and post dividend allocations.
+
+Change log (fix/dividends-ledger-and-periods):
+- approve_dividend_run now posts the balanced journal entry atomically in the same
+  transaction; it no longer merely sets status='approved'.  Status after approval
+  is 'posted'.  The separate post_dividend_run endpoint is kept for idempotent
+  re-posting and for staging runs that were approved without an entry.
+- prepare_dividend_run accepts financial_year (int) and stores it as period_key.
+  It rejects a prepare when an unprocessed, approved, or posted run already exists
+  for the same (cooperative_id, period_key) using an advisory lock + explicit query
+  so the error message is clear before the DB index fires.
+"""
 
 from __future__ import annotations
 
@@ -18,9 +29,98 @@ from app.domains.notifications.outbox import enqueue_action_notifications_safely
 
 
 def _role(current: CurrentSession, allowed: set[str]) -> None:
-    """Check that current user has one of the allowed roles."""
+    """Raise Forbidden if the caller lacks all allowed roles."""
     if not allowed.intersection(current.roles):
         raise Forbidden("This role cannot perform this action")
+
+
+# ---------------------------------------------------------------------------
+# Internal posting helper (shared by approve_dividend_run and repair)
+# ---------------------------------------------------------------------------
+
+
+async def _post_entry(
+    session: AsyncSession,
+    *,
+    cid: uuid.UUID,
+    run_id: uuid.UUID,
+    pool_kobo: int,
+    record_date: date,
+    actor_id: uuid.UUID,
+) -> uuid.UUID:
+    """Post a balanced journal entry for the dividend run.
+
+    Debits dividends_declared for pool_kobo; credits each member's member_savings
+    for their allocation.  Returns the new journal_entries.id.
+
+    Callers must hold the row lock on the dividend_runs row (SELECT … FOR UPDATE).
+    The idempotency key 'dividend:<run_id>' prevents double-posting.
+    """
+    # Resolve account IDs
+    accounts_result = await session.execute(
+        text(
+            """SELECT code, id FROM accounts
+               WHERE cooperative_id = :cid
+                 AND code IN ('dividends_declared', 'member_savings')"""
+        ),
+        {"cid": cid},
+    )
+    accounts = {row[0]: row[1] for row in accounts_result}
+    if "dividends_declared" not in accounts or "member_savings" not in accounts:
+        raise Conflict("Required accounts (dividends_declared, member_savings) not found")
+
+    # Fetch allocated lines
+    lines_result = await session.execute(
+        text(
+            """SELECT member_id, amount_kobo FROM dividend_lines
+               WHERE run_id = :run_id AND cooperative_id = :cid"""
+        ),
+        {"run_id": run_id, "cid": cid},
+    )
+    lines = list(lines_result)
+    if not lines:
+        raise Conflict("Dividend run has no allocated lines")
+
+    financial_year = record_date.year
+    journal_lines: list[dict[str, Any]] = [
+        {
+            "account_id": str(accounts["dividends_declared"]),
+            "debit_kobo": pool_kobo,
+            "credit_kobo": 0,
+        }
+    ] + [
+        {
+            "account_id": str(accounts["member_savings"]),
+            "member_id": str(member_id),
+            "debit_kobo": 0,
+            "credit_kobo": int(amount_kobo),
+        }
+        for member_id, amount_kobo in lines
+    ]
+
+    entry_id = await session.scalar(
+        text(
+            "SELECT post_journal_entry(:cid, :date, 'dividend', :source,"
+            " :description, :actor, :key, CAST(:lines AS jsonb), NULL)"
+        ),
+        {
+            "cid": cid,
+            "date": record_date,
+            "source": run_id,
+            "description": f"Dividend {financial_year}",
+            "actor": actor_id,
+            "key": f"dividend:{run_id}",
+            "lines": json.dumps(journal_lines),
+        },
+    )
+    if entry_id is None:
+        raise RuntimeError(f"post_journal_entry returned NULL for run {run_id}")
+    return uuid.UUID(str(entry_id))
+
+
+# ---------------------------------------------------------------------------
+# Public service functions
+# ---------------------------------------------------------------------------
 
 
 async def prepare_dividend_run(
@@ -29,42 +129,62 @@ async def prepare_dividend_run(
     record_date: date,
     declared_by_meeting_id: uuid.UUID,
     pool_kobo: int,
+    financial_year: int,
 ) -> dict[str, Any]:
     """Prepare a dividend run with share snapshot at record_date.
 
-    Only treasurer and admin roles are allowed.
-    Creates dividend_lines for all active members with shares as of record_date.
-    Allocates from pool_kobo proportionally to shares held.
-
     Args:
-        current: Current session (user/cooperative context)
-        record_date: Effective date for share snapshot (cutoff for membership)
-        declared_by_meeting_id: Meeting that declared the dividend
-        pool_kobo: Total dividend pool in integer kobo
+        current: Caller session (treasurer or admin).
+        record_date: Effective date for the share snapshot.
+        declared_by_meeting_id: Meeting that declared the dividend.
+        pool_kobo: Total dividend pool in integer kobo (must be positive).
+        financial_year: Calendar year for this run (e.g. 2025).  Stored as
+            period_key; only one active run per (cooperative, period_key) is
+            allowed.
 
     Returns:
-        Dividend run details with status='unprocessed'
+        Dividend run dict with status='unprocessed'.
 
     Raises:
-        Forbidden: If user lacks treasurer or admin role
+        Forbidden: Caller lacks treasurer or admin role.
+        Conflict: An unprocessed, approved, or posted run for the same year
+            already exists.
     """
     _role(current, {"treasurer", "admin"})
-
     cid = current.cooperative_id
     uid = current.user_id
+    period_key = str(financial_year)
 
     async with transaction(cid) as session:
-        run_id = uuid.uuid4()
+        # Advisory lock scoped to (cooperative, period) prevents races between
+        # two simultaneous prepares for the same period.
+        lock_key = abs(hash((str(cid), period_key))) % (2**31)
+        await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
 
-        # Insert the dividend run header
+        # Explicit check so the error message names the period.
+        existing = await session.execute(
+            text(
+                """SELECT status FROM dividend_runs
+                   WHERE cooperative_id = :cid
+                     AND period_key = :period_key
+                     AND status IN ('unprocessed','approved','posted')
+                   LIMIT 1"""
+            ),
+            {"cid": cid, "period_key": period_key},
+        )
+        row = existing.first()
+        if row:
+            raise Conflict(f"A dividend run for {financial_year} already exists ({row[0]})")
+
+        run_id = uuid.uuid4()
         await session.execute(
             text(
                 """INSERT INTO dividend_runs (
                     id, cooperative_id, record_date, declared_by_meeting_id,
-                    pool_kobo, prepared_by, status
+                    pool_kobo, prepared_by, status, period_key
                 ) VALUES (
                     :run_id, :cid, :record_date, :meeting_id,
-                    :pool_kobo, :uid, 'unprocessed'
+                    :pool_kobo, :uid, 'unprocessed', :period_key
                 )"""
             ),
             {
@@ -74,17 +194,17 @@ async def prepare_dividend_run(
                 "meeting_id": declared_by_meeting_id,
                 "pool_kobo": pool_kobo,
                 "uid": uid,
+                "period_key": period_key,
             },
         )
 
-        # Get share snapshot at record_date for active members
-        # Query: sum of shares per member where member_shares entries were recorded before/at record_date
+        # Share snapshot at record_date for active members.
         shares_result = await session.execute(
             text(
                 """WITH member_snapshots AS (
                     SELECT
                         l.member_id,
-                        SUM(l.credit_kobo) as shares_kobo
+                        SUM(l.credit_kobo) AS shares_kobo
                     FROM journal_lines l
                     JOIN accounts a ON a.id = l.account_id
                     JOIN journal_entries e ON e.id = l.entry_id
@@ -98,19 +218,23 @@ async def prepare_dividend_run(
             ),
             {"cid": cid, "record_date": record_date},
         )
-
         member_shares = list(shares_result)
 
-        # Calculate total shares and allocate proportionally
         total_shares_kobo = sum(row[1] for row in member_shares)
-
         if total_shares_kobo > 0:
-            # Allocate dividend to each member proportionally
-            for member_id, member_shares_kobo in member_shares:
-                # Calculate: (member_shares / total_shares) * pool_kobo
-                # Using integer arithmetic: (member_shares * pool_kobo) // total_shares
-                amount_kobo = (member_shares_kobo * pool_kobo) // total_shares_kobo
+            # Largest-remainder allocation so lines sum to exactly pool_kobo.
+            exact = [(mid, (skb * pool_kobo) / total_shares_kobo) for mid, skb in member_shares]
+            floored = [(mid, int(v)) for mid, v in exact]
+            remainders = sorted(
+                range(len(exact)),
+                key=lambda i: -(exact[i][1] - floored[i][1]),
+            )
+            remainder_total = pool_kobo - sum(a for _, a in floored)
+            for idx in remainders[:remainder_total]:
+                mid, amt = floored[idx]
+                floored[idx] = (mid, amt + 1)
 
+            for member_id, amount_kobo in floored:
                 if amount_kobo > 0:
                     await session.execute(
                         text(
@@ -127,7 +251,7 @@ async def prepare_dividend_run(
                             "cid": cid,
                             "run_id": run_id,
                             "member_id": member_id,
-                            "shares_held": member_shares_kobo,
+                            "shares_held": dict(member_shares)[member_id],
                             "amount_kobo": amount_kobo,
                         },
                     )
@@ -135,6 +259,7 @@ async def prepare_dividend_run(
         result = await _get_dividend_run_dict(session, cid, run_id)
         if not result:
             raise RuntimeError(f"Failed to retrieve created dividend run {run_id}")
+
         await enqueue_action_notifications_safely(session, cid, DIVIDEND_APPROVAL, run_id)
         return result
 
@@ -142,42 +267,29 @@ async def prepare_dividend_run(
 async def list_dividend_runs(
     current: CurrentSession, *, page: int = 1, page_size: int = 25
 ) -> dict[str, Any]:
-    """List dividend runs for the cooperative.
+    """List dividend runs for the cooperative (paginated).
 
-    Treasurer, admin, and officer roles are allowed read access.
-
-    Args:
-        current: Current session (user/cooperative context)
-        page: Page number (1-indexed)
-        page_size: Number of items per page
-
-    Returns:
-        Paginated list of dividend runs
-
-    Raises:
-        Forbidden: If user lacks required role
+    Allowed: treasurer, admin, officer, auditor, committee.
     """
     _role(current, {"treasurer", "admin", "officer", "auditor", "committee"})
-
     cid = current.cooperative_id
     offset = (page - 1) * page_size
 
     async with transaction(cid) as session:
-        # Count total
         count_result = await session.execute(
             text("SELECT COUNT(*) FROM dividend_runs WHERE cooperative_id = :cid"),
             {"cid": cid},
         )
         total = count_result.scalar() or 0
 
-        # Fetch paginated runs
         runs_result = await session.execute(
             text(
                 """SELECT
                     id, record_date, declared_by_meeting_id, pool_kobo,
                     prepared_by, prepared_at, approved_by, approved_at,
                     rejected_by, rejected_at, rejection_reason,
-                    posted_by, posted_at, status, created_at, updated_at
+                    posted_by, posted_at, status, created_at, updated_at,
+                    journal_entry_id, period_key
                 FROM dividend_runs
                 WHERE cooperative_id = :cid
                 ORDER BY created_at DESC
@@ -185,9 +297,7 @@ async def list_dividend_runs(
             ),
             {"cid": cid, "limit": page_size, "offset": offset},
         )
-
         items = [_row_to_dividend_run_dict(row) for row in runs_result]
-
         return {
             "items": items,
             "total": total,
@@ -199,28 +309,16 @@ async def list_dividend_runs(
 async def get_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
     """Get a single dividend run with its allocated lines.
 
-    Args:
-        current: Current session (user/cooperative context)
-        run_id: ID of the dividend run
-
-    Returns:
-        Dividend run details including allocated lines
-
-    Raises:
-        NotFound: If run does not exist in this cooperative
-        Forbidden: If user lacks read permission
+    Allowed: treasurer, admin, officer, auditor, committee.
     """
     _role(current, {"treasurer", "admin", "officer", "auditor", "committee"})
-
     cid = current.cooperative_id
 
     async with transaction(cid) as session:
         run_dict = await _get_dividend_run_dict(session, cid, run_id)
-
         if not run_dict:
             raise NotFound(f"Dividend run {run_id} not found")
 
-        # Fetch dividend lines
         lines_result = await session.execute(
             text(
                 """SELECT
@@ -231,7 +329,6 @@ async def get_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[s
             ),
             {"run_id": run_id, "cid": cid},
         )
-
         items = [
             {
                 "line_id": str(row[0]),
@@ -242,57 +339,69 @@ async def get_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[s
             }
             for row in lines_result
         ]
-
         run_dict["items"] = items
         return run_dict
 
 
 async def approve_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
-    """Approve a dividend run for posting.
+    """Approve a prepared dividend run and post its ledger entry atomically.
 
-    Only admin role is allowed.
-    Can only approve a run with status='unprocessed'.
+    This merges what was previously a two-step approve-then-post flow into one
+    atomic action.  After this call the run status is 'posted' and the member
+    savings balances have already increased.
 
-    Args:
-        current: Current session (admin user)
-        run_id: ID of the dividend run
-
-    Returns:
-        Updated dividend run with status='approved'
+    Allowed: admin only.
+    Transition: unprocessed → posted.
 
     Raises:
-        Forbidden: If user is not admin
-        NotFound: If run does not exist
-        Conflict: If run is not in 'unprocessed' status
+        Forbidden: Caller is not admin.
+        NotFound: Run does not exist.
+        Conflict: Run is not in 'unprocessed' status, or no lines to post.
     """
     _role(current, {"admin"})
-
     cid = current.cooperative_id
     uid = current.user_id
 
     async with transaction(cid) as session:
-        # Check current status
+        # Row lock prevents concurrent double-approval.
         status_result = await session.execute(
-            text("SELECT status FROM dividend_runs WHERE id = :run_id AND cooperative_id = :cid"),
+            text(
+                """SELECT status, pool_kobo, record_date
+                   FROM dividend_runs
+                   WHERE id = :run_id AND cooperative_id = :cid
+                   FOR UPDATE"""
+            ),
             {"run_id": run_id, "cid": cid},
         )
         row = status_result.first()
-
         if not row:
             raise NotFound(f"Dividend run {run_id} not found")
 
-        status = row[0]
+        status, pool_kobo, record_date = row
         if status != "unprocessed":
             raise Conflict(f"Cannot approve run with status={status}")
 
-        # Update status to approved
+        entry_id = await _post_entry(
+            session,
+            cid=cid,
+            run_id=run_id,
+            pool_kobo=pool_kobo,
+            record_date=record_date,
+            actor_id=uid,
+        )
+
         await session.execute(
             text(
                 """UPDATE dividend_runs
-                   SET status = 'approved', approved_by = :uid, approved_at = CURRENT_TIMESTAMP
+                   SET status = 'posted',
+                       approved_by = :uid,
+                       approved_at = CURRENT_TIMESTAMP,
+                       posted_by = :uid,
+                       posted_at = CURRENT_TIMESTAMP,
+                       journal_entry_id = :entry_id
                    WHERE id = :run_id AND cooperative_id = :cid"""
             ),
-            {"run_id": run_id, "uid": uid, "cid": cid},
+            {"uid": uid, "entry_id": entry_id, "run_id": run_id, "cid": cid},
         )
 
         run_dict = await _get_dividend_run_dict(session, cid, run_id)
@@ -304,49 +413,31 @@ async def approve_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> di
 async def reject_dividend_run(
     current: CurrentSession, run_id: uuid.UUID, reason: str
 ) -> dict[str, Any]:
-    """Reject a dividend run.
+    """Reject a prepared dividend run.
 
-    Only admin role is allowed.
-    Can only reject a run with status='unprocessed'.
-
-    Args:
-        current: Current session (admin user)
-        run_id: ID of the dividend run
-        reason: Reason for rejection
-
-    Returns:
-        Updated dividend run with status='rejected'
-
-    Raises:
-        Forbidden: If user is not admin
-        NotFound: If run does not exist
-        Conflict: If run is not in 'unprocessed' status
+    Allowed: admin only.  Transition: unprocessed → rejected.
     """
     _role(current, {"admin"})
-
     cid = current.cooperative_id
     uid = current.user_id
 
     async with transaction(cid) as session:
-        # Check current status
         status_result = await session.execute(
             text("SELECT status FROM dividend_runs WHERE id = :run_id AND cooperative_id = :cid"),
             {"run_id": run_id, "cid": cid},
         )
         row = status_result.first()
-
         if not row:
             raise NotFound(f"Dividend run {run_id} not found")
+        if row[0] != "unprocessed":
+            raise Conflict(f"Cannot reject run with status={row[0]}")
 
-        status = row[0]
-        if status != "unprocessed":
-            raise Conflict(f"Cannot reject run with status={status}")
-
-        # Update status to rejected
         await session.execute(
             text(
                 """UPDATE dividend_runs
-                   SET status = 'rejected', rejected_by = :uid, rejected_at = CURRENT_TIMESTAMP,
+                   SET status = 'rejected',
+                       rejected_by = :uid,
+                       rejected_at = CURRENT_TIMESTAMP,
                        rejection_reason = :reason
                    WHERE id = :run_id AND cooperative_id = :cid"""
             ),
@@ -362,53 +453,32 @@ async def reject_dividend_run(
 async def cancel_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
     """Cancel a prepared dividend run.
 
-    Can be cancelled by the preparer or admin.
-    Can only cancel a run with status='unprocessed'.
-
-    Args:
-        current: Current session (user)
-        run_id: ID of the dividend run
-
-    Returns:
-        Updated dividend run with status='cancelled'
-
-    Raises:
-        Forbidden: If user is not preparer or admin
-        NotFound: If run does not exist
-        Conflict: If run is not in 'unprocessed' status
+    Allowed: preparer or admin.  Transition: unprocessed → cancelled.
     """
     _role(current, {"treasurer", "admin"})
-
     cid = current.cooperative_id
 
     async with transaction(cid) as session:
-        # Check current status and preparer
         status_result = await session.execute(
             text(
-                "SELECT status, prepared_by FROM dividend_runs WHERE id = :run_id AND cooperative_id = :cid"
+                "SELECT status, prepared_by FROM dividend_runs"
+                " WHERE id = :run_id AND cooperative_id = :cid"
             ),
             {"run_id": run_id, "cid": cid},
         )
         row = status_result.first()
-
         if not row:
             raise NotFound(f"Dividend run {run_id} not found")
-
         status, prepared_by = row
-
         if status != "unprocessed":
             raise Conflict(f"Cannot cancel run with status={status}")
-
-        # Only preparer or admin can cancel
         if current.user_id != prepared_by and "admin" not in current.roles:
             raise Forbidden("Only preparer or admin can cancel a dividend run")
 
-        # Update status to cancelled
         await session.execute(
             text(
-                """UPDATE dividend_runs
-                   SET status = 'cancelled'
-                   WHERE id = :run_id AND cooperative_id = :cid"""
+                "UPDATE dividend_runs SET status = 'cancelled'"
+                " WHERE id = :run_id AND cooperative_id = :cid"
             ),
             {"run_id": run_id, "cid": cid},
         )
@@ -420,122 +490,65 @@ async def cancel_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dic
 
 
 async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
-    """Post approved dividend run to ledger.
+    """Post an already-approved run to the ledger.
 
-    Creates balanced journal entries:
-    - Debit dividends_declared for total pool_kobo
-    - Credit member_savings for each member's allocation
+    Kept for backward compatibility with existing API consumers.  With the new
+    flow, approve_dividend_run posts in one step and this endpoint is a no-op
+    for already-posted runs (idempotent).  It still handles the legacy case
+    where a run reached status='approved' without a journal entry.
 
-    Only admin and treasurer can post.
-    Can only post a run with status='approved'.
-
-    Args:
-        current: Current session (admin/treasurer user)
-        run_id: ID of the dividend run
-
-    Returns:
-        Updated dividend run with status='posted'
-
-    Raises:
-        Forbidden: If user is not admin or treasurer
-        NotFound: If run does not exist
-        Conflict: If run is not in 'approved' status
+    Allowed: admin or treasurer.
+    Acceptable starting statuses: 'approved' (legacy) or 'posted' (no-op).
     """
     _role(current, {"admin", "treasurer"})
-
     cid = current.cooperative_id
     uid = current.user_id
 
     async with transaction(cid) as session:
-        # Get the run and check status
         status_result = await session.execute(
             text(
-                """SELECT
-                    status, pool_kobo, id, record_date
-                FROM dividend_runs
-                WHERE id = :run_id AND cooperative_id = :cid"""
+                """SELECT status, pool_kobo, record_date, journal_entry_id
+                   FROM dividend_runs
+                   WHERE id = :run_id AND cooperative_id = :cid
+                   FOR UPDATE"""
             ),
             {"run_id": run_id, "cid": cid},
         )
         row = status_result.first()
-
         if not row:
             raise NotFound(f"Dividend run {run_id} not found")
 
-        status, pool_kobo, run_id_check, record_date = row
+        status, pool_kobo, record_date, existing_entry_id = row
 
-        if status != "approved":
+        if status == "posted" and existing_entry_id is not None:
+            # Already posted — return current state (idempotent).
+            run_dict = await _get_dividend_run_dict(session, cid, run_id)
+            if not run_dict:
+                raise RuntimeError(f"Failed to retrieve dividend run {run_id}")
+            return run_dict
+
+        if status not in ("approved", "posted"):
             raise Conflict(f"Cannot post run with status={status}")
 
-        # Get the account IDs for dividends_declared and member_savings
-        accounts_result = await session.execute(
-            text(
-                """SELECT code, id FROM accounts
-                   WHERE cooperative_id = :cid AND code IN ('dividends_declared', 'member_savings')"""
-            ),
-            {"cid": cid},
+        entry_id = await _post_entry(
+            session,
+            cid=cid,
+            run_id=run_id,
+            pool_kobo=pool_kobo,
+            record_date=record_date,
+            actor_id=uid,
         )
 
-        accounts = {row[0]: row[1] for row in accounts_result}
-
-        if "dividends_declared" not in accounts or "member_savings" not in accounts:
-            raise Conflict("Required accounts (dividends_declared, member_savings) not found")
-
-        # Get all dividend lines
-        lines_result = await session.execute(
-            text(
-                """SELECT member_id, amount_kobo FROM dividend_lines
-                   WHERE run_id = :run_id AND cooperative_id = :cid"""
-            ),
-            {"run_id": run_id, "cid": cid},
-        )
-
-        lines = list(lines_result)
-
-        if not lines:
-            raise Conflict("Dividend run has no allocated lines")
-
-        # Build lines for post_journal_entry: debit dividends_declared, credit each member_savings
-        financial_year = record_date.year
-        journal_lines = [
-            {
-                "account_id": str(accounts["dividends_declared"]),
-                "debit_kobo": pool_kobo,
-                "credit_kobo": 0,
-            }
-        ] + [
-            {
-                "account_id": str(accounts["member_savings"]),
-                "member_id": str(member_id),
-                "debit_kobo": 0,
-                "credit_kobo": int(amount_kobo),
-            }
-            for member_id, amount_kobo in lines
-        ]
-        await session.scalar(
-            text(
-                "SELECT post_journal_entry(:cid, :date, 'dividend', :source,"
-                " :description, :actor, :key, CAST(:lines AS jsonb), NULL)"
-            ),
-            {
-                "cid": cid,
-                "date": record_date,
-                "source": run_id,
-                "description": f"Dividend {financial_year}",
-                "actor": uid,
-                "key": f"dividend:{run_id}",
-                "lines": json.dumps(journal_lines),
-            },
-        )
-
-        # Update run status to posted
         await session.execute(
             text(
                 """UPDATE dividend_runs
-                   SET status = 'posted', posted_by = :uid, posted_at = CURRENT_TIMESTAMP
+                   SET status = 'posted',
+                       posted_by = :uid,
+                       posted_at = CURRENT_TIMESTAMP,
+                       journal_entry_id = :entry_id
                    WHERE id = :run_id AND cooperative_id = :cid"""
             ),
-            {"run_id": run_id, "uid": uid, "cid": cid},
+            {"uid": uid, "entry_id": entry_id, "run_id": run_id, "cid": cid},
         )
 
         run_dict = await _get_dividend_run_dict(session, cid, run_id)
@@ -544,29 +557,32 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
         return run_dict
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
 async def _get_dividend_run_dict(
     session: AsyncSession, cid: uuid.UUID, run_id: uuid.UUID
 ) -> dict[str, Any] | None:
-    """Fetch a dividend run and return as dict."""
     result = await session.execute(
         text(
             """SELECT
                 id, record_date, declared_by_meeting_id, pool_kobo,
                 prepared_by, prepared_at, approved_by, approved_at,
                 rejected_by, rejected_at, rejection_reason,
-                posted_by, posted_at, status, created_at, updated_at
+                posted_by, posted_at, status, created_at, updated_at,
+                journal_entry_id, period_key
             FROM dividend_runs
             WHERE id = :run_id AND cooperative_id = :cid"""
         ),
         {"run_id": run_id, "cid": cid},
     )
-
     row = result.first()
     return _row_to_dividend_run_dict(row) if row else None
 
 
 def _row_to_dividend_run_dict(row: Any) -> dict[str, Any]:
-    """Convert a database row to a dividend run dict."""
     return {
         "run_id": str(row[0]),
         "record_date": row[1].isoformat(),
@@ -584,4 +600,6 @@ def _row_to_dividend_run_dict(row: Any) -> dict[str, Any]:
         "status": row[13],
         "created_at": row[14].isoformat(),
         "updated_at": row[15].isoformat(),
+        "journal_entry_id": str(row[16]) if row[16] else None,
+        "period_key": row[17],
     }

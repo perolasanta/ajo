@@ -28,3 +28,19 @@ Set `AJO_TAG` in `/opt/ajo/.env` to a previous image SHA, then run `docker compo
 ## Removal
 
 Run `cd /opt/ajo && docker compose down`, then remove the separate Ajo Nginx vhost and validate/reload Nginx with `sudo nginx -t && sudo systemctl reload nginx`.
+
+## Repairing approved-but-unposted dividend runs (staging fix)
+
+If a cooperative approved a dividend run before the fix in PR #87 (fix/dividends-ledger-and-periods),
+the run will have `status='approved'` and no ledger entry.  Run the repair command once after deploying:
+
+```bash
+# Dry run first — prints counts without changing anything:
+docker compose exec api python -m app.domains.dividends.repair --dry-run
+
+# Apply:
+docker compose exec api python -m app.domains.dividends.repair
+```
+
+The command is idempotent: running it twice changes nothing on the second run.
+Requires `DATABASE_URL_DIRECT` in the container environment (set in `.env`).

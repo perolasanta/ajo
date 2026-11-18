@@ -254,6 +254,8 @@ Role separation: the treasurer prepares and may cancel an `unprocessed` run; an 
 
 Approval changes status to `approved`. Posting creates one balanced journal entry with `source_type='dividend'` debiting the cooperative's `dividends_declared` equity account and crediting each member's `member_savings` account. The entry description is `Dividend <financial_year>` and the idempotency key is `dividend:<run_id>`, preventing double posting. Posting sets status to `posted`. Rejection sets status to `rejected` with a reason and actor. Cancellation sets status to `cancelled`.
 
+**Implementation note (fix/dividends-ledger-and-periods):** The approve endpoint now posts atomically in one step; there is no separate post step in the UI or API (the `/post` endpoint is kept for idempotent repair only). Status after approval is `posted` directly.
+
 The member statement labels any `source_type='dividend'` journal entry as `Dividend <year>` derived from the entry's effective date.
 
 Admin users receive a `dividend_approval` action notification when a run is prepared. The preparer is excluded from recipients even if they also hold the admin role.
@@ -265,3 +267,7 @@ Admin users receive a `dividend_approval` action notification when a run is prep
 **TODO:** Define tax rules — clarify whether withholding tax applies to cooperative dividends in the relevant jurisdiction and how Ajo should compute and record it.
 
 **TODO:** Define the interplay with member exit — clarify how a declared but un-posted dividend or a posted dividend in a closed savings account is handled when a member exits the cooperative.
+
+**TODO:** Configurable dividend frequency (Unit 3) — currently annual only. `period_key` is stored as the financial year string (e.g. `'2025'`). Unit 3 will extend it to `'2026-H1'`, `'2026-Q3'`, `'2026-M11'` for half-yearly, quarterly, and monthly runs respectively. The `dividend_frequency` policy column (CHECK in `annual`, `half_yearly`, `quarterly`, `monthly`) will be added to the versioned policy table. The one-active-run-per-period partial unique index (`uq_dividend_runs_coop_period_active`) already enforces the constraint for any period_key shape.
+
+**TODO:** Financial-year start month — currently all periods use calendar-year boundaries. Add a cooperative policy setting for the financial year start month (default January) so that `'2026'` means the 12-month window starting from that month.

@@ -26,6 +26,11 @@ class PrepareDividendRunRequest(BaseModel):
         description="UUID of the meeting that declared the dividend"
     )
     pool_kobo: int = Field(description="Total dividend pool in integer kobo", gt=0)
+    financial_year: int = Field(
+        description="Calendar year for this dividend run (e.g. 2025)",
+        gt=2000,
+        lt=2200,
+    )
 
 
 class DividendLineResponse(BaseModel):
@@ -57,6 +62,8 @@ class DividendRunResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
+    journal_entry_id: str | None = None
+    period_key: str | None = None
     items: list[DividendLineResponse] | None = None
 
 
@@ -97,6 +104,7 @@ async def prepare_dividend_run(
         record_date=request.record_date,
         declared_by_meeting_id=uuid.UUID(request.declared_by_meeting_id),
         pool_kobo=request.pool_kobo,
+        financial_year=request.financial_year,
     )
     return DividendRunResponse(**result)
 
@@ -150,9 +158,10 @@ async def approve_dividend_run(
     run_id: str,
     current: Annotated[CurrentSession, Depends(current_session)],
 ) -> DividendRunResponse:
-    """Approve a prepared dividend run.
+    """Approve a prepared dividend run and post its ledger entry atomically.
 
-    Changes status from 'unprocessed' to 'approved'.
+    Posts a balanced journal entry (debit dividends_declared, credit each
+    member's member_savings) in the same transaction.  Status becomes 'posted'.
 
     Requires: admin role
     """
