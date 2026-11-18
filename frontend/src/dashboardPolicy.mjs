@@ -76,11 +76,21 @@ export function dashboardCards(roles = []) {
   if (roles.includes("treasurer") || roles.includes("admin"))
     addAction("payroll", "Payroll runs needing my action", "Payroll", "/payroll?action=needed");
   if (roles.includes("treasurer"))
-    addAction("withdrawals", "Withdrawal requests needing my action", "Members", "/withdrawal-requests?mine=needed");
+    addAction(
+      "withdrawals",
+      "Withdrawal requests needing my action",
+      "Members",
+      "/withdrawal-requests?mine=needed",
+    );
   if (roles.includes("admin"))
     addAction("role_changes", "Role changes needing my action", "Staff", "/staff?action=needed");
   if (roles.includes("admin") || roles.includes("treasurer"))
-    addAction("disbursements", "Disbursements needing my action", "Disbursements", "/disbursements?action=needed");
+    addAction(
+      "disbursements",
+      "Disbursements needing my action",
+      "Disbursements",
+      "/disbursements?action=needed",
+    );
   if (roles.includes("committee") || roles.includes("treasurer"))
     addAction("loans", "Loans needing my action", "Loans", "/loans?action=needed");
   return cards;

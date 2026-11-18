@@ -157,8 +157,16 @@ export default function PayrollPage() {
     },
   });
   const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
-  const actionCount = (isAdmin ? summary.data?.payroll?.awaiting_sign_off ?? 0 : 0) + (roles.includes("treasurer") ? summary.data?.payroll?.awaiting_posting ?? 0 : 0);
-  useEffect(() => { if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) { const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next, { replace: true }); } }, [actionCount, searchParams, setSearchParams]);
+  const actionCount =
+    (isAdmin ? (summary.data?.payroll?.awaiting_sign_off ?? 0) : 0) +
+    (roles.includes("treasurer") ? (summary.data?.payroll?.awaiting_posting ?? 0) : 0);
+  useEffect(() => {
+    if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) {
+      const next = new URLSearchParams(searchParams);
+      next.set("action", "needed");
+      setSearchParams(next, { replace: true });
+    }
+  }, [actionCount, searchParams, setSearchParams]);
   const runs = useQuery({
     queryKey: ["payroll-runs", page, action],
     queryFn: () => getPayrollRuns({ page, pageSize, action }),
@@ -186,7 +194,34 @@ export default function PayrollPage() {
         Review expected and imported payroll totals. Member salary, contact, and bank details are
         not shown here.
       </p>
-      <div className="mb-4 flex gap-2" role="tablist" aria-label="Payroll list view"><Button role="tab" aria-selected={action === "needed"} variant={action === "needed" ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next); }}>Needs my action{actionCount ? ` (${actionCount})` : ""}</Button><Button role="tab" aria-selected={!action} variant={!action ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.delete("action"); setSearchParams(next); }}>All</Button></div>
+      <div className="mb-4 flex gap-2" role="tablist" aria-label="Payroll list view">
+        <Button
+          role="tab"
+          aria-selected={action === "needed"}
+          variant={action === "needed" ? "primary" : "secondary"}
+          onClick={() => {
+            userSelectedActionTab.current = true;
+            const next = new URLSearchParams(searchParams);
+            next.set("action", "needed");
+            setSearchParams(next);
+          }}
+        >
+          Needs my action{actionCount ? ` (${actionCount})` : ""}
+        </Button>
+        <Button
+          role="tab"
+          aria-selected={!action}
+          variant={!action ? "primary" : "secondary"}
+          onClick={() => {
+            userSelectedActionTab.current = true;
+            const next = new URLSearchParams(searchParams);
+            next.delete("action");
+            setSearchParams(next);
+          }}
+        >
+          All
+        </Button>
+      </div>
       {showProfileForm && isAdmin && (
         <form
           className="mb-6 rounded-card border border-border bg-surface p-4 sm:p-5"

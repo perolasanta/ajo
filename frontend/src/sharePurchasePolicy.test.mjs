@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import {
-  SHARE_SAVINGS_ERROR,
-  sharePurchaseRequestState,
-} from "./sharePurchasePolicy.mjs";
+import { SHARE_SAVINGS_ERROR, sharePurchaseRequestState } from "./sharePurchasePolicy.mjs";
 
 const page = readFileSync(new URL("./pages/SharePurchasesPage.tsx", import.meta.url), "utf8");
 

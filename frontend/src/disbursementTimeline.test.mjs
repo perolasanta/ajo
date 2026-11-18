@@ -30,7 +30,10 @@ const prepared = {
 
 test("timeline includes only workflow steps and timestamps returned by the API", () => {
   const events = eventsForDisbursement(prepared);
-  assert.deepEqual(events.map((item) => item.title), ["Prepared"]);
+  assert.deepEqual(
+    events.map((item) => item.title),
+    ["Prepared"],
+  );
   assert.equal(events[0].actor, "Prepared Staff");
 });
 
@@ -64,10 +67,10 @@ test("timeline displays transfer, paid confirmation, failure and reversal when p
     ],
   );
   assert.equal(events[2].evidence, "BANK-REF");
-  assert.deepEqual(events.slice(0, 2).map((entry) => entry.actor), [
-    "Prepared Staff",
-    "Approving Staff",
-  ]);
+  assert.deepEqual(
+    events.slice(0, 2).map((entry) => entry.actor),
+    ["Prepared Staff", "Approving Staff"],
+  );
   assert.equal(events[3].actor, "Confirming Staff");
   assert.equal(events[4].evidence, "Rejected");
   assert.equal(events[5].evidence, "Incorrect account");

@@ -54,22 +54,25 @@ export default function DashboardPage() {
   });
   const countForCard = (card: DashboardCard) => {
     if (card.actionType === "payroll")
-      return (roles.includes("treasurer")
-        ? actionSummary.data?.payroll?.awaiting_posting ?? 0
-        : 0) + (roles.includes("admin")
-        ? actionSummary.data?.payroll?.awaiting_sign_off ?? 0
-        : 0);
+      return (
+        (roles.includes("treasurer") ? (actionSummary.data?.payroll?.awaiting_posting ?? 0) : 0) +
+        (roles.includes("admin") ? (actionSummary.data?.payroll?.awaiting_sign_off ?? 0) : 0)
+      );
     if (card.actionType === "withdrawals")
       return actionSummary.data?.withdrawal_requests?.awaiting_approval ?? 0;
     if (card.actionType === "role_changes")
       return actionSummary.data?.role_changes?.awaiting_approval ?? 0;
     if (card.actionType === "disbursements")
-      return (actionSummary.data?.disbursements?.awaiting_authorization ?? 0) +
+      return (
+        (actionSummary.data?.disbursements?.awaiting_authorization ?? 0) +
         (actionSummary.data?.disbursements?.awaiting_confirmation ?? 0) +
-        (actionSummary.data?.disbursements?.ready_to_record ?? 0);
+        (actionSummary.data?.disbursements?.ready_to_record ?? 0)
+      );
     if (card.actionType === "loans")
-      return (actionSummary.data?.loans?.awaiting_decision ?? 0) +
-        (actionSummary.data?.loans?.disputed_or_paused ?? 0);
+      return (
+        (actionSummary.data?.loans?.awaiting_decision ?? 0) +
+        (actionSummary.data?.loans?.disputed_or_paused ?? 0)
+      );
     if (card.source === "action") return 0;
     return dashboard.data?.[card.source]?.[card.status] ?? 0;
   };
@@ -84,12 +87,16 @@ export default function DashboardPage() {
       </>
     );
   }
-  if (dashboard.isError) return <ErrorState error={dashboard.error} retry={() => void dashboard.refetch()} />;
+  if (dashboard.isError)
+    return <ErrorState error={dashboard.error} retry={() => void dashboard.refetch()} />;
   if (cards.length === 0) {
     return (
       <>
         <PageHeader title="Dashboard" breadcrumb="Cooperative overview" />
-        <EmptyState title="No dashboard summary available" detail="Your role has no dashboard cards configured." />
+        <EmptyState
+          title="No dashboard summary available"
+          detail="Your role has no dashboard cards configured."
+        />
       </>
     );
   }
@@ -99,7 +106,10 @@ export default function DashboardPage() {
       <PageHeader title="Dashboard" breadcrumb="Cooperative overview" />
       {cards.every((card) => countForCard(card) === 0) && (
         <div className="mb-4">
-          <EmptyState title="Everything is up to date" detail="There are no items in the queues available to your role." />
+          <EmptyState
+            title="Everything is up to date"
+            detail="There are no items in the queues available to your role."
+          />
         </div>
       )}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -113,7 +123,10 @@ export default function DashboardPage() {
 
 function DashboardCard({ card, count }: { card: DashboardCard; count: number }) {
   return (
-    <Link to={card.href} className="block rounded-card outline-offset-4 focus-visible:outline-2 focus-visible:outline-primary">
+    <Link
+      to={card.href}
+      className="block rounded-card outline-offset-4 focus-visible:outline-2 focus-visible:outline-primary"
+    >
       <Card className="h-full transition hover:-translate-y-0.5 hover:border-primary/40">
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm text-muted">{card.description}</p>

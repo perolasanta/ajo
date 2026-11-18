@@ -35,6 +35,11 @@ export const navigation = [
     roles: ["admin", "treasurer", "officer", "auditor", "committee"],
   },
   {
+    name: "Dividends",
+    path: "/dividends",
+    roles: ["treasurer", "admin"],
+  },
+  {
     name: "Loans",
     path: "/loans",
     roles: ["officer", "committee", "treasurer", "admin", "auditor"],
@@ -105,6 +110,9 @@ export function menuActionCount(name, summary, roles) {
   if (name === "Share purchases" && roles.includes("treasurer")) {
     count += summary?.share_purchases?.awaiting_approval ?? 0;
   }
+  if (name === "Dividends" && roles.includes("admin")) {
+    count += summary?.dividends?.awaiting_approval ?? 0;
+  }
   if (name === "Loans") {
     if (roles.includes("committee")) count += summary?.loans?.awaiting_decision ?? 0;
     if (roles.includes("treasurer")) count += summary?.loans?.disputed_or_paused ?? 0;
@@ -116,6 +124,7 @@ export function navigationTarget(name, count) {
   if (count <= 0) return navigation.find((item) => item.name === name)?.path ?? "/dashboard";
   if (name === "Withdrawal requests") return "/withdrawal-requests?mine=needed";
   if (name === "Share purchases") return "/share-purchases?mine=needed";
+  if (name === "Dividends") return "/dividends?action=needed";
   if (name === "Loans") return "/loans?action=needed";
   if (name === "Disbursements") return "/disbursements?action=needed";
   if (name === "Payroll") return "/payroll?action=needed";
@@ -148,6 +157,7 @@ const routePatterns = [
   ["/withdrawal-requests", /^\/withdrawal-requests$/],
   ["/share-purchases", /^\/share-purchases(?:\/[^/]+)?$/],
   ["/share-register", /^\/share-register$/],
+  ["/dividends", /^\/dividends(?:\/[^/]+)?$/],
   ["/payments", /^\/payments(?:\/[^/]+)?$/],
   ["/bank-statements", /^\/bank-statements(?:\/[^/]+)?$/],
   ["/loans", /^\/loans(?:\/[^/]+)?$/],

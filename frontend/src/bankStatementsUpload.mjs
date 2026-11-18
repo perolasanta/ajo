@@ -35,9 +35,15 @@ export function parseBankStatementHeaders(csvText) {
 export function suggestBankStatementMapping(headers) {
   const find = (aliases) => {
     const normalizedAliases = new Set(aliases);
-    return headers.find((header) =>
-      normalizedAliases.has(String(header).toLowerCase().replace(/[^a-z0-9]/g, "")),
-    ) ?? "";
+    return (
+      headers.find((header) =>
+        normalizedAliases.has(
+          String(header)
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, ""),
+        ),
+      ) ?? ""
+    );
   };
   const amount = find(["amount", "signedamount", "transactionamount"]);
   return {
@@ -63,11 +69,7 @@ export function formatBankStatementImportNotice(result) {
 }
 
 export function bankStatementImportErrorMessage(message, requestId) {
-  if (
-    typeof message === "string" &&
-    message &&
-    message !== "Request failed. Please try again."
-  ) {
+  if (typeof message === "string" && message && message !== "Request failed. Please try again.") {
     return message;
   }
   const fallback =

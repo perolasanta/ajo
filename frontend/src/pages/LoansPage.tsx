@@ -67,8 +67,20 @@ export default function LoansPage() {
   const debouncedSearch = useDebouncedValue(search);
   const session = useQuery({ queryKey: ["session"], queryFn: () => requestSession() });
   const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
-  const actionCount = (session.data?.roles.includes("committee") ? summary.data?.loans?.awaiting_decision ?? 0 : 0) + (session.data?.roles.includes("treasurer") ? summary.data?.loans?.disputed_or_paused ?? 0 : 0);
-  useEffect(() => { if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) { const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next, { replace: true }); } }, [actionCount, searchParams, setSearchParams]);
+  const actionCount =
+    (session.data?.roles.includes("committee")
+      ? (summary.data?.loans?.awaiting_decision ?? 0)
+      : 0) +
+    (session.data?.roles.includes("treasurer")
+      ? (summary.data?.loans?.disputed_or_paused ?? 0)
+      : 0);
+  useEffect(() => {
+    if (!userSelectedActionTab.current && actionCount > 0 && !searchParams.has("action")) {
+      const next = new URLSearchParams(searchParams);
+      next.set("action", "needed");
+      setSearchParams(next, { replace: true });
+    }
+  }, [actionCount, searchParams, setSearchParams]);
   const loans = useQuery({
     queryKey: ["loan-applications", debouncedSearch, status, action, page],
     queryFn: () =>
@@ -109,7 +121,34 @@ export default function LoansPage() {
         )}
       </PageHeader>
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="flex gap-2" role="tablist" aria-label="Loan list view"><Button role="tab" aria-selected={action === "needed"} variant={action === "needed" ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next); }}>Needs my action{actionCount ? ` (${actionCount})` : ""}</Button><Button role="tab" aria-selected={!action} variant={!action ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.delete("action"); setSearchParams(next); }}>All</Button></div>
+        <div className="flex gap-2" role="tablist" aria-label="Loan list view">
+          <Button
+            role="tab"
+            aria-selected={action === "needed"}
+            variant={action === "needed" ? "primary" : "secondary"}
+            onClick={() => {
+              userSelectedActionTab.current = true;
+              const next = new URLSearchParams(searchParams);
+              next.set("action", "needed");
+              setSearchParams(next);
+            }}
+          >
+            Needs my action{actionCount ? ` (${actionCount})` : ""}
+          </Button>
+          <Button
+            role="tab"
+            aria-selected={!action}
+            variant={!action ? "primary" : "secondary"}
+            onClick={() => {
+              userSelectedActionTab.current = true;
+              const next = new URLSearchParams(searchParams);
+              next.delete("action");
+              setSearchParams(next);
+            }}
+          >
+            All
+          </Button>
+        </div>
         <Input
           aria-label="Search loans"
           placeholder="Search member name or number."
@@ -150,7 +189,21 @@ export default function LoansPage() {
         <>
           <ResponsiveTable
             data={loans.data.items}
-            columns={action ? [{ key: "action", header: "Action", role: "meta", render: () => <span className="font-medium text-amber-800">Needs my action</span> }, ...loanColumns] : loanColumns}
+            columns={
+              action
+                ? [
+                    {
+                      key: "action",
+                      header: "Action",
+                      role: "meta",
+                      render: () => (
+                        <span className="font-medium text-amber-800">Needs my action</span>
+                      ),
+                    },
+                    ...loanColumns,
+                  ]
+                : loanColumns
+            }
             getRowKey={(loan) => loan.id}
           />
           <div className="mt-4 flex items-center justify-between gap-3 text-sm">
@@ -337,7 +390,8 @@ export function NewLoanApplicationPage() {
               <option value="">Choose a product</option>
               {(products.data ?? []).map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.name} · {formatRate(product.annual_rate_bps)} · {product.min_tenor_months}–{product.max_tenor_months} months
+                  {product.name} · {formatRate(product.annual_rate_bps)} ·{" "}
+                  {product.min_tenor_months}–{product.max_tenor_months} months
                 </option>
               ))}
             </Select>

@@ -218,7 +218,8 @@ export default function BankStatementsPage() {
     required = false,
   ) => (
     <label className="text-sm font-medium">
-      {label}{required ? " (required)" : " (optional)"}
+      {label}
+      {required ? " (required)" : " (optional)"}
       <select
         className="mt-1 min-h-11 w-full rounded-control border border-border bg-white px-3"
         value={columnMap[key] ?? ""}
@@ -311,10 +312,7 @@ export default function BankStatementsPage() {
               <Button
                 type="button"
                 disabled={
-                  !canManage ||
-                  preview.total_rows === 0 ||
-                  preview.duplicate_file ||
-                  isBusy
+                  !canManage || preview.total_rows === 0 || preview.duplicate_file || isBusy
                 }
                 loading={importMutation.isPending}
                 onClick={() => importMutation.mutate()}
@@ -333,9 +331,7 @@ export default function BankStatementsPage() {
           <p className="mt-3 text-sm text-danger" role="alert">
             {bankStatementImportErrorMessage(
               importMutation.error instanceof ApiError ? importMutation.error.message : undefined,
-              importMutation.error instanceof ApiError
-                ? importMutation.error.requestId
-                : undefined,
+              importMutation.error instanceof ApiError ? importMutation.error.requestId : undefined,
             )}
           </p>
         )}
@@ -368,8 +364,12 @@ export default function BankStatementsPage() {
                         <td className="py-2 pr-3">{row.row}</td>
                         <td className="py-2 pr-3">{row.date}</td>
                         <td className="py-2 pr-3">{row.narration}</td>
-                        <td className="py-2 pr-3"><Money kobo={row.credit_kobo} /></td>
-                        <td className="py-2 pr-3"><Money kobo={row.debit_kobo} /></td>
+                        <td className="py-2 pr-3">
+                          <Money kobo={row.credit_kobo} />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <Money kobo={row.debit_kobo} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -451,7 +451,9 @@ export default function BankStatementsPage() {
                   <div className="text-right">
                     <div className="font-medium text-primary">
                       <Money kobo={row.credit_kobo || row.debit_kobo} />
-                      {row.debit_kobo > 0 && <span className="ml-1 text-xs text-muted">debit evidence</span>}
+                      {row.debit_kobo > 0 && (
+                        <span className="ml-1 text-xs text-muted">debit evidence</span>
+                      )}
                     </div>
                     <div className="mt-1 flex flex-wrap justify-end gap-2">
                       {row.status === "suggested" && canManage && (
@@ -494,7 +496,9 @@ export default function BankStatementsPage() {
           </div>
           {(lines.data?.total ?? 0) > 0 && (
             <div className="mt-4 flex items-center justify-between gap-3 text-sm">
-              <span>{lines.data?.total} statement lines · Page {page} of {totalPages}</span>
+              <span>
+                {lines.data?.total} statement lines · Page {page} of {totalPages}
+              </span>
               <div className="flex gap-2">
                 <Button
                   type="button"

@@ -78,11 +78,32 @@ export default function StaffPage() {
   });
   const summary = useQuery({ queryKey: ["notification-summary"], queryFn: getNotificationSummary });
   const actionCount = summary.data?.role_changes?.awaiting_approval ?? 0;
-  useEffect(() => { const proposal = searchParams.get("proposal"); if (proposal && status !== "all") setStatus("all"); }, [searchParams, status]);
-  useEffect(() => { if (!userSelectedActionTab.current && isAdmin && actionCount > 0 && !searchParams.has("action") && !searchParams.has("proposal")) { const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next, { replace: true }); } }, [isAdmin, actionCount, searchParams, setSearchParams]);
+  useEffect(() => {
+    const proposal = searchParams.get("proposal");
+    if (proposal && status !== "all") setStatus("all");
+  }, [searchParams, status]);
+  useEffect(() => {
+    if (
+      !userSelectedActionTab.current &&
+      isAdmin &&
+      actionCount > 0 &&
+      !searchParams.has("action") &&
+      !searchParams.has("proposal")
+    ) {
+      const next = new URLSearchParams(searchParams);
+      next.set("action", "needed");
+      setSearchParams(next, { replace: true });
+    }
+  }, [isAdmin, actionCount, searchParams, setSearchParams]);
   const proposals = useQuery({
     queryKey: ["role-change-proposals", status, proposalPage, actionNeeded],
-    queryFn: () => getRoleChangeProposals({ status, page: proposalPage, pageSize, action: actionNeeded ? "needed" : undefined }),
+    queryFn: () =>
+      getRoleChangeProposals({
+        status,
+        page: proposalPage,
+        pageSize,
+        action: actionNeeded ? "needed" : undefined,
+      }),
     enabled: isAdmin,
     retry: false,
   });
@@ -351,7 +372,34 @@ export default function StaffPage() {
               Actions are revalidated by the server against current roles and proposal state.
             </p>
           </div>
-          <div className="flex gap-2" role="tablist" aria-label="Role proposal list view"><Button role="tab" aria-selected={actionNeeded} variant={actionNeeded ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.set("action", "needed"); setSearchParams(next); }}>Needs my action{actionCount ? ` (${actionCount})` : ""}</Button><Button role="tab" aria-selected={!actionNeeded} variant={!actionNeeded ? "primary" : "secondary"} onClick={() => { userSelectedActionTab.current = true; const next = new URLSearchParams(searchParams); next.delete("action"); setSearchParams(next); }}>All</Button></div>
+          <div className="flex gap-2" role="tablist" aria-label="Role proposal list view">
+            <Button
+              role="tab"
+              aria-selected={actionNeeded}
+              variant={actionNeeded ? "primary" : "secondary"}
+              onClick={() => {
+                userSelectedActionTab.current = true;
+                const next = new URLSearchParams(searchParams);
+                next.set("action", "needed");
+                setSearchParams(next);
+              }}
+            >
+              Needs my action{actionCount ? ` (${actionCount})` : ""}
+            </Button>
+            <Button
+              role="tab"
+              aria-selected={!actionNeeded}
+              variant={!actionNeeded ? "primary" : "secondary"}
+              onClick={() => {
+                userSelectedActionTab.current = true;
+                const next = new URLSearchParams(searchParams);
+                next.delete("action");
+                setSearchParams(next);
+              }}
+            >
+              All
+            </Button>
+          </div>
           <label className="text-sm font-medium">
             Status
             <Select
@@ -402,7 +450,9 @@ export default function StaffPage() {
                 <ProposalCard
                   key={proposal.proposal_id}
                   proposal={proposal}
-                  highlighted={actionNeeded || searchParams.get("proposal") === proposal.proposal_id}
+                  highlighted={
+                    actionNeeded || searchParams.get("proposal") === proposal.proposal_id
+                  }
                   currentUserId={session.data.user_id}
                   actionPending={proposalAction.isPending}
                   onAction={(decision) =>
@@ -460,7 +510,9 @@ function ProposalCard({
   const isTarget = proposal.target_user_id === currentUserId;
   const canApprove = pending && !isProposer && !(proposal.action === "add" && isTarget);
   return (
-    <article className={`rounded-card border border-border bg-surface p-4 sm:p-5 ${highlighted ? "ring-2 ring-amber-400" : ""}`}>
+    <article
+      className={`rounded-card border border-border bg-surface p-4 sm:p-5 ${highlighted ? "ring-2 ring-amber-400" : ""}`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="break-words font-medium">
@@ -552,15 +604,8 @@ function StaffNameCell({
     return (
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="font-medium">{person.full_name || person.email}</span>
-        {person.full_name && (
-          <span className="break-all text-xs text-muted">{person.email}</span>
-        )}
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          onClick={() => setEditing(true)}
-        >
+        {person.full_name && <span className="break-all text-xs text-muted">{person.email}</span>}
+        <Button type="button" size="sm" variant="secondary" onClick={() => setEditing(true)}>
           Edit name
         </Button>
       </div>

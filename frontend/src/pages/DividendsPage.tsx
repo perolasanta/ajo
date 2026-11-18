@@ -1,0 +1,425 @@
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import {
+  approveDividendRun,
+  cancelDividendRun,
+  getDividendRun,
+  getDividendRuns,
+  getMembers,
+  prepareDividendRun,
+  rejectDividendRun,
+  request,
+} from "../api/client";
+import {
+  canApproveDividendRun,
+  canCancelDividendRun,
+  canPrepareDividendRun,
+  canRejectDividendRun,
+  memberDisplayLabel,
+  prepareDividendRequestBody,
+} from "../dividendsPolicy.mjs";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { EmptyState, Skeleton } from "../ui/Feedback";
+import { DateTime, Money } from "../ui/Format";
+import { PageHeader } from "../ui/PageHeader";
+
+type Session = { user_id: string; roles: string[] };
+
+const PAGE_SIZE = 25;
+const numberFormat = new Intl.NumberFormat("en-NG");
+
+export default function DividendsPage() {
+  const { runId } = useParams<{ runId?: string }>();
+  const session = useQuery({
+    queryKey: ["session"],
+    queryFn: () => request<Session>("/auth/me"),
+  });
+  const roles = session.data?.roles ?? [];
+  const userId = session.data?.user_id;
+  if (runId) {
+    return <DividendRunDetail runId={runId} roles={roles} userId={userId} />;
+  }
+  return <DividendRunList roles={roles} />;
+}
+
+function DividendRunList({ roles }: { roles: string[] }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const actionNeeded = new URLSearchParams(location.search).get("action") === "needed";
+  const [page, setPage] = useState(1);
+  const [recordDate, setRecordDate] = useState("");
+  const [poolNaira, setPoolNaira] = useState("");
+  const [meetingId, setMeetingId] = useState("");
+
+  const runs = useQuery({
+    queryKey: ["dividend-runs", page],
+    queryFn: () => getDividendRuns({ page, pageSize: PAGE_SIZE }),
+  });
+  const allItems = runs.data?.items ?? [];
+  const items = actionNeeded ? allItems.filter((run) => run.status === "unprocessed") : allItems;
+  const totalPages = Math.max(1, Math.ceil((runs.data?.total ?? 0) / PAGE_SIZE));
+  const canPrepare = canPrepareDividendRun(roles);
+
+  const create = useMutation({
+    mutationFn: () =>
+      prepareDividendRun(
+        prepareDividendRequestBody({
+          recordDate,
+          declaredByMeetingId: meetingId,
+          poolNaira: Number(poolNaira),
+        }),
+      ),
+    onSuccess: async (run) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["dividend-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["notification-summary"] }),
+      ]);
+      navigate(`/dividends/${run.run_id}`);
+    },
+  });
+
+  const poolValid = Number(poolNaira) > 0;
+  const submit = () => {
+    if (create.isPending || !recordDate || !meetingId || !poolValid) return;
+    create.mutate();
+  };
+
+  return (
+    <div className="space-y-5">
+      <PageHeader title="Dividends" breadcrumb="Members / Dividends" />
+      {canPrepare && (
+        <Card>
+          <h2 className="text-lg font-semibold">Prepare a dividend run</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <label className="text-sm">
+              Record date
+              <input
+                type="date"
+                className="mt-1 w-full rounded-control border border-border bg-white p-2"
+                value={recordDate}
+                onChange={(event) => setRecordDate(event.target.value)}
+              />
+            </label>
+            <label className="text-sm">
+              Pool (naira)
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                className="mt-1 w-full rounded-control border border-border p-2"
+                value={poolNaira}
+                onChange={(event) => setPoolNaira(event.target.value)}
+              />
+            </label>
+            <label className="text-sm">
+              Declared by meeting ID
+              <input
+                type="text"
+                className="mt-1 w-full rounded-control border border-border p-2"
+                value={meetingId}
+                onChange={(event) => setMeetingId(event.target.value)}
+                placeholder="Meeting UUID"
+              />
+            </label>
+          </div>
+          <Button
+            className="mt-4"
+            disabled={create.isPending || !recordDate || !meetingId || !poolValid}
+            onClick={submit}
+          >
+            Prepare run
+          </Button>
+          {create.isError && (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              {create.error instanceof Error
+                ? create.error.message
+                : "The run could not be prepared."}
+            </p>
+          )}
+        </Card>
+      )}
+
+      <h2 className="text-lg font-semibold">
+        {actionNeeded ? "Runs needing approval" : "Dividend runs"}
+      </h2>
+
+      {runs.isPending && <Skeleton className="h-48 w-full" />}
+      {runs.isError && (
+        <EmptyState
+          title="Dividend runs could not be loaded"
+          detail={runs.error instanceof Error ? runs.error.message : "Please try again."}
+          action={<Button onClick={() => void runs.refetch()}>Try again</Button>}
+        />
+      )}
+      {runs.data && items.length === 0 && (
+        <EmptyState
+          title={actionNeeded ? "No runs need your approval" : "No dividend runs"}
+          detail="There are no dividend runs in this view."
+        />
+      )}
+      {runs.data && items.length > 0 && (
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Year</th>
+                  <th className="p-3">Pool</th>
+                  <th className="p-3">Record date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((run) => (
+                  <tr
+                    key={run.run_id}
+                    className="cursor-pointer border-b border-border hover:bg-bg"
+                    title="View run"
+                    onClick={() => navigate(`/dividends/${run.run_id}`)}
+                  >
+                    <td className="p-3">
+                      <Badge>{run.status.replaceAll("_", " ")}</Badge>
+                    </td>
+                    <td className="p-3">{run.record_date.slice(0, 4)}</td>
+                    <td className="p-3">
+                      <Money kobo={run.pool_kobo} />
+                    </td>
+                    <td className="p-3">{run.record_date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-border p-3">
+            <Button
+              variant="secondary"
+              disabled={page <= 1}
+              onClick={() => setPage((value) => value - 1)}
+            >
+              Previous
+            </Button>
+            <p className="text-sm text-muted">
+              Page {page} of {totalPages}
+            </p>
+            <Button
+              variant="secondary"
+              disabled={page >= totalPages}
+              onClick={() => setPage((value) => value + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function DividendRunDetail({
+  runId,
+  roles,
+  userId,
+}: {
+  runId: string;
+  roles: string[];
+  userId?: string;
+}) {
+  const queryClient = useQueryClient();
+  const run = useQuery({
+    queryKey: ["dividend-run", runId],
+    queryFn: () => getDividendRun(runId),
+  });
+  const members = useQuery({
+    queryKey: ["members", "dividends"],
+    queryFn: () => getMembers(),
+  });
+  const memberMap = useMemo(() => {
+    const map = new Map<string, { full_name: string }>();
+    for (const member of members.data ?? []) map.set(member.id, { full_name: member.full_name });
+    return map;
+  }, [members.data]);
+
+  const invalidate = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["dividend-run", runId] }),
+      queryClient.invalidateQueries({ queryKey: ["dividend-runs"] }),
+      queryClient.invalidateQueries({ queryKey: ["notification-summary"] }),
+    ]);
+
+  const approve = useMutation({
+    mutationFn: () => approveDividendRun(runId),
+    onSuccess: invalidate,
+  });
+  const reject = useMutation({
+    mutationFn: (reason: string) => rejectDividendRun(runId, reason),
+    onSuccess: invalidate,
+  });
+  const cancel = useMutation({ mutationFn: () => cancelDividendRun(runId), onSuccess: invalidate });
+
+  const data = run.data;
+
+  const onApprove = () => {
+    if (approve.isPending) return;
+    if (!window.confirm("Approve this dividend run for posting?")) return;
+    approve.mutate();
+  };
+  const onReject = () => {
+    if (reject.isPending) return;
+    const reason = window.prompt("Reason for rejecting this dividend run:")?.trim() ?? "";
+    if (!reason) return;
+    reject.mutate(reason);
+  };
+  const onCancel = () => {
+    if (cancel.isPending) return;
+    if (!window.confirm("Cancel this dividend run?")) return;
+    cancel.mutate();
+  };
+
+  if (run.isPending) {
+    return (
+      <div className="space-y-5">
+        <PageHeader title="Dividends" breadcrumb="Members / Dividends" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
+  if (run.isError || !data) {
+    return (
+      <div className="space-y-5">
+        <PageHeader title="Dividends" breadcrumb="Members / Dividends" />
+        <EmptyState
+          title="Dividend run could not be loaded"
+          detail={run.error instanceof Error ? run.error.message : "Please try again."}
+          action={<Button onClick={() => void run.refetch()}>Try again</Button>}
+        />
+        <Link to="/dividends" className="text-primary hover:underline">
+          Back to dividend runs
+        </Link>
+      </div>
+    );
+  }
+
+  const lines = data.items ?? [];
+  const totalShares = lines.reduce((sum, line) => sum + line.shares_held, 0);
+  const totalDividend = lines.reduce((sum, line) => sum + line.amount_kobo, 0);
+  const perShareRate = totalShares > 0 ? data.pool_kobo / totalShares : null;
+  const preparedByMe = data.prepared_by === userId;
+  const currentUserId = userId ?? "";
+  const canApprove = canApproveDividendRun(roles, data.status, data.prepared_by, currentUserId);
+  const canReject = canRejectDividendRun(roles, data.status, data.prepared_by, currentUserId);
+  const canCancel = canCancelDividendRun(roles, data.status, data.prepared_by, currentUserId);
+
+  return (
+    <div className="space-y-5">
+      <PageHeader title="Dividends" breadcrumb="Members / Dividends" />
+      <div>
+        <Link to="/dividends" className="text-primary hover:underline">
+          Back to dividend runs
+        </Link>
+      </div>
+      <Card>
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge>{data.status.replaceAll("_", " ")}</Badge>
+          <span className="text-sm text-muted">Record date: {data.record_date}</span>
+          <span className="text-sm text-muted">
+            Pool: <Money kobo={data.pool_kobo} />
+          </span>
+          <span className="text-sm text-muted">
+            Prepared by:{" "}
+            {preparedByMe ? "you" : memberDisplayLabel(memberMap.get(data.prepared_by))}
+          </span>
+          <span className="text-sm text-muted">
+            <DateTime value={data.prepared_at} />
+          </span>
+        </div>
+        {data.rejection_reason && (
+          <p className="mt-3 text-sm text-danger">Rejection reason: {data.rejection_reason}</p>
+        )}
+        {data.status === "unprocessed" && (canApprove || canReject || canCancel) && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {canApprove && (
+              <Button onClick={onApprove} loading={approve.isPending} disabled={approve.isPending}>
+                Approve
+              </Button>
+            )}
+            {canReject && (
+              <Button
+                variant="secondary"
+                onClick={onReject}
+                loading={reject.isPending}
+                disabled={reject.isPending}
+              >
+                Reject
+              </Button>
+            )}
+            {canCancel && (
+              <Button
+                variant="secondary"
+                onClick={onCancel}
+                loading={cancel.isPending}
+                disabled={cancel.isPending}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
+        )}
+        {data.status === "unprocessed" && preparedByMe && roles.includes("admin") && (
+          <p className="mt-3 text-sm text-muted">
+            You prepared this run; another admin must approve it.
+          </p>
+        )}
+      </Card>
+
+      {members.isPending ? (
+        <Skeleton className="h-48 w-full" />
+      ) : lines.length === 0 ? (
+        <EmptyState title="No allocations" detail="This run has no allocated dividend lines." />
+      ) : (
+        <Card>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="p-3">Member</th>
+                  <th className="p-3">Shares held</th>
+                  <th className="p-3">Dividend</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line) => (
+                  <tr key={line.line_id} className="border-b border-border">
+                    <td className="p-3">{memberDisplayLabel(memberMap.get(line.member_id))}</td>
+                    <td className="p-3">{numberFormat.format(line.shares_held)}</td>
+                    <td className="p-3">
+                      <Money kobo={line.amount_kobo} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-border font-semibold">
+                  <td className="p-3">Total</td>
+                  <td className="p-3">{numberFormat.format(totalShares)}</td>
+                  <td className="p-3">
+                    <Money kobo={totalDividend} />
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p className="mt-3 text-sm text-muted">
+            Per-share rate:{" "}
+            {perShareRate !== null
+              ? `${(perShareRate * 100).toFixed(1)}% of share value`
+              : "\u2014"}
+          </p>
+        </Card>
+      )}
+    </div>
+  );
+}
