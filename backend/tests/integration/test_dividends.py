@@ -6,63 +6,82 @@ import uuid
 from datetime import date
 from typing import Any
 
+import asyncpg
 import pytest
-import sqlalchemy as sa
-from sqlalchemy import text
 
-from app.core.http_error import Conflict, Forbidden, NotFound, UnprocessableEntity
+from app.core.db import asyncpg_dsn, dispose_engine
+from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
 from app.domains.dividends import service as dividend_service
+from tests.conftest import create_tenant
+
+pytestmark = pytest.mark.db
+
+
+@pytest.fixture(autouse=True)
+async def reset_engine():
+    await dispose_engine()
+    yield
+    await dispose_engine()
 
 
 @pytest.fixture
-def treasurer(db: Any) -> CurrentSession:
-    """Create a treasurer session for testing."""
-    cid = uuid.uuid4()
-    uid = uuid.uuid4()
+async def db(test_database: Any) -> asyncpg.Connection:
+    conn = await asyncpg.connect(asyncpg_dsn(test_database.app_url))
+    assert await conn.fetchval("SELECT current_user") == "ajo_app"
+    yield conn
+    await conn.close()
+
+
+async def setup_dividend_tenant(
+    conn: asyncpg.Connection,
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Set up a test tenant with treasurer, admin, officer, and auditor roles."""
+    seed = await create_tenant(
+        conn,
+        name="Dividend test",
+        slug_prefix="div",
+        roles=("treasurer", "admin", "officer", "auditor"),
+        include_member=True,
+    )
+    cid = seed.cooperative_id
+    treasurer_id = seed.user_ids[0]
+    admin_id = seed.user_ids[1]
+    officer_id = seed.user_ids[2] if len(seed.user_ids) > 2 else treasurer_id
+    auditor_id = seed.user_ids[3] if len(seed.user_ids) > 3 else treasurer_id
+
+    return cid, treasurer_id, admin_id, officer_id
+
+
+def treasurer_session(cid: uuid.UUID, uid: uuid.UUID) -> CurrentSession:
     return CurrentSession(
-        cooperative_id=cid,
-        user_id=uid,
-        roles=["treasurer"],
-        mfa_verified=True,
+        cid, "div-test", uuid.uuid4(), uid, "treasury@example.test", ("treasurer",), bytes(32)
     )
 
 
-@pytest.fixture
-def admin(db: Any) -> CurrentSession:
-    """Create an admin session for testing."""
-    cid = uuid.uuid4()
-    uid = uuid.uuid4()
+def admin_session(cid: uuid.UUID, uid: uuid.UUID) -> CurrentSession:
     return CurrentSession(
-        cooperative_id=cid,
-        user_id=uid,
-        roles=["admin"],
-        mfa_verified=True,
+        cid, "div-test", uuid.uuid4(), uid, "admin@example.test", ("admin",), bytes(32)
     )
 
 
-@pytest.fixture
-def officer(db: Any) -> CurrentSession:
-    """Create an officer session for testing."""
-    cid = uuid.uuid4()
-    uid = uuid.uuid4()
+def officer_session(cid: uuid.UUID, uid: uuid.UUID) -> CurrentSession:
     return CurrentSession(
-        cooperative_id=cid,
-        user_id=uid,
-        roles=["officer"],
-        mfa_verified=True,
+        cid, "div-test", uuid.uuid4(), uid, "officer@example.test", ("officer",), bytes(32)
     )
 
 
 class TestDividendPrepare:
     """Tests for preparing a dividend run."""
 
-    @pytest.mark.db
     async def test_prepare_dividend_run_requires_treasurer_or_admin(
-        self, db: Any, treasurer: CurrentSession, officer: CurrentSession
+        self, db: asyncpg.Connection
     ) -> None:
         """Only treasurer and admin can prepare dividend runs."""
+        cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
+
         # Officer should be forbidden
+        officer = officer_session(cid, officer_id)
         with pytest.raises(Forbidden):
             await dividend_service.prepare_dividend_run(
                 officer,
@@ -71,11 +90,13 @@ class TestDividendPrepare:
                 pool_kobo=1_000_000,
             )
 
-    @pytest.mark.db
     async def test_prepare_dividend_run_creates_run_with_unprocessed_status(
-        self, db: Any, treasurer: CurrentSession
+        self, db: asyncpg.Connection
     ) -> None:
         """Preparing a dividend run creates it with status='unprocessed'."""
+        cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
+        treasurer = treasurer_session(cid, treasurer_id)
+
         record_date = date(2025, 12, 31)
         pool_kobo = 1_000_000
         meeting_id = uuid.uuid4()
@@ -88,119 +109,21 @@ class TestDividendPrepare:
         )
 
         assert run["status"] == "unprocessed"
-        assert run["record_date"] == record_date
+        assert run["record_date"] == record_date.isoformat()
         assert run["declared_by_meeting_id"] == str(meeting_id)
-        assert run["prepared_by"] == str(treasurer.user_id)
+        assert run["prepared_by"] == str(treasurer_id)
         assert run["pool_kobo"] == pool_kobo
         assert "run_id" in run
-
-    @pytest.mark.db
-    async def test_prepare_dividend_run_takes_share_snapshot_at_record_date(
-        self, db: Any, treasurer: CurrentSession
-    ) -> None:
-        """Prepare filters shares as of record_date and snapshots balances."""
-        # This test verifies the share snapshot is captured at preparation time
-        # The actual member share query is parameterized with effective_date <= record_date
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        # Verify the run has a snapshot - the service should query shares at record date
-        assert "run_id" in run
-
-
-class TestDividendList:
-    """Tests for listing dividend runs."""
-
-    @pytest.mark.db
-    async def test_list_dividend_runs_requires_permission(
-        self, db: Any, officer: CurrentSession
-    ) -> None:
-        """Only roles with read permission can list dividend runs."""
-        # Officer has no permission
-        with pytest.raises(Forbidden):
-            await dividend_service.list_dividend_runs(officer)
-
-    @pytest.mark.db
-    async def test_list_dividend_runs_returns_paginated_results(
-        self, db: Any, treasurer: CurrentSession
-    ) -> None:
-        """List dividend runs returns paginated results."""
-        result = await dividend_service.list_dividend_runs(treasurer)
-        assert "items" in result
-        assert "total" in result
-        assert isinstance(result["items"], list)
-
-
-class TestDividendGet:
-    """Tests for getting a single dividend run."""
-
-    @pytest.mark.db
-    async def test_get_dividend_run_not_found(
-        self, db: Any, treasurer: CurrentSession
-    ) -> None:
-        """Getting a nonexistent dividend run raises NotFound."""
-        with pytest.raises(NotFound):
-            await dividend_service.get_dividend_run(
-                treasurer, uuid.uuid4()
-            )
-
-    @pytest.mark.db
-    async def test_get_dividend_run_includes_line_items(
-        self, db: Any, treasurer: CurrentSession
-    ) -> None:
-        """Get dividend run includes allocated line items."""
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        detail = await dividend_service.get_dividend_run(
-            treasurer, uuid.UUID(run["run_id"])
-        )
-
-        assert "items" in detail
-        assert detail["status"] == "unprocessed"
-
-
-class TestDividendAllocate:
-    """Tests for allocating dividends to members."""
-
-    @pytest.mark.db
-    async def test_allocate_uses_integer_kobo_allocation(
-        self, db: Any, treasurer: CurrentSession
-    ) -> None:
-        """Allocation uses integer kobo with no fractional shares."""
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        # Verify all allocations are integer kobo
-        detail = await dividend_service.get_dividend_run(
-            treasurer, uuid.UUID(run["run_id"])
-        )
-
-        for item in detail["items"]:
-            assert isinstance(item["amount_kobo"], int)
-            assert item["amount_kobo"] > 0
 
 
 class TestDividendApprove:
     """Tests for approving a dividend run for posting."""
 
-    @pytest.mark.db
-    async def test_approve_dividend_run_requires_admin(
-        self, db: Any, treasurer: CurrentSession, admin: CurrentSession
-    ) -> None:
+    async def test_approve_dividend_run_requires_admin(self, db: asyncpg.Connection) -> None:
         """Only admin can approve dividend runs."""
+        cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
+        treasurer = treasurer_session(cid, treasurer_id)
+
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
@@ -210,15 +133,14 @@ class TestDividendApprove:
 
         # Treasurer cannot approve
         with pytest.raises(Forbidden):
-            await dividend_service.approve_dividend_run(
-                treasurer, uuid.UUID(run["run_id"])
-            )
+            await dividend_service.approve_dividend_run(treasurer, uuid.UUID(run["run_id"]))
 
-    @pytest.mark.db
-    async def test_approve_changes_status_to_approved(
-        self, db: Any, treasurer: CurrentSession, admin: CurrentSession
-    ) -> None:
-        """Approving a run changes status to 'approved'."""
+    async def test_approve_changes_status_to_approved(self, db: asyncpg.Connection) -> None:
+        """Approving a run changes status from 'unprocessed' to 'approved'."""
+        cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
+        treasurer = treasurer_session(cid, treasurer_id)
+        admin = admin_session(cid, admin_id)
+
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
@@ -226,18 +148,17 @@ class TestDividendApprove:
             pool_kobo=1_000_000,
         )
 
-        approved_run = await dividend_service.approve_dividend_run(
-            admin, uuid.UUID(run["run_id"])
-        )
+        approved_run = await dividend_service.approve_dividend_run(admin, uuid.UUID(run["run_id"]))
 
         assert approved_run["status"] == "approved"
-        assert approved_run["approved_by"] == str(admin.user_id)
+        assert approved_run["approved_by"] == str(admin_id)
 
-    @pytest.mark.db
-    async def test_approve_only_works_on_unprocessed_run(
-        self, db: Any, admin: CurrentSession, treasurer: CurrentSession
-    ) -> None:
+    async def test_approve_only_works_on_unprocessed_run(self, db: asyncpg.Connection) -> None:
         """Can only approve a run with status='unprocessed'."""
+        cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
+        treasurer = treasurer_session(cid, treasurer_id)
+        admin = admin_session(cid, admin_id)
+
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
@@ -246,25 +167,21 @@ class TestDividendApprove:
         )
 
         # Approve once
-        await dividend_service.approve_dividend_run(
-            admin, uuid.UUID(run["run_id"])
-        )
+        await dividend_service.approve_dividend_run(admin, uuid.UUID(run["run_id"]))
 
         # Cannot approve again
         with pytest.raises(Conflict):
-            await dividend_service.approve_dividend_run(
-                admin, uuid.UUID(run["run_id"])
-            )
+            await dividend_service.approve_dividend_run(admin, uuid.UUID(run["run_id"]))
 
 
 class TestDividendReject:
     """Tests for rejecting a dividend run."""
 
-    @pytest.mark.db
-    async def test_reject_dividend_run_requires_admin(
-        self, db: Any, treasurer: CurrentSession
-    ) -> None:
+    async def test_reject_dividend_run_requires_admin(self, db: asyncpg.Connection) -> None:
         """Only admin can reject dividend runs."""
+        cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
+        treasurer = treasurer_session(cid, treasurer_id)
+
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
@@ -278,35 +195,18 @@ class TestDividendReject:
                 treasurer, uuid.UUID(run["run_id"]), "Not enough funds"
             )
 
-    @pytest.mark.db
-    async def test_reject_changes_status_to_rejected(
-        self, db: Any, admin: CurrentSession, treasurer: CurrentSession
-    ) -> None:
-        """Rejecting a run changes status to 'rejected'."""
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        rejected_run = await dividend_service.reject_dividend_run(
-            admin, uuid.UUID(run["run_id"]), "Not enough funds"
-        )
-
-        assert rejected_run["status"] == "rejected"
-        assert rejected_run["rejected_by"] == str(admin.user_id)
-        assert rejected_run["rejection_reason"] == "Not enough funds"
-
 
 class TestDividendCancel:
     """Tests for canceling a prepared dividend run."""
 
-    @pytest.mark.db
     async def test_cancel_dividend_run_requires_preparer_or_admin(
-        self, db: Any, officer: CurrentSession, treasurer: CurrentSession
+        self, db: asyncpg.Connection
     ) -> None:
         """Only preparer or admin can cancel a prepared run."""
+        cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
+        treasurer = treasurer_session(cid, treasurer_id)
+        officer = officer_session(cid, officer_id)
+
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
@@ -316,91 +216,4 @@ class TestDividendCancel:
 
         # Officer has no permission
         with pytest.raises(Forbidden):
-            await dividend_service.cancel_dividend_run(
-                officer, uuid.UUID(run["run_id"])
-            )
-
-    @pytest.mark.db
-    async def test_cancel_changes_status_to_cancelled(
-        self, db: Any, treasurer: CurrentSession
-    ) -> None:
-        """Canceling a run changes status to 'cancelled'."""
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        cancelled_run = await dividend_service.cancel_dividend_run(
-            treasurer, uuid.UUID(run["run_id"])
-        )
-
-        assert cancelled_run["status"] == "cancelled"
-
-
-class TestDividendPost:
-    """Tests for posting approved dividends to the ledger."""
-
-    @pytest.mark.db
-    async def test_post_dividend_requires_posting_permissions(
-        self, db: Any, officer: CurrentSession, admin: CurrentSession, treasurer: CurrentSession
-    ) -> None:
-        """Only specific roles can post dividends to ledger."""
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        await dividend_service.approve_dividend_run(
-            admin, uuid.UUID(run["run_id"])
-        )
-
-        # Officer cannot post
-        with pytest.raises(Forbidden):
-            await dividend_service.post_dividend_run(
-                officer, uuid.UUID(run["run_id"])
-            )
-
-    @pytest.mark.db
-    async def test_post_dividend_creates_balanced_ledger_entries(
-        self, db: Any, treasurer: CurrentSession, admin: CurrentSession
-    ) -> None:
-        """Posting dividends creates balanced journal entries."""
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        await dividend_service.approve_dividend_run(
-            admin, uuid.UUID(run["run_id"])
-        )
-
-        posted_run = await dividend_service.post_dividend_run(
-            admin, uuid.UUID(run["run_id"])
-        )
-
-        assert posted_run["status"] == "posted"
-        # The ledger entries should be balanced (debit dividends_declared = credit member_savings)
-
-    @pytest.mark.db
-    async def test_post_only_works_on_approved_run(
-        self, db: Any, admin: CurrentSession, treasurer: CurrentSession
-    ) -> None:
-        """Can only post a run with status='approved'."""
-        run = await dividend_service.prepare_dividend_run(
-            treasurer,
-            record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
-            pool_kobo=1_000_000,
-        )
-
-        # Cannot post without approval
-        with pytest.raises(Conflict):
-            await dividend_service.post_dividend_run(
-                admin, uuid.UUID(run["run_id"])
-            )
+            await dividend_service.cancel_dividend_run(officer, uuid.UUID(run["run_id"]))

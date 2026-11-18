@@ -10,9 +10,14 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import transaction
-from app.core.http_error import Conflict, Forbidden, NotFound
+from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
-from app.shared.permissions import _role
+
+
+def _role(current: CurrentSession, allowed: set[str]) -> None:
+    """Check that current user has one of the allowed roles."""
+    if not allowed.intersection(current.roles):
+        raise Forbidden("This role cannot perform this action")
 
 
 async def prepare_dividend_run(
@@ -188,9 +193,7 @@ async def list_dividend_runs(
         }
 
 
-async def get_dividend_run(
-    current: CurrentSession, run_id: uuid.UUID
-) -> dict[str, Any]:
+async def get_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
     """Get a single dividend run with its allocated lines.
 
     Args:
@@ -241,9 +244,7 @@ async def get_dividend_run(
         return run_dict
 
 
-async def approve_dividend_run(
-    current: CurrentSession, run_id: uuid.UUID
-) -> dict[str, Any]:
+async def approve_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
     """Approve a dividend run for posting.
 
     Only admin role is allowed.
@@ -269,9 +270,7 @@ async def approve_dividend_run(
     async with transaction(cid) as session:
         # Check current status
         status_result = await session.execute(
-            text(
-                "SELECT status FROM dividend_runs WHERE id = :run_id AND cooperative_id = :cid"
-            ),
+            text("SELECT status FROM dividend_runs WHERE id = :run_id AND cooperative_id = :cid"),
             {"run_id": run_id, "cid": cid},
         )
         row = status_result.first()
@@ -330,9 +329,7 @@ async def reject_dividend_run(
     async with transaction(cid) as session:
         # Check current status
         status_result = await session.execute(
-            text(
-                "SELECT status FROM dividend_runs WHERE id = :run_id AND cooperative_id = :cid"
-            ),
+            text("SELECT status FROM dividend_runs WHERE id = :run_id AND cooperative_id = :cid"),
             {"run_id": run_id, "cid": cid},
         )
         row = status_result.first()
@@ -363,9 +360,7 @@ async def reject_dividend_run(
         return run_dict
 
 
-async def cancel_dividend_run(
-    current: CurrentSession, run_id: uuid.UUID
-) -> dict[str, Any]:
+async def cancel_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
     """Cancel a prepared dividend run.
 
     Can be cancelled by the preparer or admin.
@@ -427,9 +422,7 @@ async def cancel_dividend_run(
         return run_dict
 
 
-async def post_dividend_run(
-    current: CurrentSession, run_id: uuid.UUID
-) -> dict[str, Any]:
+async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[str, Any]:
     """Post approved dividend run to ledger.
 
     Creates balanced journal entries:

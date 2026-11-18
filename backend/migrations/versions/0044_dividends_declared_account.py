@@ -30,8 +30,7 @@ def upgrade() -> None:
         WHERE NOT EXISTS (
             SELECT 1 FROM accounts
             WHERE cooperative_id = c.id AND code = 'dividends_declared'
-        );
-    """
+        )"""
     )
 
 
@@ -39,6 +38,5 @@ def downgrade() -> None:
     """Remove dividends_declared account from all cooperatives."""
     op.execute(
         """DELETE FROM accounts
-           WHERE code = 'dividends_declared';
-    """
+           WHERE code = 'dividends_declared'"""
     )

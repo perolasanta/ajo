@@ -25,9 +25,7 @@ class PrepareDividendRunRequest(BaseModel):
     declared_by_meeting_id: str = Field(
         description="UUID of the meeting that declared the dividend"
     )
-    pool_kobo: int = Field(
-        description="Total dividend pool in integer kobo", gt=0
-    )
+    pool_kobo: int = Field(description="Total dividend pool in integer kobo", gt=0)
 
 
 class DividendLineResponse(BaseModel):
@@ -120,9 +118,7 @@ async def list_dividend_runs(
 
     Requires: treasurer, admin, or officer role
     """
-    result = await dividend_service.list_dividend_runs(
-        current, page=page, page_size=page_size
-    )
+    result = await dividend_service.list_dividend_runs(current, page=page, page_size=page_size)
     return DividendRunListResponse(**result)
 
 
@@ -181,9 +177,7 @@ async def reject_dividend_run(
 
     Requires: admin role
     """
-    result = await dividend_service.reject_dividend_run(
-        current, uuid.UUID(run_id), request.reason
-    )
+    result = await dividend_service.reject_dividend_run(current, uuid.UUID(run_id), request.reason)
     return DividendRunResponse(**result)
 
 
