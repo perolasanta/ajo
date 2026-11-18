@@ -6,7 +6,6 @@ Create Date: 2026-01-16 12:00:00.000000
 """
 
 from alembic import op
-import sqlalchemy as sa
 
 revision = "0043"
 down_revision = "0042"
@@ -23,7 +22,7 @@ def upgrade() -> None:
             record_date DATE NOT NULL,
             declared_by_meeting_id UUID NOT NULL,
             pool_kobo BIGINT NOT NULL CHECK (pool_kobo > 0),
-            prepared_by UUID NOT NULL REFERENCES users(id),
+            prepared_by UUID NOT NULL,
             prepared_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             approved_by UUID,
             approved_at TIMESTAMPTZ,
@@ -36,7 +35,11 @@ def upgrade() -> None:
                 'unprocessed', 'approved', 'rejected', 'cancelled', 'posted'
             )),
             created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (cooperative_id, prepared_by) REFERENCES users(cooperative_id, id),
+            FOREIGN KEY (cooperative_id, approved_by) REFERENCES users(cooperative_id, id),
+            FOREIGN KEY (cooperative_id, rejected_by) REFERENCES users(cooperative_id, id),
+            FOREIGN KEY (cooperative_id, posted_by) REFERENCES users(cooperative_id, id)
         )"""
     )
     op.execute(
@@ -63,10 +66,11 @@ def upgrade() -> None:
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             cooperative_id UUID NOT NULL REFERENCES cooperatives(id) ON DELETE CASCADE,
             run_id UUID NOT NULL REFERENCES dividend_runs(id) ON DELETE CASCADE,
-            member_id UUID NOT NULL REFERENCES members(id),
+            member_id UUID NOT NULL,
             shares_held BIGINT NOT NULL CHECK (shares_held > 0),
             amount_kobo BIGINT NOT NULL CHECK (amount_kobo > 0),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (cooperative_id, member_id) REFERENCES members(cooperative_id, id)
         )"""
     )
     op.execute(

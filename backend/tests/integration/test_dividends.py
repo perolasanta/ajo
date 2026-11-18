@@ -10,7 +10,7 @@ import asyncpg
 import pytest
 
 from app.core.db import asyncpg_dsn, dispose_engine
-from app.core.errors import Conflict, Forbidden, NotFound
+from app.core.errors import Conflict, Forbidden
 from app.domains.auth.service import CurrentSession
 from app.domains.dividends import service as dividend_service
 from tests.conftest import create_tenant
