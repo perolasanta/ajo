@@ -88,6 +88,12 @@ def upgrade() -> None:
             USING (cooperative_id = app_current_cooperative_id())
             WITH CHECK (cooperative_id = app_current_cooperative_id())"""
     )
+    op.execute(
+        """GRANT SELECT, INSERT, UPDATE ON dividend_runs TO ajo_app"""
+    )
+    op.execute(
+        """GRANT SELECT, INSERT ON dividend_lines TO ajo_app"""
+    )
 
 
 def downgrade() -> None:

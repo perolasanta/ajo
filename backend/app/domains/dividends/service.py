@@ -84,9 +84,10 @@ async def prepare_dividend_run(
                         SUM(l.credit_kobo) as shares_kobo
                     FROM journal_lines l
                     JOIN accounts a ON a.id = l.account_id
+                    JOIN journal_entries e ON e.id = l.entry_id
                     WHERE l.cooperative_id = :cid
                       AND a.code = 'member_shares'
-                      AND l.effective_date <= :record_date
+                      AND e.effective_date <= :record_date
                     GROUP BY l.member_id
                     HAVING SUM(l.credit_kobo) > 0
                 )
@@ -127,8 +128,6 @@ async def prepare_dividend_run(
                             "amount_kobo": amount_kobo,
                         },
                     )
-
-        await session.commit()
 
         result = await _get_dividend_run_dict(session, cid, run_id)
         if not result:
@@ -292,8 +291,6 @@ async def approve_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> di
             {"run_id": run_id, "uid": uid, "cid": cid},
         )
 
-        await session.commit()
-
         run_dict = await _get_dividend_run_dict(session, cid, run_id)
         if not run_dict:
             raise RuntimeError(f"Failed to retrieve dividend run {run_id}")
@@ -351,8 +348,6 @@ async def reject_dividend_run(
             ),
             {"run_id": run_id, "uid": uid, "cid": cid, "reason": reason},
         )
-
-        await session.commit()
 
         run_dict = await _get_dividend_run_dict(session, cid, run_id)
         if not run_dict:
@@ -413,8 +408,6 @@ async def cancel_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dic
             ),
             {"run_id": run_id, "cid": cid},
         )
-
-        await session.commit()
 
         run_dict = await _get_dividend_run_dict(session, cid, run_id)
         if not run_dict:
@@ -576,8 +569,6 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
             ),
             {"run_id": run_id, "uid": uid, "cid": cid},
         )
-
-        await session.commit()
 
         run_dict = await _get_dividend_run_dict(session, cid, run_id)
         if not run_dict:
