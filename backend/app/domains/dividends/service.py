@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 from typing import Any
@@ -450,7 +451,7 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
         status_result = await session.execute(
             text(
                 """SELECT
-                    status, pool_kobo, id
+                    status, pool_kobo, id, record_date
                 FROM dividend_runs
                 WHERE id = :run_id AND cooperative_id = :cid"""
             ),
@@ -461,7 +462,7 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
         if not row:
             raise NotFound(f"Dividend run {run_id} not found")
 
-        status, pool_kobo, run_id_check = row
+        status, pool_kobo, run_id_check, record_date = row
 
         if status != "approved":
             raise Conflict(f"Cannot post run with status={status}")
@@ -494,74 +495,38 @@ async def post_dividend_run(current: CurrentSession, run_id: uuid.UUID) -> dict[
         if not lines:
             raise Conflict("Dividend run has no allocated lines")
 
-        # Create journal entry
-        journal_entry_id = uuid.uuid4()
-        entry_date = date.today()
-
-        await session.execute(
+        # Build lines for post_journal_entry: debit dividends_declared, credit each member_savings
+        financial_year = record_date.year
+        journal_lines = [
+            {
+                "account_id": str(accounts["dividends_declared"]),
+                "debit_kobo": pool_kobo,
+                "credit_kobo": 0,
+            }
+        ] + [
+            {
+                "account_id": str(accounts["member_savings"]),
+                "member_id": str(member_id),
+                "debit_kobo": 0,
+                "credit_kobo": int(amount_kobo),
+            }
+            for member_id, amount_kobo in lines
+        ]
+        await session.scalar(
             text(
-                """INSERT INTO journal_entries (
-                    id, cooperative_id, entry_date, description, posted_by
-                ) VALUES (
-                    :je_id, :cid, :entry_date, :desc, :uid
-                )"""
+                "SELECT post_journal_entry(:cid, :date, 'dividend', :source,"
+                " :description, :actor, :key, CAST(:lines AS jsonb), NULL)"
             ),
             {
-                "je_id": journal_entry_id,
                 "cid": cid,
-                "entry_date": entry_date,
-                "desc": f"Dividend allocation for {run_id}",
-                "uid": uid,
+                "date": record_date,
+                "source": run_id,
+                "description": f"Dividend {financial_year}",
+                "actor": uid,
+                "key": f"dividend:{run_id}",
+                "lines": json.dumps(journal_lines),
             },
         )
-
-        # Create debit entry: dividends_declared
-        await session.execute(
-            text(
-                """INSERT INTO journal_lines (
-                    id, cooperative_id, journal_entry_id, account_id,
-                    debit_kobo, credit_kobo, effective_date, description
-                ) VALUES (
-                    :line_id, :cid, :je_id, :acct_id,
-                    :debit, :credit, :eff_date, :desc
-                )"""
-            ),
-            {
-                "line_id": uuid.uuid4(),
-                "cid": cid,
-                "je_id": journal_entry_id,
-                "acct_id": accounts["dividends_declared"],
-                "debit": pool_kobo,
-                "credit": 0,
-                "eff_date": entry_date,
-                "desc": "Dividend pool declared",
-            },
-        )
-
-        # Create credit entries: member_savings for each allocation
-        for member_id, amount_kobo in lines:
-            await session.execute(
-                text(
-                    """INSERT INTO journal_lines (
-                        id, cooperative_id, journal_entry_id, account_id,
-                        member_id, debit_kobo, credit_kobo, effective_date, description
-                    ) VALUES (
-                        :line_id, :cid, :je_id, :acct_id,
-                        :member_id, :debit, :credit, :eff_date, :desc
-                    )"""
-                ),
-                {
-                    "line_id": uuid.uuid4(),
-                    "cid": cid,
-                    "je_id": journal_entry_id,
-                    "acct_id": accounts["member_savings"],
-                    "member_id": member_id,
-                    "debit": 0,
-                    "credit": amount_kobo,
-                    "eff_date": entry_date,
-                    "desc": "Dividend allocation",
-                },
-            )
 
         # Update run status to posted
         await session.execute(

@@ -78,6 +78,7 @@ STATEMENT_QUERY = text(
              WHEN source_type IN ('withdrawal','member_withdrawal') THEN 'withdrawal'
              WHEN source_type = 'share_purchase' THEN 'share purchase'
              WHEN source_type IN ('repayment','loan_repayment') THEN 'repayment'
+             WHEN source_type = 'dividend' THEN 'Dividend ' || EXTRACT(year FROM e.effective_date)::int::text
              ELSE source_type
            END AS type,
            amount_kobo, running_balance_kobo, total
