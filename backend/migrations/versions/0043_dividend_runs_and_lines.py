@@ -56,10 +56,8 @@ def upgrade() -> None:
     )
     op.execute(
         """CREATE POLICY dividend_runs_cooperative_isolation ON dividend_runs
-            USING (cooperative_id IN (
-                SELECT cooperative_id FROM user_roles
-                WHERE user_id = CURRENT_USER_ID()
-            ))"""
+            USING (cooperative_id = app_current_cooperative_id())
+            WITH CHECK (cooperative_id = app_current_cooperative_id())"""
     )
     op.execute(
         """CREATE TABLE dividend_lines (
@@ -87,10 +85,8 @@ def upgrade() -> None:
     )
     op.execute(
         """CREATE POLICY dividend_lines_cooperative_isolation ON dividend_lines
-            USING (cooperative_id IN (
-                SELECT cooperative_id FROM user_roles
-                WHERE user_id = CURRENT_USER_ID()
-            ))"""
+            USING (cooperative_id = app_current_cooperative_id())
+            WITH CHECK (cooperative_id = app_current_cooperative_id())"""
     )
 
 
