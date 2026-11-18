@@ -53,6 +53,7 @@ def _candidates() -> list[dict[str, Any]]:
                 "disbursements": {"awaiting_authorization": 2, "awaiting_confirmation": 2},
                 "role_changes": {"awaiting_approval": 2},
                 "settings": {"policy_approval": 2, "product_approval": 2},
+                "dividends": {"awaiting_approval": 2},
             },
         ),
         (
@@ -132,4 +133,5 @@ async def test_notification_summary_unions_roles_but_never_duplicates_entities(
         "withdrawal_requests": {"awaiting_approval": 2},
         "share_purchases": {"awaiting_approval": 2},
         "settings": {"policy_approval": 2, "product_approval": 2},
+        "dividends": {"awaiting_approval": 2},
     }

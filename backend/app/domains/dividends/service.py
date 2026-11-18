@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import transaction
 from app.core.errors import Conflict, Forbidden, NotFound
 from app.domains.auth.service import CurrentSession
+from app.domains.notifications.eligibility import DIVIDEND_APPROVAL
+from app.domains.notifications.outbox import enqueue_action_notifications_safely
 
 
 def _role(current: CurrentSession, allowed: set[str]) -> None:
@@ -132,6 +134,7 @@ async def prepare_dividend_run(
         result = await _get_dividend_run_dict(session, cid, run_id)
         if not result:
             raise RuntimeError(f"Failed to retrieve created dividend run {run_id}")
+        await enqueue_action_notifications_safely(session, cid, DIVIDEND_APPROVAL, run_id)
         return result
 
 

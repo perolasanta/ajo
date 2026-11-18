@@ -31,6 +31,7 @@ WITHDRAWAL_APPROVAL = "withdrawal_approval"
 SHARE_PURCHASE_APPROVAL = "share_purchase_needs_approval"
 POLICY_APPROVAL = "policy_approval"
 PRODUCT_APPROVAL = "product_approval"
+DIVIDEND_APPROVAL = "dividend_approval"
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,14 @@ ACTION_SPECS = {
         "A product change needs your approval.",
         "/settings?product={id}",
     ),
+    DIVIDEND_APPROVAL: ActionSpec(
+        frozenset({"admin"}),
+        "dividends",
+        "Dividends",
+        "dividend approval",
+        "A dividend run needs your approval.",
+        "/dividends/{id}",
+    ),
 }
 
 _CASH_DEPOSIT_OVERDUE_ENTITY_ID_SQL = f"""(
@@ -305,6 +314,12 @@ _CANDIDATE_SQL = {
         FROM loan_products p
         WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
           AND (CAST(:entity_id AS uuid) IS NULL OR p.id=CAST(:entity_id AS uuid))
+    """,
+    DIVIDEND_APPROVAL: """
+        SELECT r.id AS entity_id, ARRAY[r.prepared_by]::uuid[] AS excluded_user_ids
+        FROM dividend_runs r
+        WHERE r.cooperative_id=:cooperative_id AND r.status='unprocessed'
+          AND (CAST(:entity_id AS uuid) IS NULL OR r.id=CAST(:entity_id AS uuid))
     """,
 }
 
@@ -508,6 +523,10 @@ _ALL_ACTION_CANDIDATES_SQL = text(  # noqa: S608 - fragments are module-level co
                        AND al.entity_type='loan_product' AND al.entity_id=p.id::text
                        AND al.action='loan_product_proposed'), ARRAY[]::uuid[])
       FROM loan_products p WHERE p.cooperative_id=:cooperative_id AND p.status='proposed'
+    UNION ALL
+    SELECT 'dividend_approval', r.id, ARRAY[r.prepared_by]::uuid[]
+      FROM dividend_runs r
+     WHERE r.cooperative_id=:cooperative_id AND r.status='unprocessed'
     """  # noqa: S608 - fragments are module-level constants, never user input.
     + f"""
     UNION ALL

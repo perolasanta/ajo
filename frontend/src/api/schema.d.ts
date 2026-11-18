@@ -443,6 +443,7 @@ export type NotificationSummary = {
   withdrawal_requests?: { awaiting_approval?: number };
   share_purchases?: { awaiting_approval?: number };
   settings?: { policy_approval?: number; product_approval?: number };
+  dividends?: { awaiting_approval?: number };
 };
 
 export type StaffRole = "officer" | "committee" | "treasurer" | "admin" | "auditor";

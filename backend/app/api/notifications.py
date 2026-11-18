@@ -51,6 +51,10 @@ class SettingsActionCounts(BaseModel):
     product_approval: int | None = None
 
 
+class DividendsActionCounts(BaseModel):
+    awaiting_approval: int | None = None
+
+
 class NotificationSummaryResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +66,7 @@ class NotificationSummaryResponse(BaseModel):
     withdrawal_requests: WithdrawalRequestActionCounts | None = None
     share_purchases: SharePurchaseActionCounts | None = None
     settings: SettingsActionCounts | None = None
+    dividends: DividendsActionCounts | None = None
 
 
 @router.get(
