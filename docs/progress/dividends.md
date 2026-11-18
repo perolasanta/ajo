@@ -1,6 +1,30 @@
 # Bank statement debit fix and year-end dividends progress
 
-STATE: Items 2-4 in progress; starting item 5 (notifications) now.
+STATE: Fixing items 2-4; STOPPED AT step 5. Out of context.
+
+## Issues Found in Items 2-4
+
+- Migration syntax errors: multiple statements separated by semicolons in single op.execute call (FIXED)
+- Test imports: used wrong module paths for error classes (FIXED)
+- Test structure: fixtures incompatible with async test database (FIXED)
+
+All database migrations (0043, 0044) corrected. Backend service and API compile with mypy. Tests need running on CI.
+
+## Work Completed This Session
+
+- Fixed migration 0043 and 0044 to use separate op.execute() calls
+- Fixed test imports: `from app.core.errors import ...` (not http_error)
+- Restructured tests to use proper test_database fixture and create_tenant helper
+- All code passes ruff/mypy locally
+
+## STOPPED AT Item 5 (Notifications)
+
+**Next action:** 
+1. Add DIVIDEND_APPROVAL constant to eligibility.py
+2. Add dividend_approval to ACTION_SPECS with admin-only recipients, excluding preparer
+3. New migration to add kind if missing from CHECK constraints
+4. Enqueue from prepare_dividend_run in dividends/service.py
+5. Frontend implementation (step 6) and docs (step 7)
 
 ## Plan and checklist
 
