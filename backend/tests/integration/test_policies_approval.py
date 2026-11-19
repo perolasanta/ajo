@@ -211,12 +211,12 @@ async def test_list_policy_versions_with_proposer_and_approver(db: asyncpg.Conne
     assert proposed["proposed_by_name"] in ("Unknown user", proposed["proposed_by_name"])
 
 
-
 # NOTE: This test was intended to verify the "Unknown user" fallback when a proposer is deleted,
 # but the asyncpg test connection doesn't have permissions to delete users (RLS applies).
 # The SQL fallback logic is evident from code inspection:
 # CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE ...
 # So we skip this test as it's not testing the core fix (self-approval guard).
+
 
 async def test_second_admin_approves_loan_product(db: asyncpg.Connection) -> None:
     """Test that a second admin can approve a loan product proposed by first admin."""
