@@ -331,9 +331,9 @@ async def list_loan_products(current: CurrentSession) -> list[dict[str, Any]]:
         result = await session.execute(
             text("""
                 SELECT p.id, p.code, p.name, p.interest_method, p.annual_rate_bps,
-                       min_amount_kobo, max_amount_kobo, min_tenor_months,
-                       max_tenor_months, fee_bps, guarantors_required, status,
-                       supersedes_id, p.effective_from, p.created_at, approved_at,
+                       p.min_amount_kobo, p.max_amount_kobo, p.min_tenor_months,
+                       p.max_tenor_months, p.fee_bps, p.guarantors_required, p.status,
+                       p.supersedes_id, p.effective_from, p.created_at, p.approved_at,
                        proposed.actor_user_id AS proposed_by,
                        CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
                        proposer.email AS proposed_by_email,
