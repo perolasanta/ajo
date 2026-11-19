@@ -462,6 +462,7 @@ export type SettingsPolicyVersion = {
   confirmation_expiry_minutes: number;
   otp_validity_seconds: number;
   cash_banking_days: number;
+  dividend_frequency: string;
   settings: Record<string, unknown>;
   proposed_by?: string;
   approved_by?: string | null;
@@ -488,6 +489,10 @@ export type SettingsLoanProduct = LoanProduct & {
 
 export function getPolicyVersions(): Promise<SettingsPolicyVersion[]> {
   return request<SettingsPolicyVersion[]>("/policies/versions");
+}
+export function getEffectivePolicy(onDate?: string): Promise<SettingsPolicyVersion> {
+  const qs = onDate ? `?on_date=${encodeURIComponent(onDate)}` : "";
+  return request<SettingsPolicyVersion>(`/policies/effective${qs}`);
 }
 
 export function getSettingsLoanProducts(): Promise<SettingsLoanProduct[]> {

@@ -28,6 +28,9 @@ class PolicyBody(BaseModel):
     confirmation_expiry_minutes: int = Field(default=1440, gt=0)
     otp_validity_seconds: int = Field(default=300, gt=0)
     cash_banking_days: int = Field(default=2, ge=1, le=30)
+    dividend_frequency: str = Field(
+        default="annual", pattern="^(annual|half_yearly|quarterly|monthly)$"
+    )
     settings: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(min_length=1, max_length=1000)
 

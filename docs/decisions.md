@@ -254,6 +254,8 @@ Role separation: the treasurer prepares and may cancel an `unprocessed` run; an 
 
 Approval changes status to `approved`. Posting creates one balanced journal entry with `source_type='dividend'` debiting the cooperative's `dividends_declared` equity account and crediting each member's `member_savings` account. The entry description is `Dividend <financial_year>` and the idempotency key is `dividend:<run_id>`, preventing double posting. Posting sets status to `posted`. Rejection sets status to `rejected` with a reason and actor. Cancellation sets status to `cancelled`.
 
+**Implementation note (fix/dividends-ledger-and-periods):** The approve endpoint now posts atomically in one step; there is no separate post step in the UI or API (the `/post` endpoint is kept for idempotent repair only). Status after approval is `posted` directly.
+
 The member statement labels any `source_type='dividend'` journal entry as `Dividend <year>` derived from the entry's effective date.
 
 Admin users receive a `dividend_approval` action notification when a run is prepared. The preparer is excluded from recipients even if they also hold the admin role.
@@ -265,3 +267,17 @@ Admin users receive a `dividend_approval` action notification when a run is prep
 **TODO:** Define tax rules — clarify whether withholding tax applies to cooperative dividends in the relevant jurisdiction and how Ajo should compute and record it.
 
 **TODO:** Define the interplay with member exit — clarify how a declared but un-posted dividend or a posted dividend in a closed savings account is handled when a member exits the cooperative.
+
+**Implemented (Unit 3, fix/dividends-ledger-and-periods):** Dividend frequency is configurable per cooperative via the versioned policy table. The `dividend_frequency` column (CHECK `annual` | `half_yearly` | `quarterly` | `monthly`, default `annual`) is added in migration 0048. Period keys are `'2026'` (annual), `'2026-H1'`/`'2026-H2'` (half-yearly), `'2026-Q1'`...`'2026-Q4'` (quarterly), `'2026-M01'`...`'2026-M12'` (monthly). Calendar-year periods only. The partial unique index enforces one active run per period for any key shape. A run prepared under one frequency stays valid if the frequency changes later.
+
+**TODO:** Financial-year start month — periods are calendar-year for now. Add a `fiscal_year_start_month` setting to support cooperatives with April-March financial years.
+
+**TODO:** Payout — dividends credit member savings within Ajo; decide whether members can withdraw to bank or receive cash and what approval steps are required.
+
+**TODO:** Proration — all shares held at record date receive a full allocation; define rules for mid-period share purchases.
+
+**TODO:** Tax — clarify withholding tax applicability and how Ajo should compute and record it.
+
+**TODO:** Member exit — define how a declared but un-posted dividend or posted dividend in a closed savings account is handled.
+
+**TODO:** Financial-year start month — currently all periods use calendar-year boundaries. Add a cooperative policy setting for the financial year start month (default January) so that `'2026'` means the 12-month window starting from that month.

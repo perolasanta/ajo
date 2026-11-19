@@ -44,6 +44,7 @@ type FieldDef = {
   min?: number;
   max?: number;
   options?: string[];
+  optionLabels?: Record<string, string>;
 };
 
 const policyFields: FieldDef[] = [
@@ -114,6 +115,18 @@ const policyFields: FieldDef[] = [
     max: 30,
   },
   {
+    key: "dividend_frequency",
+    label: "Dividend frequency",
+    help: "How often the cooperative pays dividends.",
+    options: ["annual", "half_yearly", "quarterly", "monthly"],
+    optionLabels: {
+      annual: "Every year",
+      half_yearly: "Every half year",
+      quarterly: "Every quarter",
+      monthly: "Every month",
+    } as Record<string, string>,
+  },
+  {
     key: "savings_backing_percent",
     label: "Savings backing",
     help: "Share of the loan principal backed by savings.",
@@ -165,6 +178,7 @@ function policyValues(policy?: EffectivePolicy | null): Record<string, string> {
     confirmation_expiry_minutes: String(policy.confirmation_expiry_minutes),
     otp_validity_seconds: String(policy.otp_validity_seconds),
     cash_banking_days: String(policy.cash_banking_days),
+    dividend_frequency: policy.dividend_frequency ?? "annual",
     savings_backing_percent: (Number(settings.savings_backing_bps ?? 0) / 100).toFixed(2),
     min_membership_months: String(settings.min_membership_months ?? 0),
     guarantors_must_be_active: String(settings.guarantors_must_be_active ?? true),
@@ -307,6 +321,7 @@ export default function CooperativeSettingsPage() {
         confirmation_expiry_minutes: Number(formValues.confirmation_expiry_minutes),
         otp_validity_seconds: Number(formValues.otp_validity_seconds),
         cash_banking_days: Number(formValues.cash_banking_days),
+        dividend_frequency: formValues.dividend_frequency,
         settings: {
           savings_backing_bps: annualPercentToBps(formValues.savings_backing_percent),
           min_membership_months: Number(formValues.min_membership_months),

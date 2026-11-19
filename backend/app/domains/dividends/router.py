@@ -22,10 +22,27 @@ class PrepareDividendRunRequest(BaseModel):
     record_date: date = Field(
         description="Effective date for share snapshot (date cutoff for membership)"
     )
-    declared_by_meeting_id: str = Field(
-        description="UUID of the meeting that declared the dividend"
+    meeting_or_resolution: str | None = Field(
+        default=None,
+        description="Optional meeting or resolution reference, e.g. 'AGM 2026'",
     )
     pool_kobo: int = Field(description="Total dividend pool in integer kobo", gt=0)
+    period_key: str | None = Field(
+        default=None,
+        description=(
+            "Period key computed by the frontend from the cooperative's dividend frequency: "
+            "'2026' (annual), '2026-H1' (half-yearly), '2026-Q3' (quarterly), '2026-M11' (monthly). "
+            "When omitted, falls back to financial_year for backward compatibility."
+        ),
+        min_length=4,
+        max_length=10,
+    )
+    financial_year: int | None = Field(
+        default=None,
+        description="Deprecated: calendar year. Use period_key instead.",
+        gt=2000,
+        lt=2200,
+    )
 
 
 class DividendLineResponse(BaseModel):
@@ -43,7 +60,7 @@ class DividendRunResponse(BaseModel):
 
     run_id: str
     record_date: str
-    declared_by_meeting_id: str
+    meeting_or_resolution: str | None = None
     pool_kobo: int
     prepared_by: str
     prepared_at: str
@@ -57,6 +74,8 @@ class DividendRunResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
+    journal_entry_id: str | None = None
+    period_key: str | None = None
     items: list[DividendLineResponse] | None = None
 
 
@@ -92,11 +111,21 @@ async def prepare_dividend_run(
 
     Requires: treasurer or admin role
     """
+    # Resolve period_key: new clients send it directly; old clients send financial_year
+    if request.period_key:
+        period_key = request.period_key
+    elif request.financial_year:
+        period_key = str(request.financial_year)
+    else:
+        from app.core.errors import UnprocessableEntity  # noqa: PLC0415
+
+        raise UnprocessableEntity("Either period_key or financial_year is required")
     result = await dividend_service.prepare_dividend_run(
         current,
         record_date=request.record_date,
-        declared_by_meeting_id=uuid.UUID(request.declared_by_meeting_id),
+        meeting_or_resolution=request.meeting_or_resolution,
         pool_kobo=request.pool_kobo,
+        period_key=period_key,
     )
     return DividendRunResponse(**result)
 
@@ -150,9 +179,10 @@ async def approve_dividend_run(
     run_id: str,
     current: Annotated[CurrentSession, Depends(current_session)],
 ) -> DividendRunResponse:
-    """Approve a prepared dividend run.
+    """Approve a prepared dividend run and post its ledger entry atomically.
 
-    Changes status from 'unprocessed' to 'approved'.
+    Posts a balanced journal entry (debit dividends_declared, credit each
+    member's member_savings) in the same transaction.  Status becomes 'posted'.
 
     Requires: admin role
     """

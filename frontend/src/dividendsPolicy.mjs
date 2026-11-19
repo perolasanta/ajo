@@ -65,17 +65,32 @@ export function memberDisplayLabel(member) {
 /**
  * Build the prepare request body from naira input, converting to integer kobo.
  * Carries only the API-allowed fields — never member names or per-member amounts.
- * @param {{ recordDate: string, declaredByMeetingId: string, poolNaira: number }} args
+ * @param {{ recordDate: string, meetingOrResolution: string | null | undefined, poolNaira: number, financialYear: number }} args
  */
-export function prepareDividendRequestBody({ recordDate, declaredByMeetingId, poolNaira }) {
+export function prepareDividendRequestBody({
+  recordDate,
+  meetingOrResolution,
+  poolNaira,
+  financialYear,
+}) {
   return {
     record_date: recordDate,
-    declared_by_meeting_id: declaredByMeetingId,
+    meeting_or_resolution: meetingOrResolution ?? null,
     pool_kobo: Math.round((Number(poolNaira) || 0) * 100),
+    financial_year: Number(financialYear),
   };
 }
 
 /** Build the reject request body — only the reason, never names or amounts. */
 export function rejectDividendRequestBody(reason) {
   return { reason: String(reason ?? "") };
+}
+
+/**
+ * Returns true if the value looks like a bare UUID string (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
+ * Used by tests to ensure UUIDs are never rendered directly as labels.
+ * @param {string} value
+ */
+export function looksLikeUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }

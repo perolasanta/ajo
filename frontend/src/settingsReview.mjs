@@ -25,6 +25,19 @@ const policyFieldDefinitions = [
   ["savings_backing_bps", "Savings backing", (value) => `${Number(value ?? 0) / 100}%`],
   ["min_membership_months", "Minimum membership", (value) => `${value ?? 0} months`],
   ["guarantors_must_be_active", "Active-member guarantors", (value) => String(value ?? true)],
+  [
+    "dividend_frequency",
+    "Dividend frequency",
+    (value) => {
+      const labels = {
+        annual: "Every year",
+        half_yearly: "Every half year",
+        quarterly: "Every quarter",
+        monthly: "Every month",
+      };
+      return labels[value] ?? String(value ?? "Every year");
+    },
+  ],
 ];
 
 function policyValue(policy, key) {

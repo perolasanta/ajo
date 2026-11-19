@@ -457,7 +457,7 @@ export type DividendLineResponse = {
 export type DividendRunResponse = {
   run_id: string;
   record_date: string;
-  declared_by_meeting_id: string;
+  meeting_or_resolution: string | null;
   pool_kobo: number;
   prepared_by: string;
   prepared_at: string;
@@ -471,6 +471,8 @@ export type DividendRunResponse = {
   status: string;
   created_at: string;
   updated_at: string;
+  journal_entry_id: string | null;
+  period_key: string | null;
   items: DividendLineResponse[] | null;
 };
 
@@ -483,8 +485,10 @@ export type DividendRunListResponse = {
 
 export type PrepareDividendRunRequest = {
   record_date: string;
-  declared_by_meeting_id: string;
+  meeting_or_resolution: string | null;
   pool_kobo: number;
+  period_key?: string | null;
+  financial_year?: number | null;
 };
 
 export type RejectDividendRunRequest = { reason: string };

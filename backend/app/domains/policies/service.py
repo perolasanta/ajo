@@ -29,6 +29,7 @@ _POLICY_FIELDS = (
     "confirmation_expiry_minutes",
     "otp_validity_seconds",
     "cash_banking_days",
+    "dividend_frequency",
     "settings",
 )
 
@@ -67,6 +68,12 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
             or not 1 <= cash_banking_days <= 30
         ):
             raise ValueError("cash_banking_days must be an integer between 1 and 30")
+        fields.setdefault("dividend_frequency", "annual")
+        dividend_frequency = fields["dividend_frequency"]
+        if dividend_frequency not in {"annual", "half_yearly", "quarterly", "monthly"}:
+            raise ValueError(
+                "dividend_frequency must be one of: annual, half_yearly, quarterly, monthly"
+            )
         if not isinstance(fields["settings"], dict):
             raise ValueError("Policy settings must be an object")
         if "min_membership_months" in fields["settings"]:
@@ -93,12 +100,12 @@ async def propose_policy(current: CurrentSession, values: dict[str, Any], reason
                effective_from, salary_basis, deduction_cap_bps, max_active_loans,
                guarantors_required, min_savings_kobo, loan_to_savings_multiple_x100,
                interest_method, payroll_allocation_order, confirmation_expiry_minutes,
-               otp_validity_seconds, cash_banking_days)
+               otp_validity_seconds, cash_banking_days, dividend_frequency)
             VALUES (:id, :cid, :version, 'proposed', :actor, CAST(:settings AS jsonb),
                :effective_from, :salary_basis, :deduction_cap_bps, :max_active_loans,
                :guarantors_required, :min_savings_kobo, :loan_to_savings_multiple_x100,
                :interest_method, :payroll_allocation_order, :confirmation_expiry_minutes,
-               :otp_validity_seconds, :cash_banking_days)
+               :otp_validity_seconds, :cash_banking_days, :dividend_frequency)
         """),
             {
                 "id": policy_id,
@@ -273,7 +280,8 @@ async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict
             SELECT id, version, effective_from, effective_to, salary_basis,
                    deduction_cap_bps, max_active_loans, guarantors_required,
                    min_savings_kobo, loan_to_savings_multiple_x100, interest_method, payroll_allocation_order,
-                   confirmation_expiry_minutes, otp_validity_seconds, cash_banking_days, settings
+                   confirmation_expiry_minutes, otp_validity_seconds, cash_banking_days,
+                   dividend_frequency, settings
               FROM cooperative_policy_versions
              WHERE cooperative_id = :cid AND status = 'approved'
                AND effective_from <= :on_date
@@ -301,7 +309,7 @@ async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
                        p.guarantors_required, p.min_savings_kobo, p.loan_to_savings_multiple_x100,
                        p.interest_method, p.payroll_allocation_order,
                        p.confirmation_expiry_minutes, p.otp_validity_seconds,
-                       p.cash_banking_days, p.settings, p.created_at,
+                       p.cash_banking_days, p.dividend_frequency, p.settings, p.created_at,
                        CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
                        proposer.email AS proposed_by_email,
                        CASE WHEN approver.id IS NULL THEN 'Unknown user' ELSE coalesce(approver.full_name, 'Unnamed user') END AS approved_by_name,

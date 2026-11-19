@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 from typing import Any
@@ -43,7 +44,7 @@ async def db(test_database: Any) -> asyncpg.Connection:
 async def setup_dividend_tenant(
     conn: asyncpg.Connection,
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]:
-    """Set up a test tenant with treasurer, admin, officer, and auditor roles."""
+    """Set up a test tenant with accounts and shares seeded for approval+posting."""
     seed = await create_tenant(
         conn,
         name="Dividend test",
@@ -55,7 +56,43 @@ async def setup_dividend_tenant(
     treasurer_id = seed.user_ids[0]
     admin_id = seed.user_ids[1]
     officer_id = seed.user_ids[2] if len(seed.user_ids) > 2 else treasurer_id
-
+    bank_acc_id = uuid.uuid4()
+    savings_acc_id = uuid.uuid4()
+    shares_acc_id = uuid.uuid4()
+    divs_acc_id = uuid.uuid4()
+    await conn.executemany(
+        "INSERT INTO accounts(cooperative_id,id,code,name,account_type) VALUES($1,$2,$3,$4,$5)",
+        [
+            (cid, bank_acc_id, "bank", "Bank", "asset"),
+            (cid, savings_acc_id, "member_savings", "Member savings", "liability"),
+            (cid, shares_acc_id, "member_shares", "Member shares", "equity"),
+            (cid, divs_acc_id, "dividends_declared", "Dividends declared", "equity"),
+        ],
+    )
+    # Seed a share purchase so the member has shares at record date.
+    if seed.member_id:
+        shares_kobo = 100_000
+        lines_json = json.dumps(
+            [
+                {"account_id": str(bank_acc_id), "debit_kobo": shares_kobo, "credit_kobo": 0},
+                {
+                    "account_id": str(shares_acc_id),
+                    "member_id": str(seed.member_id),
+                    "debit_kobo": 0,
+                    "credit_kobo": shares_kobo,
+                },
+            ]
+        )
+        await conn.execute("SELECT set_config('app.cooperative_id', $1, false)", str(cid))
+        await conn.fetchval(
+            "SELECT post_journal_entry($1,$2,'share_purchase',$3,'Initial shares',$4,$5,$6::jsonb,NULL)",
+            cid,
+            date(2025, 1, 1),
+            uuid.uuid4(),
+            treasurer_id,
+            f"share-setup-div:{cid}",
+            lines_json,
+        )
     return cid, treasurer_id, admin_id, officer_id
 
 
@@ -92,8 +129,9 @@ class TestDividendPrepare:
             await dividend_service.prepare_dividend_run(
                 officer,
                 record_date=date(2025, 12, 31),
-                declared_by_meeting_id=uuid.uuid4(),
+                meeting_or_resolution="AGM 2025",
                 pool_kobo=1_000_000,
+                financial_year=2025,
             )
 
     async def test_prepare_dividend_run_creates_run_with_unprocessed_status(
@@ -105,18 +143,18 @@ class TestDividendPrepare:
 
         record_date = date(2025, 12, 31)
         pool_kobo = 1_000_000
-        meeting_id = uuid.uuid4()
 
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=record_date,
-            declared_by_meeting_id=meeting_id,
+            meeting_or_resolution="AGM 2025",
             pool_kobo=pool_kobo,
+            financial_year=2025,
         )
 
         assert run["status"] == "unprocessed"
         assert run["record_date"] == record_date.isoformat()
-        assert run["declared_by_meeting_id"] == str(meeting_id)
+        assert run["meeting_or_resolution"] == "AGM 2025"
         assert run["prepared_by"] == str(treasurer_id)
         assert run["pool_kobo"] == pool_kobo
         assert "run_id" in run
@@ -133,16 +171,17 @@ class TestDividendApprove:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
+            financial_year=2025,
         )
 
         # Treasurer cannot approve
         with pytest.raises(Forbidden):
             await dividend_service.approve_dividend_run(treasurer, uuid.UUID(run["run_id"]))
 
-    async def test_approve_changes_status_to_approved(self, db: asyncpg.Connection) -> None:
-        """Approving a run changes status from 'unprocessed' to 'approved'."""
+    async def test_approve_changes_status_to_posted(self, db: asyncpg.Connection) -> None:
+        """Approving a run changes status from 'unprocessed' to 'posted' (posts ledger atomically)."""
         cid, treasurer_id, admin_id, officer_id = await setup_dividend_tenant(db)
         treasurer = treasurer_session(cid, treasurer_id)
         admin = admin_session(cid, admin_id)
@@ -150,13 +189,14 @@ class TestDividendApprove:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
+            financial_year=2025,
         )
 
         approved_run = await dividend_service.approve_dividend_run(admin, uuid.UUID(run["run_id"]))
 
-        assert approved_run["status"] == "approved"
+        assert approved_run["status"] == "posted"
         assert approved_run["approved_by"] == str(admin_id)
 
     async def test_approve_only_works_on_unprocessed_run(self, db: asyncpg.Connection) -> None:
@@ -168,8 +208,9 @@ class TestDividendApprove:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
+            financial_year=2025,
         )
 
         # Approve once
@@ -191,8 +232,9 @@ class TestDividendReject:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
+            financial_year=2025,
         )
 
         # Treasurer cannot reject
@@ -216,8 +258,9 @@ class TestDividendCancel:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
+            financial_year=2025,
         )
 
         # Officer has no permission
@@ -269,8 +312,9 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
+            financial_year=2025,
         )
         run_id = uuid.UUID(run["run_id"])
 
@@ -311,8 +355,9 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=500_000,
+            financial_year=2025,
         )
         run_id = uuid.UUID(run["run_id"])
 
@@ -343,8 +388,9 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=2_000_000,
+            financial_year=2025,
         )
         run_id = uuid.UUID(run["run_id"])
 
@@ -382,8 +428,9 @@ class TestDividendNotifications:
         run = await dividend_service.prepare_dividend_run(
             treasurer,
             record_date=date(2025, 12, 31),
-            declared_by_meeting_id=uuid.uuid4(),
+            meeting_or_resolution="AGM 2025",
             pool_kobo=1_000_000,
+            financial_year=2025,
         )
         run_id = uuid.UUID(run["run_id"])
 
