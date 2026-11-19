@@ -604,7 +604,11 @@ async def get_payment(current: CurrentSession, payment_id: uuid.UUID) -> dict[st
         row = (
             (
                 await session.execute(
-                    text("""SELECT p.*,m.full_name AS member_name,m.member_no,
+                    text("""SELECT p.id,p.cooperative_id,p.member_id,p.channel,p.provider,p.provider_reference,
+                               p.purpose,p.loan_id,p.amount_kobo,p.fee_kobo,p.fee_bearer,p.status,
+                               p.recorded_by,p.recorded_at,p.received_on,p.confirmed_by,p.confirmed_at,
+                               p.rejected_reason,p.receipt_no,p.ledger_entry_id,p.idempotency_key,p.request_hash,
+                               m.full_name AS member_name,m.member_no,
                                recorder.full_name AS recorder_full_name,
                                (recorder.id IS NOT NULL) AS recorder_exists
                         FROM payments p JOIN members m
