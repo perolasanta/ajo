@@ -331,9 +331,9 @@ async def list_loan_products(current: CurrentSession) -> list[dict[str, Any]]:
         result = await session.execute(
             text("""
                 SELECT p.id, p.code, p.name, p.interest_method, p.annual_rate_bps,
-                       min_amount_kobo, max_amount_kobo, min_tenor_months,
-                       max_tenor_months, fee_bps, guarantors_required, status,
-                       supersedes_id, p.effective_from, p.created_at, approved_at,
+                       p.min_amount_kobo, p.max_amount_kobo, p.min_tenor_months,
+                       p.max_tenor_months, p.fee_bps, p.guarantors_required, p.status,
+                       p.supersedes_id, p.effective_from, p.created_at, p.approved_at,
                        proposed.actor_user_id AS proposed_by,
                        CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
                        proposer.email AS proposed_by_email,
@@ -492,6 +492,14 @@ async def approve_loan_product(
             raise NotFound("Loan product not found")
         if row["status"] != "proposed":
             raise Conflict("Loan product is not awaiting approval")
+        proposer = await session.scalar(
+            text(
+                "SELECT actor_user_id FROM audit_logs WHERE cooperative_id=:cid AND entity_type='loan_product' AND entity_id=:id AND action='loan_product_proposed' ORDER BY created_at LIMIT 1"
+            ),
+            {"cid": current.cooperative_id, "id": str(product_id)},
+        )
+        if proposer == current.user_id:
+            raise Conflict("A different administrator must approve this product")
         product = dict(row)
         await validate_product_safeguards(current.cooperative_id, product, on_date)
         if product["supersedes_id"] is not None:
