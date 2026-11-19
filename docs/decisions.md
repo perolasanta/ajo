@@ -1,5 +1,7 @@
 # Ajo Product Decisions
 
+Operational note: periodic healthchecks use process liveness and local worker/scheduler heartbeats so they do not keep Neon compute awake. The Neon Free plan has a 100 CU-hour monthly budget; see `ops/runbooks/deploy.md` for the operating guidance.
+
 **Status:** Owner-approved
 
 **Approved:** 2026-10-29

@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import math
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -25,6 +26,12 @@ from app.worker.telegram_sender import TelegramRateLimited, TelegramRejected
 
 _E164 = re.compile(r"^\+[1-9][0-9]{7,14}$")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_HEARTBEAT_FILE = "/tmp/ajo-worker-heartbeat"  # noqa: S108
+
+
+def _write_heartbeat(timestamp: int) -> None:
+    with open(_HEARTBEAT_FILE, "w") as heartbeat:
+        heartbeat.write(str(timestamp))
 
 
 @dataclass(frozen=True)
@@ -499,6 +506,7 @@ async def run_forever(senders: Mapping[str, Any], settings: Settings | None = No
     current_settings = settings or get_settings()
     log = structlog.get_logger("outbox")
     while True:
+        await asyncio.to_thread(_write_heartbeat, int(time.time()))
         processed = 0
         try:
             cooperative_ids = await active_cooperative_ids()

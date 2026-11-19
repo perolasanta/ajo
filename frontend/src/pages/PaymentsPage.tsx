@@ -163,8 +163,8 @@ export default function PaymentsPage() {
     queryKey: ["notification-summary", session.data?.user_id],
     queryFn: getNotificationSummary,
     enabled: Boolean(session.data),
-    refetchInterval: 60_000,
-    refetchOnWindowFocus: true,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
   });
   const roles = session.data?.roles ?? [];
   const userId = session.data?.user_id ?? "";

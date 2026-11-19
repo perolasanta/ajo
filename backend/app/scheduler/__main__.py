@@ -97,7 +97,6 @@ async def main(argv: Sequence[str] | None = None) -> None:
                 await asyncio.to_thread(_write_heartbeat, int(time.time()))
             except Exception as exc:
                 log.error("scheduler_iteration_failed", exception_class=type(exc).__name__)
-            await conn.execute("SELECT 1")
             await asyncio.sleep(settings.scheduler_interval_minutes * 60)
     finally:
         if engine is not None:

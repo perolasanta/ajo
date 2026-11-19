@@ -9,7 +9,13 @@ from app.main import create_app
 pytestmark = pytest.mark.unit
 
 
-def test_liveness_without_database():
+def test_liveness_without_database(monkeypatch):
+    @asynccontextmanager
+    async def failing_connection():
+        raise RuntimeError("database unavailable")
+        yield
+
+    monkeypatch.setattr(health_api, "connection", failing_connection)
     client = TestClient(create_app())
     r = client.get("/api/v1/health")
     assert r.status_code == 200

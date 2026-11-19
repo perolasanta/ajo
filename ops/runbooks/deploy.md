@@ -11,6 +11,32 @@ The VPS holds only `/opt/ajo`, the Ajo Nginx vhost, and its certificate. Other A
 7. `docker compose up -d`
 8. Check `docker compose ps`, `curl --fail https://ajo.petbell.com.ng/api/v1/health`, and `curl --fail https://ajo.petbell.com.ng/api/v1/health/db`.
 
+## Periodic database activity
+
+| Component | Interval | Queries database? |
+| --- | --- | --- |
+| API healthcheck | 30 seconds | No; calls `/api/v1/health` |
+| Worker outbox loop | Configurable, default 2 seconds when idle | Yes; scans tenants and claims outbox rows |
+| Scheduler overdue-cash loop | Configurable, default 60 minutes | Yes; runs the scheduled job |
+| Worker and scheduler healthchecks | 30 seconds | No; reads a local heartbeat file |
+| Frontend notification summary | Configurable in the client, currently 60 seconds while visible | Yes; pauses when hidden and refreshes on visibility/focus |
+| Migration service | One-shot, on deployment only | Yes; runs migrations |
+
+`OUTBOX_POLL_INTERVAL_SECONDS` defaults to `2` and `SCHEDULER_INTERVAL_MINUTES` defaults to `60`, preserving current alert latency and schedule. The API healthcheck is process liveness only; use `/api/v1/health/db` manually for database readiness.
+
+## Neon free plan compute budget
+
+The Neon Free plan allows 100 CU-hours per project per month. A 0.25 CU compute running continuously uses approximately 6 CU-hours per day, or 180 CU-hours per month. Reaching the Free plan limit suspends compute until the next billing month.
+
+Check current usage in the Neon console under the project’s **Usage** page. To restart the application after compute suspension on the VPS:
+
+```bash
+cd /opt/ajo && docker compose stop api worker scheduler
+docker compose start api worker scheduler
+```
+
+Production systems that require always-on compute need a paid Neon plan.
+
 To inspect overdue cash alerts without queueing any notifications, run:
 
 ```bash

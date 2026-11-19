@@ -17,6 +17,11 @@ services:
     restart: unless-stopped
     env_file: ../.env
     command: ["python", "-m", "app.worker"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time; p='/tmp/ajo-worker-heartbeat'; assert os.path.exists(p) and time.time()-os.path.getmtime(p) <= 30"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Exactly ONE scheduler. It takes a session advisory lock on the DIRECT connection.
   scheduler:
@@ -25,3 +30,8 @@ services:
     env_file: ../.env
     command: ["python", "-m", "app.scheduler"]
     deploy: { replicas: 1 }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time; p='/tmp/ajo-scheduler-heartbeat'; assert os.path.exists(p) and time.time()-os.path.getmtime(p) <= (int(os.getenv('SCHEDULER_INTERVAL_MINUTES','60'))*60+300)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

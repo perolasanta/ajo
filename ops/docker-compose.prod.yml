@@ -49,7 +49,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health/db', timeout=4)"]
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/v1/health', timeout=4)"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -83,13 +83,14 @@ services:
       DB_DISABLE_PREPARED_CACHE: ${DB_DISABLE_PREPARED_CACHE:-true}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      OUTBOX_POLL_INTERVAL_SECONDS: ${OUTBOX_POLL_INTERVAL_SECONDS:-2}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      test: ["CMD", "python", "-c", "import os,time; p='/tmp/ajo-worker-heartbeat'; assert os.path.exists(p) and time.time()-os.path.getmtime(p) <= 30"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -105,13 +106,14 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       DATABASE_URL_SCHEDULER: ${DATABASE_URL_SCHEDULER:?DATABASE_URL_SCHEDULER is required}
+      SCHEDULER_INTERVAL_MINUTES: ${SCHEDULER_INTERVAL_MINUTES:-60}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; os.kill(1, 0)"]
+      test: ["CMD", "python", "-c", "import os,time; p='/tmp/ajo-scheduler-heartbeat'; assert os.path.exists(p) and time.time()-os.path.getmtime(p) <= (int(os.getenv('SCHEDULER_INTERVAL_MINUTES','60'))*60+300)"]
       interval: 30s
       timeout: 5s
       retries: 3

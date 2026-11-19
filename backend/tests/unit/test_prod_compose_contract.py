@@ -41,11 +41,13 @@ class ProductionComposeContractTests(unittest.TestCase):
         self.assertTrue(host_addresses)
         self.assertTrue(all(address == "127.0.0.1" for address in host_addresses))
 
-    def test_api_waits_for_database_and_uses_database_readiness_healthcheck(self) -> None:
+    def test_api_waits_for_database_and_uses_database_independent_liveness_healthcheck(
+        self,
+    ) -> None:
         api = service_block(COMPOSE.read_text(), "api")
         self.assertIn("python -m app.wait_for_db", api)
         self.assertIn("exec gunicorn", api)
-        self.assertIn("/api/v1/health/db", api)
+        self.assertIn("/api/v1/health'", api)
 
     def test_backend_processes_receive_public_base_url(self) -> None:
         compose = COMPOSE.read_text()
@@ -59,4 +61,6 @@ class ProductionComposeContractTests(unittest.TestCase):
     def test_worker_and_scheduler_have_healthchecks(self) -> None:
         for service in ("worker", "scheduler"):
             with self.subTest(service=service):
-                self.assertIn("healthcheck:", service_block(COMPOSE.read_text(), service))
+                block = service_block(COMPOSE.read_text(), service)
+                self.assertIn("healthcheck:", block)
+                self.assertIn("heartbeat", block)

@@ -271,9 +271,24 @@ function ProtectedShell() {
     queryKey: ["notification-summary", session.data?.user_id],
     queryFn: getNotificationSummary,
     enabled: Boolean(session.data),
-    refetchInterval: 60_000,
+    refetchInterval: () => (document.visibilityState === "visible" ? 60_000 : false),
     refetchOnWindowFocus: true,
   });
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void queryClient.invalidateQueries({
+          queryKey: ["notification-summary", session.data?.user_id],
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", refreshWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("focus", refreshWhenVisible);
+    };
+  }, [queryClient, session.data?.user_id]);
   useEffect(() => {
     const expired = () => {
       queryClient.removeQueries({ queryKey: ["session"] });
