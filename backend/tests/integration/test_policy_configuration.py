@@ -137,11 +137,13 @@ async def test_approved_policy_is_immutable(db: asyncpg.Connection) -> None:
         "guarantors_required": 2,
         "supersedes_id": None,
     }
-    current = session(cid, approver)
+    proposer_session = session(cid, proposer)
     product_id = await service.create_loan_product(
-        current, product, date(2026, 6, 1), "initial product"
+        proposer_session, product, date(2026, 6, 1), "initial product"
     )
-    await service.approve_loan_product(current, product_id, date(2026, 6, 1), "approved")
+    await service.approve_loan_product(
+        session(cid, approver), product_id, date(2026, 6, 1), "approved"
+    )
     async with db.transaction():
         await db.execute("SELECT set_config('app.cooperative_id',$1,true)", str(cid))
         assert (
