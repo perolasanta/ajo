@@ -492,6 +492,14 @@ async def approve_loan_product(
             raise NotFound("Loan product not found")
         if row["status"] != "proposed":
             raise Conflict("Loan product is not awaiting approval")
+        proposer = await session.scalar(
+            text(
+                "SELECT actor_user_id FROM audit_logs WHERE cooperative_id=:cid AND entity_type='loan_product' AND entity_id=:id AND action='loan_product_proposed' ORDER BY created_at LIMIT 1"
+            ),
+            {"cid": current.cooperative_id, "id": str(product_id)},
+        )
+        if proposer == current.user_id:
+            raise Conflict("A different administrator must approve this product")
         product = dict(row)
         await validate_product_safeguards(current.cooperative_id, product, on_date)
         if product["supersedes_id"] is not None:
