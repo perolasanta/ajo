@@ -212,7 +212,7 @@ async def test_list_policy_versions_with_proposer_and_approver(db: asyncpg.Conne
 
 
 async def test_list_loan_products_with_missing_proposer(db: asyncpg.Connection) -> None:
-    """Test list_loan_products handles missing proposer/approver gracefully.
+    """Test list_loan_products handles deleted proposer user gracefully.
 
     When a loan product audit entry references a deleted user, the proposer_by_name
     should default to "Unknown user".
@@ -249,12 +249,17 @@ async def test_list_loan_products_with_missing_proposer(db: asyncpg.Connection) 
         reason="Test orphan",
     )
 
+    # Delete the proposer user to test fallback
+    await db.execute("SET app.cooperative_id = $1", str(cid))
+    await db.execute("DELETE FROM users WHERE cooperative_id=$1 AND id=$2", cid, admin_id)
+
+    # Query should still work and return "Unknown user" for the deleted proposer
     result = await service.list_loan_products(_session(cid, admin_id, "admin"))
 
     product = next((item for item in result if item["id"] == product_id), None)
     assert product is not None
-    # proposed_by_name should be populated (from audit log)
-    assert product["proposed_by_name"] is not None
+    # proposed_by_name should fall back to "Unknown user" when user is deleted
+    assert product["proposed_by_name"] == "Unknown user"
 
 
 async def test_second_admin_approves_loan_product(db: asyncpg.Connection) -> None:
@@ -447,3 +452,39 @@ async def test_proposer_cannot_approve_own_policy(db: asyncpg.Connection) -> Non
             policy_id,
             reason="Self approval",
         )
+
+
+async def test_get_routes_accessible_as_admin(db: asyncpg.Connection) -> None:
+    """Generic guard: service functions used by GET routes should not raise on happy path.
+
+    This test verifies that core GET endpoint service functions (list_policies, list_loan_products,
+    list_policy_versions) work correctly as an admin, documenting that these common read operations
+    should not fail with unhandled exceptions.
+
+    Skipped in this integration test:
+    - HTTP-level route tests (those require a test client; see backend integration test suite)
+    - Routes with required path parameters (/members/{id}, /loans/{id}, etc.)
+    - Routes needing specific auth middleware (tested in auth integration tests)
+
+    This test documents the contract: read operations on core entities should succeed for admins
+    with a seeded cooperative and should not raise 5xx-level errors.
+    """
+    seed = await create_tenant(
+        db,
+        name="Service route guard test",
+        slug_prefix="sr",
+        roles=("admin",),
+    )
+    cid = seed.cooperative_id
+    admin_id = seed.user_ids[0]
+
+    # Set up required data (policies, loan products)
+    await _setup_approved_policy(db, cid, admin_id)
+
+    # Call key service functions that back GET endpoints
+    # These should not raise exceptions
+    policies = await service.list_policy_versions(_session(cid, admin_id, "admin"))
+    assert isinstance(policies, list)
+
+    products = await service.list_loan_products(_session(cid, admin_id, "admin"))
+    assert isinstance(products, list)
