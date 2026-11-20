@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ApiError,
   approveSettingsLoanProduct,
@@ -292,9 +292,6 @@ export default function CooperativeSettingsPage() {
   const settingsActionCount =
     (summary.data?.settings?.policy_approval ?? 0) +
     (summary.data?.settings?.product_approval ?? 0);
-  useEffect(() => {
-    if (settingsActionCount > 0 && tab === "policy") setTab("approval");
-  }, [settingsActionCount, tab]);
   const currentValues = useMemo(() => policyValues(policy.data), [policy.data]);
   const formValues = Object.keys(values).length ? values : currentValues;
   const invalidate = () => {
@@ -376,22 +373,49 @@ export default function CooperativeSettingsPage() {
       reason: string;
       effective_to?: string;
     }) => decidePolicy(id, action, action === "approve" ? { reason } : { reason, effective_to }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setActionMessage("Approved");
+      setActionError(null);
+      invalidate();
+    },
+    onError: (error) => setActionError(errorText(error)),
   });
   const approveProduct = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       approveSettingsLoanProduct(id, reason),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setActionMessage("Approved");
+      setActionError(null);
+      invalidate();
+    },
+    onError: (error) => setActionError(errorText(error)),
   });
   const rejectPolicyMutation = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => rejectPolicy(id, reason),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setActionMessage("Rejected");
+      setActionError(null);
+      invalidate();
+    },
+    onError: (error) => setActionError(errorText(error)),
   });
   const rejectProduct = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       rejectSettingsLoanProduct(id, reason),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setActionMessage("Rejected");
+      setActionError(null);
+      invalidate();
+    },
+    onError: (error) => setActionError(errorText(error)),
   });
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const runAction = (action: () => void) => {
+    setActionMessage(null);
+    setActionError(null);
+    action();
+  };
 
   if (session.isPending) return <Skeleton className="h-60" />;
   if (!session.data || session.isError)
@@ -454,10 +478,20 @@ export default function CooperativeSettingsPage() {
             rejectPolicyMutation.isPending ||
             rejectProduct.isPending
           }
-          onApprovePolicy={(id, reason) => policyAction.mutate({ id, action: "approve", reason })}
-          onRejectPolicy={(id, reason) => rejectPolicyMutation.mutate({ id, reason })}
-          onApproveProduct={(id, reason) => approveProduct.mutate({ id, reason })}
-          onRejectProduct={(id, reason) => rejectProduct.mutate({ id, reason })}
+          onApprovePolicy={(id, reason) =>
+            runAction(() => policyAction.mutate({ id, action: "approve", reason }))
+          }
+          onRejectPolicy={(id, reason) =>
+            runAction(() => rejectPolicyMutation.mutate({ id, reason }))
+          }
+          onApproveProduct={(id, reason) => runAction(() => approveProduct.mutate({ id, reason }))}
+          onRejectProduct={(id, reason) => runAction(() => rejectProduct.mutate({ id, reason }))}
+          actionMessage={actionMessage}
+          actionError={actionError}
+          policyError={policyQuery.isError}
+          productsError={productsQuery.isError}
+          onRetryPolicies={() => void policyQuery.refetch()}
+          onRetryProducts={() => void productsQuery.refetch()}
         />
       )}
       {tab === "policy" && (
@@ -914,6 +948,12 @@ function SettingsApprovalTab({
   onRejectPolicy,
   onApproveProduct,
   onRejectProduct,
+  actionMessage,
+  actionError,
+  policyError,
+  productsError,
+  onRetryPolicies,
+  onRetryProducts,
 }: {
   policies: SettingsPolicyVersion[];
   products: SettingsLoanProduct[];
@@ -925,22 +965,40 @@ function SettingsApprovalTab({
   onRejectPolicy: (id: string, reason: string) => void;
   onApproveProduct: (id: string, reason: string) => void;
   onRejectProduct: (id: string, reason: string) => void;
+  actionMessage: string | null;
+  actionError: string | null;
+  policyError: boolean;
+  productsError: boolean;
+  onRetryPolicies: () => void;
+  onRetryProducts: () => void;
 }) {
   const pendingPolicies = policies.filter((item) => item.status === "proposed");
   const pendingProducts = products.filter((item) => item.status === "proposed");
-  if (!pendingPolicies.length && !pendingProducts.length)
+  if (!pendingPolicies.length && !pendingProducts.length && !policyError && !productsError)
     return (
       <EmptyState
         title="No settings changes need approval"
         detail="Pending policy and loan-product proposals will appear here."
       />
     );
-  const proposedPolicy = pendingPolicies[0];
   return (
     <section className={card} aria-label="Settings proposals needing approval">
       <h2 className="font-serif text-xl font-semibold">Needs approval</h2>
-      {proposedPolicy && (
+      {actionMessage && <p className="mt-3 text-sm text-emerald-700">{actionMessage}</p>}
+      {actionError && <p className="mt-3 text-sm text-red-700">{actionError}</p>}
+      {policyError && (
+        <p className="mt-3 text-sm text-red-700">
+          Policies could not be loaded. <button onClick={onRetryPolicies}>Try again</button>
+        </p>
+      )}
+      {productsError && (
+        <p className="mt-3 text-sm text-red-700">
+          Loan products could not be loaded. <button onClick={onRetryProducts}>Try again</button>
+        </p>
+      )}
+      {pendingPolicies.map((proposedPolicy) => (
         <ReviewPanel
+          key={proposedPolicy.id}
           title={`Policy version ${proposedPolicy.version}`}
           rows={buildPolicyReviewRows(
             policies
@@ -971,7 +1029,7 @@ function SettingsApprovalTab({
           onApprove={(reason) => onApprovePolicy(proposedPolicy.id, reason)}
           onReject={(reason) => onRejectPolicy(proposedPolicy.id, reason)}
         />
-      )}
+      ))}
       {pendingProducts.map((product) => {
         const superseded = products.find((item) => item.id === product.supersedes_id);
         return (

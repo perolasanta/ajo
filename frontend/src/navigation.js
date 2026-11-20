@@ -130,7 +130,7 @@ export function navigationTarget(name, count) {
   if (name === "Payroll") return "/payroll?action=needed";
   if (name === "Payments") return "/payments?action=needed";
   if (name === "Staff") return "/staff?action=needed";
-  if (name === "Settings") return "/settings?tab=approval";
+  if (name === "Settings") return "/settings";
   return navigation.find((item) => item.name === name)?.path ?? "/dashboard";
 }
 
