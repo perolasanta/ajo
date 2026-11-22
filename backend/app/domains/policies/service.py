@@ -329,6 +329,9 @@ async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
                        p.interest_method, p.payroll_allocation_order,
                        p.confirmation_expiry_minutes, p.otp_validity_seconds,
                        p.cash_banking_days, p.dividend_frequency, p.settings, p.created_at,
+                       previous.version AS replaces_version,
+                       replacement.version AS replaced_by_version,
+                       replacement.effective_from AS replaced_by_effective_from,
                        CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
                        proposer.email AS proposed_by_email,
                        CASE WHEN approver.id IS NULL THEN 'Unknown user' ELSE coalesce(approver.full_name, 'Unnamed user') END AS approved_by_name,
@@ -336,6 +339,24 @@ async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
                   FROM cooperative_policy_versions p
                   LEFT JOIN users proposer ON proposer.cooperative_id=p.cooperative_id AND proposer.id=p.proposed_by
                     LEFT JOIN users approver ON approver.cooperative_id=p.cooperative_id AND approver.id=p.approved_by
+                  LEFT JOIN LATERAL (
+                    SELECT prior.version
+                      FROM cooperative_policy_versions prior
+                     WHERE prior.cooperative_id=p.cooperative_id
+                       AND prior.status IN ('approved', 'superseded')
+                       AND prior.effective_from < p.effective_from
+                     ORDER BY prior.effective_from DESC, prior.version DESC
+                     LIMIT 1
+                  ) previous ON true
+                  LEFT JOIN LATERAL (
+                    SELECT newer.version, newer.effective_from
+                      FROM cooperative_policy_versions newer
+                     WHERE newer.cooperative_id=p.cooperative_id
+                       AND newer.status IN ('approved', 'superseded')
+                       AND newer.effective_from > p.effective_from
+                     ORDER BY newer.effective_from, newer.version
+                     LIMIT 1
+                  ) replacement ON true
                  WHERE p.cooperative_id = :cid
                  ORDER BY p.version DESC
             """),
@@ -350,9 +371,20 @@ async def list_loan_products(current: CurrentSession) -> list[dict[str, Any]]:
         result = await session.execute(
             text("""
                 SELECT p.id, p.code, p.name, p.interest_method, p.annual_rate_bps,
+                       (
+                         SELECT count(*)::int + 1
+                           FROM loan_products ranked
+                          WHERE ranked.cooperative_id=p.cooperative_id
+                            AND ranked.code=p.code
+                            AND ranked.status IN ('approved', 'superseded')
+                            AND ranked.effective_from <= p.effective_from
+                       ) AS version,
                        p.min_amount_kobo, p.max_amount_kobo, p.min_tenor_months,
                        p.max_tenor_months, p.fee_bps, p.guarantors_required, p.status,
                        p.supersedes_id, p.effective_from, p.created_at, p.approved_at,
+                       previous.version AS replaces_version,
+                       replacement.version AS replaced_by_version,
+                       replacement.effective_from AS replaced_by_effective_from,
                        proposed.actor_user_id AS proposed_by,
                        CASE WHEN proposer.id IS NULL THEN 'Unknown user' ELSE coalesce(proposer.full_name, 'Unnamed user') END AS proposed_by_name,
                        proposer.email AS proposed_by_email,
@@ -364,6 +396,32 @@ async def list_loan_products(current: CurrentSession) -> list[dict[str, Any]]:
                   LEFT JOIN LATERAL (SELECT actor_user_id FROM audit_logs WHERE cooperative_id=p.cooperative_id AND entity_type='loan_product' AND entity_id=p.id::text AND action='loan_product_approved' ORDER BY created_at LIMIT 1) approved ON true
                   LEFT JOIN users proposer ON proposer.cooperative_id=p.cooperative_id AND proposer.id=proposed.actor_user_id
                   LEFT JOIN users approver ON approver.cooperative_id=p.cooperative_id AND approver.id=approved.actor_user_id
+                  LEFT JOIN LATERAL (
+                    SELECT NULLIF(count(*)::int, 0) AS version
+                      FROM loan_products prior
+                     WHERE prior.cooperative_id=p.cooperative_id
+                       AND prior.code=p.code
+                       AND prior.status IN ('approved', 'superseded')
+                       AND prior.effective_from < p.effective_from
+                  ) previous ON true
+                  LEFT JOIN LATERAL (
+                    SELECT (
+                             SELECT count(*)::int + 1
+                               FROM loan_products ranked
+                              WHERE ranked.cooperative_id=p.cooperative_id
+                                AND ranked.code=p.code
+                                AND ranked.status IN ('approved', 'superseded')
+                                AND ranked.effective_from <= newer.effective_from
+                           ) AS version,
+                           newer.effective_from
+                      FROM loan_products newer
+                     WHERE newer.cooperative_id=p.cooperative_id
+                       AND newer.code=p.code
+                       AND newer.status IN ('approved', 'superseded')
+                       AND newer.effective_from > p.effective_from
+                     ORDER BY newer.effective_from, newer.created_at, newer.id
+                     LIMIT 1
+                  ) replacement ON true
                  WHERE p.cooperative_id = :cid
                  ORDER BY p.code, p.created_at DESC, p.id
             """),

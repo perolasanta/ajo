@@ -16,11 +16,14 @@ from typing import Any
 
 import asyncpg
 import pytest
+from httpx import ASGITransport, AsyncClient
 
+from app.api.auth import current_session, require_csrf
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict
 from app.domains.auth.service import CurrentSession
 from app.domains.policies import service
+from app.main import create_app
 from tests.conftest import create_tenant
 
 pytestmark = pytest.mark.db
@@ -357,6 +360,72 @@ async def test_second_admin_approves_policy(db: asyncpg.Connection) -> None:
     policy = next((item for item in result if item["id"] == policy_id), None)
     assert policy is not None
     assert policy["status"] == "approved"
+
+
+async def test_http_policy_history_exposes_plain_replacement_fields(
+    db: asyncpg.Connection,
+) -> None:
+    seed = await create_tenant(
+        db, name="Policy history HTTP", slug_prefix="policy-history", roles=("admin", "admin")
+    )
+    cid, proposer, approver = seed.cooperative_id, seed.user_ids[0], seed.user_ids[1]
+    selected: dict[str, CurrentSession] = {}
+    app = create_app()
+    app.dependency_overrides[current_session] = lambda: selected["current"]
+    app.dependency_overrides[require_csrf] = lambda: None
+    body = {
+        "effective_from": "2026-01-01",
+        "salary_basis": "net",
+        "deduction_cap_bps": 5000,
+        "max_active_loans": 3,
+        "guarantors_required": 1,
+        "min_savings_kobo": 100000,
+        "loan_to_savings_multiple_x100": 300,
+        "interest_method": "reducing_balance",
+        "confirmation_expiry_minutes": 1440,
+        "otp_validity_seconds": 300,
+        "cash_banking_days": 2,
+        "dividend_frequency": "annual",
+        "settings": {},
+        "reason": "Initial policy",
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://test.local"
+    ) as client:
+        selected["current"] = _session(cid, proposer)
+        first = await client.post("/api/v1/policies", json=body)
+        assert first.status_code == 200
+        selected["current"] = _session(cid, approver)
+        approved = await client.post(
+            f"/api/v1/policies/{first.json()['policy_version_id']}/approve",
+            json={"reason": "Approved"},
+        )
+        assert approved.status_code == 200
+        body["effective_from"] = "2027-01-01"
+        selected["current"] = _session(cid, approver)
+        second = await client.post("/api/v1/policies", json=body)
+        assert second.status_code == 200
+        superseded = await client.post(
+            f"/api/v1/policies/{first.json()['policy_version_id']}/supersede",
+            json={"effective_to": "2027-01-01", "reason": "Scheduled replacement"},
+        )
+        assert superseded.status_code == 200
+        selected["current"] = _session(cid, proposer)
+        approved = await client.post(
+            f"/api/v1/policies/{second.json()['policy_version_id']}/approve",
+            json={"reason": "Approved"},
+        )
+        assert approved.status_code == 200
+        selected["current"] = _session(cid, approver)
+        history = await client.get("/api/v1/policies/versions")
+        assert history.status_code == 200
+        rows = history.json()
+        old = next(row for row in rows if row["version"] == 1)
+        new = next(row for row in rows if row["version"] == 2)
+        assert old["replaced_by_version"] == 2
+        assert old["replaced_by_effective_from"] == "2027-01-01"
+        assert new["replaces_version"] == 1
+    app.dependency_overrides.clear()
 
 
 async def test_proposer_cannot_approve_own_policy(db: asyncpg.Connection) -> None:
