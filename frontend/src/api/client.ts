@@ -471,14 +471,21 @@ export type SettingsPolicyVersion = {
   approved_by_name?: string;
   approved_by_email?: string | null;
   created_at?: string;
+  replaces_version?: number | null;
+  replaced_by_version?: number | null;
+  replaced_by_effective_from?: string | null;
 };
 
 export type SettingsLoanProduct = LoanProduct & {
+  version: number;
   status: string;
   supersedes_id: string | null;
   approved_at: string | null;
   created_at?: string;
   effective_from?: string | null;
+  replaces_version?: number | null;
+  replaced_by_version?: number | null;
+  replaced_by_effective_from?: string | null;
   proposed_by?: string;
   proposed_by_name?: string;
   proposed_by_email?: string | null;

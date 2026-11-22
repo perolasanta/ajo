@@ -32,6 +32,7 @@ import {
   canApproveSettings,
   formatActorLabel as actorLabel,
 } from "../settingsReview.mjs";
+import { versionStateLabel } from "../settingsVersionLabels.mjs";
 
 type Session = { user_id: string; roles: string[] };
 type EffectivePolicy = Omit<SettingsPolicyVersion, "status">;
@@ -645,8 +646,9 @@ export default function CooperativeSettingsPage() {
           <section className={`${card} mb-6`}>
             <h2 className="font-serif text-xl font-semibold">Propose loan product</h2>
             <p className="mt-1 text-sm text-muted">
-              Approved versions are immutable. Create a superseding version to replace an existing
-              product.
+              Approved versions are immutable. Create a new version to replace an existing product.
+              A new version never changes an old one. Once approved it takes over from its start
+              date; the old version is kept for history.
             </p>
             <form
               className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
@@ -671,7 +673,7 @@ export default function CooperativeSettingsPage() {
                 />
               </label>
               <label className={label}>
-                Supersedes (optional)
+                Replaces version (optional)
                 <Select
                   className={input}
                   value={product.supersedesId}
@@ -846,6 +848,7 @@ export default function CooperativeSettingsPage() {
                   <article key={item.id} className="mt-3 rounded-control bg-[#F7F5EF] p-3 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge>{item.status}</Badge>
+                      <span>{versionStateLabel(item, new Date().toISOString().slice(0, 10))}</span>
                       <span>
                         {item.annual_rate_bps / 100}% yearly · {item.interest_method}
                       </span>
@@ -895,9 +898,7 @@ function PolicyHistoryItem({
       <div className="flex flex-wrap items-center gap-2">
         <Badge>{item.status}</Badge>
         <strong>Version {item.version}</strong>
-        <span>
-          {item.effective_from} to {item.effective_to ?? "open"} (WAT)
-        </span>
+        <span>{versionStateLabel(item, new Date().toISOString().slice(0, 10))}</span>
       </div>
       <p className="mt-1 text-xs text-muted">
         Proposed by {actorLabel(item.proposed_by_name, item.proposed_by_email, isAdmin)}
@@ -1036,7 +1037,7 @@ function SettingsApprovalTab({
           <ReviewPanel
             key={product.id}
             title={`Loan product: ${product.name}`}
-            comparisonLabel="Changes from the version this product supersedes"
+            comparisonLabel="Changes from the version this product replaces"
             rows={buildProductReviewRows(superseded ?? {}, product)}
             effectiveFrom={product.effective_from}
             reason="Loan product change"

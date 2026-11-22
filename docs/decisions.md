@@ -249,6 +249,16 @@ The read-only Share register is available to admins, treasurers, officers, audit
 
 **TODO:** salary-deduction-funded share purchases are intentionally out of scope. Define and approve that payment source, payroll interaction, and separation-of-duties rules before implementing it.
 
+### Version replacement in Settings
+
+An approved policy or loan-product version is immutable once stored.
+A newer approved version takes effect from its own `effective_from` date.
+The version selected for a date is the approved version with the latest start date.
+Policy supersede actions also mark the older policy `superseded` and set its `effective_to`.
+Loan-product supersede actions mark the referenced older product `superseded`.
+Loans keep the policy version id used for their decision and approval snapshots.
+Existing payroll and dividend runs are not rewritten when settings versions change.
+
 ## 16. Year-end share dividends
 A cooperative declares a dividend once per financial year. The treasurer prepares a dividend run specifying the financial year, record date, and total pool in integer kobo. The system takes a share snapshot at the record date (sum of `member_shares` journal credits up to and including that date, one per active member), allocates the pool in integer kobo by pro-rata shares using the largest-remainder method so every line is a whole kobo and all lines sum exactly to the pool. Zero-share members receive no line.
 
