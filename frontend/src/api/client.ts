@@ -495,6 +495,12 @@ export function getEffectivePolicy(onDate?: string): Promise<SettingsPolicyVersi
   return request<SettingsPolicyVersion>(`/policies/effective${qs}`);
 }
 
+export function getDividendPeriods(onDate: string): Promise<{ dividend_frequency: string }> {
+  return request<{ dividend_frequency: string }>(
+    `/dividends/periods?on_date=${encodeURIComponent(onDate)}`,
+  );
+}
+
 export function getSettingsLoanProducts(): Promise<SettingsLoanProduct[]> {
   return request<SettingsLoanProduct[]>("/settings/loan-products");
 }

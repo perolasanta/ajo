@@ -12,8 +12,24 @@ from pydantic import BaseModel, Field
 from app.api.auth import current_session
 from app.domains.auth.service import CurrentSession
 from app.domains.dividends import service as dividend_service
+from app.domains.policies import service as policy_service
 
 router = APIRouter(tags=["dividends"])
+
+
+@router.get("/dividends/periods")
+async def dividend_periods(
+    current: Annotated[CurrentSession, Depends(current_session)],
+    on_date: Annotated[date, Query()],
+) -> dict[str, str]:
+    if not {"treasurer", "admin", "officer"}.intersection(current.roles):
+        from app.core.errors import Forbidden
+
+        raise Forbidden("This role cannot view dividend periods")
+    frequency = await policy_service.get_effective_dividend_frequency(
+        current.cooperative_id, on_date
+    )
+    return {"dividend_frequency": frequency}
 
 
 class PrepareDividendRunRequest(BaseModel):

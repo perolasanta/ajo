@@ -299,6 +299,25 @@ async def get_effective_policy(cooperative_id: uuid.UUID, on_date: date) -> dict
         return dict(row)
 
 
+async def get_effective_dividend_frequency(cooperative_id: uuid.UUID, on_date: date) -> str:
+    async with transaction(cooperative_id) as session:
+        frequency = await session.scalar(
+            text("""
+                SELECT dividend_frequency
+                  FROM cooperative_policy_versions
+                 WHERE cooperative_id = :cid AND status = 'approved'
+                   AND effective_from <= :on_date
+                   AND (effective_to IS NULL OR CAST(:on_date AS date) < effective_to)
+                 ORDER BY effective_from DESC
+                 LIMIT 1
+            """),
+            {"cid": cooperative_id, "on_date": on_date},
+        )
+        if frequency is None:
+            raise NotFound("No policy is effective on that date")
+        return str(frequency)
+
+
 async def list_policy_versions(current: CurrentSession) -> list[dict[str, Any]]:
     _require_role(current, {"officer", "admin"})
     async with transaction(current.cooperative_id) as session:
