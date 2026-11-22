@@ -32,6 +32,6 @@ jobs:
       - name: Run fake-data restore drill
         env:
           POSTGRES_IMAGE: postgres:18
-          PYTHON: python
-          ALEMBIC: alembic
+          PYTHON_OVERRIDE: python
+          ALEMBIC_OVERRIDE: alembic
         run: make restore-drill
