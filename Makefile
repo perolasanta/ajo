@@ -87,4 +87,4 @@ smoke:
 	cd $(ROOT) && cd backend && .venv/bin/python scripts/neon_smoke_test.py
 
 restore-drill:
-	cd $(ROOT) && ./scripts/restore_drill.sh
+	cd $(ROOT) && PYTHON="$${PYTHON_OVERRIDE:-$(PYTHON)}" ALEMBIC="$${ALEMBIC_OVERRIDE:-$(ALEMBIC)}" ./scripts/restore_drill.sh
