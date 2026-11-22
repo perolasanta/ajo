@@ -4,14 +4,13 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   approveDividendRun,
   cancelDividendRun,
-  getEffectivePolicy,
   getDividendRun,
+  getDividendPeriods,
   getDividendRuns,
   getMembers,
   prepareDividendRun,
   rejectDividendRun,
   request,
-  type SettingsPolicyVersion,
 } from "../api/client";
 import {
   canApproveDividendRun,
@@ -72,16 +71,14 @@ function DividendRunList({ roles }: { roles: string[] }) {
   const [meetingOrResolution, setMeetingOrResolution] = useState("");
   const [selectedPeriodKey, setSelectedPeriodKey] = useState("");
   const effectivePolicyQuery = useQuery({
-    queryKey: ["effective-policy"],
-    queryFn: () => getEffectivePolicy(new Date().toISOString().slice(0, 10)),
+    queryKey: ["dividend-periods"],
+    queryFn: () => getDividendPeriods(new Date().toISOString().slice(0, 10)),
     enabled: canPrepareDividendRun(roles),
   });
-  const frequency =
-    (effectivePolicyQuery.data as SettingsPolicyVersion | undefined)?.dividend_frequency ??
-    "annual";
-  const availablePeriods = periodsForFrequency(
-    frequency as "annual" | "half_yearly" | "quarterly" | "monthly",
-  );
+  const frequency = effectivePolicyQuery.data?.dividend_frequency;
+  const availablePeriods = frequency
+    ? periodsForFrequency(frequency as "annual" | "half_yearly" | "quarterly" | "monthly")
+    : [];
   // Default record date: end of period or today, whichever is earlier
   const maxRecordDate = (() => {
     if (!selectedPeriodKey) return "";
@@ -139,6 +136,11 @@ function DividendRunList({ roles }: { roles: string[] }) {
       {canPrepare && (
         <Card>
           <h2 className="text-lg font-semibold">Prepare a dividend run</h2>
+          {effectivePolicyQuery.isError && (
+            <p role="alert" className="mt-2 text-sm text-danger">
+              Dividend periods could not be loaded. Please try again.
+            </p>
+          )}
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             <label className="text-sm">
               Record date
@@ -172,7 +174,7 @@ function DividendRunList({ roles }: { roles: string[] }) {
                 }}
               >
                 <option value="">— choose a period —</option>
-                {availablePeriods.map((p) => (
+                {frequency && availablePeriods.map((p) => (
                   <option key={p.key} value={p.key}>
                     {p.label}
                   </option>

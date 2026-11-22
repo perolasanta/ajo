@@ -20,12 +20,15 @@ from datetime import date
 
 import asyncpg
 import pytest
+from httpx import ASGITransport, AsyncClient
 
+from app.api.auth import current_session
 from app.core.db import asyncpg_dsn, dispose_engine
 from app.core.errors import Conflict
 from app.domains.auth.service import CurrentSession
 from app.domains.dividends import service as dividend_service
 from app.domains.policies import service as policy_service
+from app.main import create_app
 from tests.conftest import create_tenant
 
 pytestmark = pytest.mark.db
@@ -55,6 +58,36 @@ def _session(cid: uuid.UUID, uid: uuid.UUID, role: str = "admin") -> CurrentSess
 async def _tenant(conn: asyncpg.Connection) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     seed = await create_tenant(conn, name="Freq test", slug_prefix="freq", roles=("admin", "admin"))
     return seed.cooperative_id, seed.user_ids[0], seed.user_ids[1]
+
+
+async def test_dividend_periods_endpoint_exposes_frequency_to_staff_roles(
+    db: asyncpg.Connection,
+) -> None:
+    seed = await create_tenant(
+        db,
+        name="Periods HTTP",
+        slug_prefix="periods-http",
+        roles=("admin", "admin", "treasurer", "officer"),
+    )
+    await _approved_policy(
+        db, seed.cooperative_id, seed.user_ids[0], seed.user_ids[1], frequency="quarterly"
+    )
+    selected: dict[str, CurrentSession] = {}
+    app = create_app()
+    app.dependency_overrides[current_session] = lambda: selected["current"]
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="https://test.local"
+    ) as client:
+        for role, user_id in (
+            ("treasurer", seed.user_ids[2]),
+            ("admin", seed.user_ids[0]),
+            ("officer", seed.user_ids[3]),
+        ):
+            selected["current"] = _session(seed.cooperative_id, user_id, role)
+            response = await client.get("/api/v1/dividends/periods?on_date=2026-11-18")
+            assert response.status_code == 200
+            assert response.json()["dividend_frequency"] == "quarterly"
+    app.dependency_overrides.clear()
 
 
 async def _approved_policy(
