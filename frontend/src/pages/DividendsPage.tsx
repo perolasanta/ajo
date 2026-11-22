@@ -73,7 +73,7 @@ function DividendRunList({ roles }: { roles: string[] }) {
   const [selectedPeriodKey, setSelectedPeriodKey] = useState("");
   const effectivePolicyQuery = useQuery({
     queryKey: ["effective-policy"],
-    queryFn: () => getEffectivePolicy(),
+    queryFn: () => getEffectivePolicy(new Date().toISOString().slice(0, 10)),
     enabled: canPrepareDividendRun(roles),
   });
   const frequency =

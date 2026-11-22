@@ -10,6 +10,14 @@ import {
   prepareDividendRequestBody,
   rejectDividendRequestBody,
 } from "./dividendsPolicy.mjs";
+import { periodsForFrequency } from "./dividendPeriods.mjs";
+
+test("period dropdown follows the frequency returned by the effective policy API", () => {
+  const policy = { dividend_frequency: "quarterly" };
+  const options = periodsForFrequency(policy.dividend_frequency, new Date("2026-11-18"));
+  assert.match(options.map((option) => option.key).join(","), /2026-Q4/);
+  assert.doesNotMatch(options.map((option) => option.key).join(","), /2026(?:,|$)/);
+});
 
 test("only a treasurer can prepare a dividend run", () => {
   assert.equal(canPrepareDividendRun(["treasurer"]), true);
