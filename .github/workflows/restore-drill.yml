@@ -32,4 +32,6 @@ jobs:
       - name: Run fake-data restore drill
         env:
           POSTGRES_IMAGE: postgres:18
+          PYTHON: python
+          ALEMBIC: alembic
         run: make restore-drill

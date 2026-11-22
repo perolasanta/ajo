@@ -50,11 +50,24 @@ step() {
 }
 
 require_tools() {
-  command -v docker >/dev/null
-  command -v openssl >/dev/null
-  command -v psql >/dev/null
-  command -v pg_restore >/dev/null
-  [[ -x "$PYTHON" && -x "$ALEMBIC" ]]
+  local tool resolved
+  for tool in docker openssl psql pg_restore; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      printf 'FAIL missing tool: %s\n' "$tool" >&2
+      return 1
+    fi
+  done
+  for tool in PYTHON ALEMBIC; do
+    resolved="${!tool}"
+    if [[ ! -x "$resolved" ]]; then
+      resolved="$(command -v "$resolved" 2>/dev/null || true)"
+    fi
+    if [[ -z "$resolved" || ! -x "$resolved" ]]; then
+      printf 'FAIL missing tool: %s\n' "${!tool}" >&2
+      return 1
+    fi
+    printf -v "$tool" '%s' "$resolved"
+  done
   docker image inspect "$POSTGRES_IMAGE" >/dev/null
 }
 
