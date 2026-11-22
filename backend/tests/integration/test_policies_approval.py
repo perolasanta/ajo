@@ -405,6 +405,11 @@ async def test_http_policy_history_exposes_plain_replacement_fields(
         selected["current"] = _session(cid, approver)
         second = await client.post("/api/v1/policies", json=body)
         assert second.status_code == 200
+        superseded = await client.post(
+            f"/api/v1/policies/{first.json()['policy_version_id']}/supersede",
+            json={"effective_to": "2027-01-01", "reason": "Scheduled replacement"},
+        )
+        assert superseded.status_code == 200
         selected["current"] = _session(cid, proposer)
         approved = await client.post(
             f"/api/v1/policies/{second.json()['policy_version_id']}/approve",
